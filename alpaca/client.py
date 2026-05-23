@@ -49,11 +49,11 @@ class AlpacaClient:
         self._check_error(attribute, body)
         return body["Value"]
 
-    def _put(self, action: str, **data) -> None:
+    def _put(self, action: str, timeout: float = 10, **data) -> None:
         url = f"{self.base_url}/{action}"
         data["ClientID"] = self._client_id
         data["ClientTransactionID"] = _next_transaction_id()
-        response = self.session.put(url, data=data, timeout=10)
+        response = self.session.put(url, data=data, timeout=timeout)
         response.raise_for_status()
         body = response.json()
         self._check_error(action, body)

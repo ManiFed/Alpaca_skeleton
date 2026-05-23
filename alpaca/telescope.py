@@ -58,7 +58,7 @@ class Telescope:
         dec – Declination in decimal degrees (-90 to +90)
         """
         logger.info("Slewing to RA=%.4f h  Dec=%.4f °", ra, dec)
-        self._c._put("slewtocoordinatesasync", RightAscension=ra, Declination=dec)
+        self._c._put("slewtocoordinatesasync", timeout=120, RightAscension=ra, Declination=dec)
         self._c.wait_for(lambda: not self.is_slewing(), timeout=120, label="slew complete")
         logger.info("Slew complete — RA=%.4f h  Dec=%.4f °", self.ra(), self.dec())
 
