@@ -85,6 +85,40 @@ class Telescope:
             end_ra, end_dec, end_ra - start_ra, end_dec - start_dec,
         )
 
+    def verify_movement(self, ra_delta: float = 0.1, dec_delta: float = 0.0) -> bool:
+        """
+        Slew by a small delta, confirm the mount actually moved, then return to
+        the start position.  Intended for daytime / remote sanity checks.
+        Returns True if movement was confirmed.
+        """
+        start_ra, start_dec = self.ra(), self.dec()
+        print("\n=== Movement Verification ===")
+        print(f"Start position:   RA={start_ra:.4f} h   Dec={start_dec:.4f} °")
+        print(f"Commanding slew:  ΔRA={ra_delta:+.4f} h  ΔDec={dec_delta:+.4f} °")
+
+        self.slew_to_coordinates(start_ra + ra_delta, start_dec + dec_delta)
+
+        end_ra, end_dec = self.ra(), self.dec()
+        actual_ra_delta = abs(end_ra - start_ra)
+        actual_dec_delta = abs(end_dec - start_dec)
+        moved = actual_ra_delta > 0.0001 or actual_dec_delta > 0.0001
+
+        if moved:
+            print(
+                f"Result:           PASSED — "
+                f"ΔRA={actual_ra_delta:.4f} h  ΔDec={actual_dec_delta:.4f} °"
+            )
+        else:
+            print(
+                f"Result:           FAILED — position unchanged after slew "
+                f"(ΔRA={actual_ra_delta:.6f} h  ΔDec={actual_dec_delta:.6f} °)"
+            )
+
+        print("Returning to start position…")
+        self.slew_to_coordinates(start_ra, start_dec)
+        print("=== Verification complete ===\n")
+        return moved
+
     def park(self) -> None:
         logger.info("Parking telescope…")
         self._c._put("park", timeout=180)

@@ -15,6 +15,8 @@ import yaml
 from alpaca.device_manager import DeviceManager
 from alpaca.discovery import discover_servers
 
+logger = logging.getLogger(__name__)
+
 
 def setup_logging(cfg: dict) -> None:
     log_cfg = cfg.get("logging", {})
@@ -37,6 +39,7 @@ def run_smoke_test(manager: DeviceManager, cfg: dict) -> None:
         tel_cfg = cfg.get("telescope", {})
         tel.unpark()
         tel.set_tracking(True)
+        tel.verify_movement()
         tel.slew_to_coordinates(
             ra=tel_cfg.get("slew_ra", 0.0),
             dec=tel_cfg.get("slew_dec", 0.0),
@@ -61,7 +64,6 @@ def run_smoke_test(manager: DeviceManager, cfg: dict) -> None:
 def main() -> int:
     cfg = load_config()
     setup_logging(cfg)
-    logger = logging.getLogger(__name__)
 
     alpaca_cfg = cfg.get("alpaca", {})
     servers = discover_servers(
