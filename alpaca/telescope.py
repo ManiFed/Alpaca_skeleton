@@ -57,10 +57,33 @@ class Telescope:
         ra  – Right ascension in decimal hours (0–24)
         dec – Declination in decimal degrees (-90 to +90)
         """
-        logger.info("Slewing to RA=%.4f h  Dec=%.4f °", ra, dec)
+        start_ra, start_dec = self.ra(), self.dec()
+        logger.info("Current position  RA=%.4f h  Dec=%.4f °", start_ra, start_dec)
+        logger.info("Slewing to        RA=%.4f h  Dec=%.4f °", ra, dec)
+
         self._c._put("slewtocoordinatesasync", timeout=120, RightAscension=ra, Declination=dec)
+
+        # Some drivers return from the async PUT before the mount has begun
+        # moving, so is_slewing() may read False for a brief window right after
+        # the command is accepted.  Wait up to 5 s for slewing to go True first;
+        # if it never does the mount either didn't move or was already there.
+        slew_started = self._c.wait_for_either(
+            lambda: self.is_slewing(), timeout=5, label="slew start"
+        )
+        if not slew_started:
+            end_ra, end_dec = self.ra(), self.dec()
+            logger.warning(
+                "Mount never reported Slewing=True — it may not have moved. "
+                "Position after command: RA=%.4f h  Dec=%.4f °", end_ra, end_dec
+            )
+            return
+
         self._c.wait_for(lambda: not self.is_slewing(), timeout=120, label="slew complete")
-        logger.info("Slew complete — RA=%.4f h  Dec=%.4f °", self.ra(), self.dec())
+        end_ra, end_dec = self.ra(), self.dec()
+        logger.info(
+            "Slew complete — RA=%.4f h  Dec=%.4f °  (ΔRA=%.4f h  ΔDec=%.4f °)",
+            end_ra, end_dec, end_ra - start_ra, end_dec - start_dec,
+        )
 
     def park(self) -> None:
         logger.info("Parking telescope…")

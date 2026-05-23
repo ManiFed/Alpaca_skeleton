@@ -89,3 +89,13 @@ class AlpacaClient:
                 return
             time.sleep(poll_interval)
         raise TimeoutError(f"Timed out waiting for: {label or predicate}")
+
+    def wait_for_either(self, predicate, poll_interval: float = 0.5, timeout: float = 5.0, label: str = "") -> bool:
+        """Like wait_for but returns True if predicate succeeds, False on timeout (no exception)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(poll_interval)
+        logger.debug("wait_for_either: timed out waiting for %s", label or predicate)
+        return False
