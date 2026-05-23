@@ -63,28 +63,37 @@ class Camera:
         self._c._put("binx", BinX=bin_x)
         self._c._put("biny", BinY=bin_y)
 
-    def expose(self, duration: float, light: bool = True) -> None:
+    def expose(self, duration: float, light: bool = True, readout_timeout: float = 120.0) -> None:
         """
         Start an exposure and wait until the image is ready in the download buffer.
 
-        duration – exposure length in seconds
-        light    – True for a light frame, False for a dark/bias
+        duration        – exposure length in seconds
+        light           – True for a light frame, False for a dark/bias
+        readout_timeout – extra seconds beyond *duration* to allow for sensor
+                          readout and ALPACA transfer (default 120 s; raise for
+                          large/slow sensors or a slow network link)
         """
         logger.info("Starting %.2f s %s exposure", duration, "light" if light else "dark")
         self._c._put("startexposure", Duration=duration, Light=light)
 
-        # Poll state until the camera is no longer busy
-        deadline = time.monotonic() + duration + 60
+        # Poll imageready — the authoritative ALPACA flag that the image has
+        # landed in the download buffer.  Do NOT gate on CameraState == IDLE:
+        # some drivers set imageready while still in STATE_DOWNLOAD (4), and
+        # requiring IDLE would miss that window entirely.
+        deadline = time.monotonic() + duration + readout_timeout
         while time.monotonic() < deadline:
             state = self.camera_state()
-            if state == _STATE_IDLE and self.image_ready():
-                logger.info("Exposure complete — image ready for download")
-                return
             if state == _STATE_ERROR:
                 raise RuntimeError("Camera entered error state during exposure")
+            if self.image_ready():
+                logger.info("Exposure complete — image ready for download (camera state=%d)", state)
+                return
             time.sleep(0.5)
 
-        raise TimeoutError("Camera exposure did not complete within the allowed window")
+        raise TimeoutError(
+            f"Camera exposure did not complete within {duration + readout_timeout:.0f} s "
+            f"({duration:.1f} s exposure + {readout_timeout:.0f} s readout budget)"
+        )
 
     def abort_exposure(self) -> None:
         self._c._put("abortexposure")
