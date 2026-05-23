@@ -64,7 +64,7 @@ class Telescope:
 
     def park(self) -> None:
         logger.info("Parking telescope…")
-        self._c._put("park")
+        self._c._put("park", timeout=180)
         self._c.wait_for(self.is_parked, timeout=180, label="park complete")
         logger.info("Telescope parked")
 
