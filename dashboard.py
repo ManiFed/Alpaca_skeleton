@@ -67,6 +67,11 @@ _state: dict[str, Any] = {
     "image_captured": False,
     "image_id":       0,
     "error":          None,
+    "pier_cam": {
+        "enabled":   False,
+        "streaming": False,
+        "error":     None,
+    },
     "image_watcher": {
         "enabled":    False,
         "watch_path": "",
@@ -144,6 +149,11 @@ _tel: Optional[Telescope] = None
 _cam: Optional[Camera] = None
 _last_image_b64: Optional[str] = None
 _last_image_lock = threading.Lock()
+
+_pier_cam_frame: Optional[bytes] = None
+_pier_cam_frame_lock = threading.Lock()
+_pier_cam_pause = threading.Event()
+_pier_cam_stop  = threading.Event()
 
 
 def _capture_image() -> None:
@@ -330,6 +340,117 @@ def _load_config() -> dict:
             return yaml.safe_load(fh)
     except FileNotFoundError:
         return {}
+
+
+# ── Pier cam (ZWO SDK live preview) ───────────────────────────────────────────
+
+def _pier_cam_loop() -> None:
+    global _pier_cam_frame
+
+    cfg = _load_config()
+    pc  = cfg.get("pier_cam", {})
+
+    device_index  = int(pc.get("device_index", 0))
+    exposure_us   = int(float(pc.get("exposure_ms", 80)) * 1000)
+    gain          = int(pc.get("gain", 200))
+    bin_size      = int(pc.get("bin", 2))
+    jpeg_quality  = int(pc.get("jpeg_quality", 75))
+    target_fps    = float(pc.get("target_fps", 10))
+    sdk_lib       = str(pc.get("sdk_lib", "") or "")
+
+    try:
+        import zwoasi as asi
+    except ImportError:
+        logger.error("Pier cam: zwoasi not installed — run: pip install zwoasi")
+        with _state_lock:
+            _state["pier_cam"]["error"] = "zwoasi not installed"
+        return
+
+    if sdk_lib:
+        try:
+            asi.init(sdk_lib)
+        except Exception as exc:
+            logger.error("Pier cam: SDK init failed: %s", exc)
+            with _state_lock:
+                _state["pier_cam"]["error"] = f"SDK init: {exc}"
+            return
+
+    cam = None
+    while not _pier_cam_stop.is_set():
+        try:
+            num = asi.get_num_cameras()
+            if num == 0:
+                raise RuntimeError("No ASI cameras detected")
+            if device_index >= num:
+                raise RuntimeError(f"device_index {device_index} >= cameras found ({num})")
+
+            cam  = asi.Camera(device_index)
+            info = cam.get_camera_property()
+            logger.info("Pier cam: %s  (%dx%d)", info["Name"],
+                        info["MaxWidth"], info["MaxHeight"])
+
+            cam.set_control_value(asi.ASI_BANDWIDTHOVERLOAD, 80)
+            cam.set_control_value(asi.ASI_GAIN, gain)
+            cam.set_control_value(asi.ASI_EXPOSURE, exposure_us)
+
+            w        = (info["MaxWidth"]  // bin_size) & ~3
+            h        = (info["MaxHeight"] // bin_size) & ~1
+            is_color = bool(info.get("IsColorCam", False))
+            img_type = asi.ASI_IMG_RGB24 if is_color else asi.ASI_IMG_Y8
+            cam.set_roi(width=w, height=h, bins=bin_size, image_type=img_type)
+            cam.start_video_capture()
+
+            with _state_lock:
+                _state["pier_cam"].update(streaming=True, error=None)
+
+            frame_interval = 1.0 / max(1.0, target_fps)
+            next_frame     = time.monotonic()
+
+            while not _pier_cam_stop.is_set():
+                if _pier_cam_pause.is_set():
+                    time.sleep(0.05)
+                    next_frame = time.monotonic() + frame_interval
+                    continue
+
+                now = time.monotonic()
+                if now < next_frame:
+                    time.sleep(next_frame - now)
+                    continue
+                next_frame = time.monotonic() + frame_interval
+
+                data = cam.capture_video_frame(timeout=int(exposure_us / 1000 + 2000))
+                from PIL import Image as _PILImage
+                mode = "RGB" if is_color else "L"
+                img  = _PILImage.fromarray(data, mode)
+                buf  = io.BytesIO()
+                img.save(buf, format="JPEG", quality=jpeg_quality)
+                with _pier_cam_frame_lock:
+                    _pier_cam_frame = buf.getvalue()
+
+        except Exception as exc:
+            if _pier_cam_stop.is_set():
+                break
+            logger.warning("Pier cam: %s — retry in 5 s", exc)
+            with _state_lock:
+                _state["pier_cam"].update(streaming=False, error=str(exc))
+            try:
+                if cam is not None:
+                    cam.stop_video_capture()
+                    cam.close()
+                    cam = None
+            except Exception:
+                pass
+            time.sleep(5)
+
+    with _state_lock:
+        _state["pier_cam"]["streaming"] = False
+    try:
+        if cam is not None:
+            cam.stop_video_capture()
+            cam.close()
+    except Exception:
+        pass
+    logger.info("Pier cam stopped")
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -541,6 +662,8 @@ def api_expose():
         with _state_lock:
             _state["camera"]["exposing"]  = True
             _state["image_captured"]      = False
+        _pier_cam_pause.set()
+        time.sleep(0.15)
         try:
             _cam.set_binning(binning)
             _cam.expose(duration=duration, light=True)
@@ -550,6 +673,7 @@ def api_expose():
         finally:
             with _state_lock:
                 _state["camera"]["exposing"] = False
+            _pier_cam_pause.clear()
 
     threading.Thread(target=_do, daemon=True, name="cam-expose").start()
     logger.info("Exposure started: %.2f s  binning %dx%d", duration, binning, binning)
@@ -585,6 +709,34 @@ def api_image():
         return jsonify({"error": "No image available"}), 404
     img_bytes = base64.b64decode(b64)
     return Response(img_bytes, content_type="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.route("/api/pier-cam/stream")
+def pier_cam_stream():
+    def generate():
+        while not _pier_cam_stop.is_set():
+            with _pier_cam_frame_lock:
+                frame = _pier_cam_frame
+            if frame:
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                       + frame + b"\r\n")
+            time.sleep(0.05)
+
+    return Response(
+        stream_with_context(generate()),
+        content_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/pier-cam/snapshot")
+def pier_cam_snapshot():
+    with _pier_cam_frame_lock:
+        frame = _pier_cam_frame
+    if frame is None:
+        return jsonify({"error": "No frame available"}), 404
+    return Response(frame, content_type="image/jpeg",
                     headers={"Cache-Control": "no-store"})
 
 
@@ -740,29 +892,38 @@ body {
 .img-col {
   grid-column: 1 / -1;
   background: var(--surface);
+  display: flex; flex-direction: row;
+  overflow: hidden; min-height: 0;
+}
+.img-col.hidden { display: none; }
+
+.img-sub {
+  flex: 1;
   padding: 14px 20px;
   display: flex; flex-direction: column; gap: 10px;
   overflow-y: auto; min-height: 0;
+  border-right: 1px solid var(--border);
 }
+.img-sub:last-child { border-right: none; }
+.img-sub.hidden { display: none; }
+.img-sub::-webkit-scrollbar { width: 6px; }
+.img-sub::-webkit-scrollbar-track { background: var(--bg); }
+.img-sub::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.img-sub::-webkit-scrollbar-thumb:hover { background: var(--gray); }
 
-.img-col::-webkit-scrollbar {
-  width: 6px;
+/* ── Pier cam ── */
+.pier-cam-wrap {
+  background: #000; border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  min-height: 160px; overflow: hidden; flex-shrink: 0;
 }
-
-.img-col::-webkit-scrollbar-track {
-  background: var(--bg);
+.pier-cam-wrap img {
+  display: block; max-width: 100%; max-height: 240px; width: 100%;
+  image-rendering: auto;
 }
-
-.img-col::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
+.pier-cam-badge {
+  font-size: 10px; letter-spacing: 1px; color: var(--dim); flex-shrink: 0;
 }
-
-.img-col::-webkit-scrollbar-thumb:hover {
-  background: var(--gray);
-}
-
-.img-col.hidden { display: none; }
 
 .panel-hdr {
   display: flex; align-items: center; justify-content: space-between;
@@ -1043,15 +1204,33 @@ body {
     </div>
   </div>
 
-  <!-- Image panel (hidden until capture) -->
-  <div class="img-col hidden" id="imgPanel">
-    <div class="panel-label">Last Exposure</div>
-    <div class="img-inner">
-      <div class="img-frame">
-        <img id="lastImg" src="" alt="Last exposure">
+  <!-- Image row: pier cam | last exposure (each sub hides independently) -->
+  <div class="img-col hidden" id="imgRow">
+
+    <div class="img-sub hidden" id="pierCamSub">
+      <div class="panel-hdr" style="flex-shrink:0">
+        <div class="panel-name">
+          <span class="dot dot-gray" id="pierCamDot"></span>
+          Live View
+        </div>
+        <div id="pierCamBadge" style="font-size:10px;color:var(--dim)"></div>
       </div>
-      <div class="img-meta" id="imgMeta"></div>
+      <div class="pier-cam-wrap">
+        <img id="pierCamImg" src="" alt="Pier cam live view">
+      </div>
+      <div class="pier-cam-badge" id="pierCamStatus"></div>
     </div>
+
+    <div class="img-sub hidden" id="lastExpSub">
+      <div class="panel-label">Last Exposure</div>
+      <div class="img-inner">
+        <div class="img-frame">
+          <img id="lastImg" src="" alt="Last exposure">
+        </div>
+        <div class="img-meta" id="imgMeta"></div>
+      </div>
+    </div>
+
   </div>
 
 </div><!-- /main -->
@@ -1109,6 +1288,7 @@ function render(s) {
   renderCamera(s.camera || {});
   renderSafety(s.safety || {});
   renderImage(s);
+  renderPierCam(s.pier_cam || {});
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
@@ -1251,6 +1431,16 @@ function renderCamera(c) {
   document.getElementById("btnAbortExp").disabled = !c.connected || !c.exposing;
 }
 
+// ── Image row visibility ──────────────────────────────────────────────────────
+
+function updateImgRow() {
+  const row  = document.getElementById("imgRow");
+  const pier = document.getElementById("pierCamSub");
+  const last = document.getElementById("lastExpSub");
+  const show = !pier.classList.contains("hidden") || !last.classList.contains("hidden");
+  row.classList.toggle("hidden", !show);
+}
+
 // ── Image ────────────────────────────────────────────────────────────────────
 
 let _lastImageId = -1;
@@ -1260,11 +1450,12 @@ async function renderImage(s) {
   if (s.image_id === _lastImageId) return;
   _lastImageId = s.image_id;
 
-  const panel = document.getElementById("imgPanel");
-  const img   = document.getElementById("lastImg");
-  const meta  = document.getElementById("imgMeta");
+  const sub  = document.getElementById("lastExpSub");
+  const img  = document.getElementById("lastImg");
+  const meta = document.getElementById("imgMeta");
 
-  panel.classList.remove("hidden");
+  sub.classList.remove("hidden");
+  updateImgRow();
   meta.innerHTML = "Downloading…";
 
   try {
@@ -1285,6 +1476,59 @@ async function renderImage(s) {
     meta.innerHTML = `<span style="color:var(--red)">Image load failed: ${e.message}</span>`;
     _lastImageId = -1;
   }
+}
+
+// ── Pier cam ──────────────────────────────────────────────────────────────────
+
+let _pierCamConnected = false;
+
+function renderPierCam(pc) {
+  if (!pc || !pc.enabled) return;
+
+  const sub    = document.getElementById("pierCamSub");
+  const dot    = document.getElementById("pierCamDot");
+  const badge  = document.getElementById("pierCamBadge");
+  const status = document.getElementById("pierCamStatus");
+  const img    = document.getElementById("pierCamImg");
+
+  sub.classList.remove("hidden");
+  updateImgRow();
+
+  if (pc.error) {
+    dot.className     = "dot dot-red";
+    badge.textContent = "Error";
+    badge.style.color = "var(--red)";
+    status.textContent = pc.error;
+    status.style.color = "var(--red)";
+  } else if (pc.streaming) {
+    dot.className     = "dot dot-green";
+    badge.textContent = "Live";
+    badge.style.color = "var(--green)";
+    status.textContent = "";
+    if (!_pierCamConnected) {
+      _pierCamConnected = true;
+      img.src = "/api/pier-cam/stream";
+      img.onerror = () => _pierCamRetry();
+    }
+  } else {
+    dot.className     = "dot dot-yellow pulse";
+    badge.textContent = "Initializing";
+    badge.style.color = "var(--dim)";
+    status.textContent = "";
+  }
+}
+
+function _pierCamRetry() {
+  _pierCamConnected = false;
+  const status = document.getElementById("pierCamStatus");
+  status.textContent = "Reconnecting…";
+  status.style.color = "var(--dim)";
+  setTimeout(() => {
+    const img = document.getElementById("pierCamImg");
+    img.src = "/api/pier-cam/stream?" + Date.now();
+    img.onerror = () => _pierCamRetry();
+    _pierCamConnected = true;
+  }, 2000);
 }
 
 // ── Coordinate formatters ────────────────────────────────────────────────────
@@ -1502,6 +1746,13 @@ def launch(port: int = 5173) -> None:
             _state["image_watcher"]["enabled"]    = True
             _state["image_watcher"]["watch_path"] = watch_path
 
+    pc_cfg = cfg.get("pier_cam", {})
+    if pc_cfg.get("enabled", False):
+        _pier_cam_stop.clear()
+        threading.Thread(target=_pier_cam_loop, daemon=True, name="pier-cam").start()
+        with _state_lock:
+            _state["pier_cam"]["enabled"] = True
+
     flask_thread = threading.Thread(
         target=lambda: app.run(
             host="0.0.0.0", port=port, debug=False,
@@ -1529,6 +1780,7 @@ def launch(port: int = 5173) -> None:
     except KeyboardInterrupt:
         print("\n  Shutting down.", file=sys.__stdout__)
     finally:
+        _pier_cam_stop.set()
         if _safety_mgr is not None:
             _safety_mgr.stop()
         if _image_watcher is not None:

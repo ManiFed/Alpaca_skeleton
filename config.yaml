@@ -30,6 +30,16 @@ logging:
   level: INFO
   format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
+pier_cam:
+  enabled: false
+  device_index: 0           # ZWO camera index (may differ from ALPACA device number)
+  sdk_lib: ""               # path to libASICamera2.dylib/.so; blank = auto-detect
+  exposure_ms: 80           # milliseconds per preview frame
+  gain: 200
+  bin: 2                    # 1=full res, 2=half, etc.
+  target_fps: 10
+  jpeg_quality: 75
+
 image_watcher:
   enabled: false                  # set true to watch for Seestar FITS files
   watch_path: "/mnt/seestar"      # local mount point of the SMB share
