@@ -1427,7 +1427,7 @@ async function apiSlew() {
 
 # ── Public entry point ─────────────────────────────────────────────────────────
 
-def launch(port: int = 5000) -> None:
+def launch(port: int = 5173) -> None:
     """
     Start the Flask dashboard, open the browser, and immediately begin the
     sequence.  Blocks until the user hits Ctrl-C.
