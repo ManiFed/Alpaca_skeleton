@@ -19,6 +19,7 @@ from flask import Flask, Response, jsonify, render_template_string, request, str
 
 from alpaca.client import AlpacaError
 from alpaca.discovery import discover_servers
+from alpaca.safety_manager import SafetyManager
 from alpaca.telescope import Telescope
 from alpaca.camera import Camera
 
@@ -51,6 +52,15 @@ _state: dict[str, Any] = {
         "state":       None,
         "state_name":  None,
         "image_ready": None,
+    },
+    "safety": {
+        "safe":              True,
+        "parked":            False,
+        "reason":            "",
+        "heartbeat_ok":      True,
+        "disconnected_secs": None,
+        "sun_elevation":     None,
+        "dawn_threshold":    -18.0,
     },
     "hold_remaining": None,
     "error":          None,
@@ -130,6 +140,20 @@ sys.stdout = _StdoutCapture()  # type: ignore[assignment]
 _tel: Optional[Telescope] = None
 _cam: Optional[Camera] = None
 
+# ── Safety manager (created in launch(), telescope attached after connect) ─────
+
+_safety_mgr: Optional[SafetyManager] = None
+
+
+def _on_safety_unsafe() -> None:
+    """Called by SafetyManager when the system becomes unsafe."""
+    _run_abort.set()
+    reason = _safety_mgr.status()["reason"] if _safety_mgr else "unknown"
+    with _state_lock:
+        _state["phase"] = "error"
+        _state["error"] = f"Safety stop: {reason}"
+    logger.critical("Safety manager triggered abort: %s", reason)
+
 
 # ── Background poller ──────────────────────────────────────────────────────────
 
@@ -171,6 +195,14 @@ def _poll_loop() -> None:
             except Exception:
                 with _state_lock:
                     _state["camera"]["connected"] = False
+
+        if _safety_mgr is not None:
+            try:
+                safety_snap = _safety_mgr.status()
+                with _state_lock:
+                    _state["safety"].update(safety_snap)
+            except Exception:
+                pass
 
         time.sleep(1.0)
 
@@ -226,6 +258,8 @@ def _run_sequence(cfg: dict) -> None:
             _tel.connect()
             with _state_lock:
                 _state["telescope"].update(enabled=True, connected=True)
+            if _safety_mgr is not None:
+                _safety_mgr.attach_telescope(_tel)
 
         if devices_cfg.get("camera", {}).get("enabled", False):
             num = devices_cfg["camera"].get("device_number", 0)
@@ -403,6 +437,8 @@ def api_connect():
             _tel.connect()
             with _state_lock:
                 _state["telescope"].update(enabled=True, connected=True)
+            if _safety_mgr is not None:
+                _safety_mgr.attach_telescope(_tel)
         except Exception as exc:
             logger.error("Telescope connect failed: %s", exc)
 
@@ -442,6 +478,13 @@ def api_abort():
     _run_abort.set()
     logger.warning("Abort requested by user.")
     return jsonify({"ok": True})
+
+
+@app.route("/api/safety")
+def api_safety():
+    if _safety_mgr is None:
+        return jsonify({"enabled": False})
+    return jsonify({"enabled": True, **_safety_mgr.status()})
 
 
 # ── HTML template ──────────────────────────────────────────────────────────────
@@ -714,6 +757,14 @@ body {
     Server: <span id="hdrAddr"></span>
   </div>
 
+  <div class="conn-pill" id="safetyPill" style="display:none">
+    <span class="dot dot-green" id="safetyDot"></span>
+    <span id="safetyLabel" style="letter-spacing:1px;font-size:11px;">SAFE</span>
+    <span id="safetyReason" style="color:var(--dim);font-size:10px;margin-left:4px;"></span>
+  </div>
+
+  <div style="color:var(--dim);font-size:11px;" id="sunEl"></div>
+
   <div class="hdr-right">
     <button class="btn btn-blue"  onclick="showDiscover()">Discover</button>
     <button class="btn btn-green" id="btnRun"   onclick="apiRun()"   disabled>Run Sequence</button>
@@ -849,6 +900,42 @@ function render(s) {
   renderSteps(s);
   renderTelescope(s.telescope || {});
   renderCamera(s.camera || {});
+  renderSafety(s.safety || {});
+}
+
+function renderSafety(sf) {
+  const pill   = document.getElementById("safetyPill");
+  const dot    = document.getElementById("safetyDot");
+  const label  = document.getElementById("safetyLabel");
+  const reason = document.getElementById("safetyReason");
+  const sunEl  = document.getElementById("sunEl");
+
+  if (!sf || sf.safe === undefined) { pill.style.display = "none"; return; }
+  pill.style.display = "flex";
+
+  if (sf.safe) {
+    dot.className    = "dot dot-green";
+    label.textContent = "SAFE";
+    label.style.color = "var(--green)";
+    reason.textContent = sf.heartbeat_ok ? "" : "hb?";
+  } else {
+    dot.className     = "dot dot-red pulse";
+    label.textContent = "UNSAFE";
+    label.style.color = "var(--red)";
+    reason.textContent = sf.reason ? `· ${sf.reason}` : "";
+  }
+
+  if (sf.sun_elevation !== null && sf.sun_elevation !== undefined) {
+    const el  = sf.sun_elevation.toFixed(1);
+    const thr = sf.dawn_threshold !== undefined ? sf.dawn_threshold.toFixed(0) : "-18";
+    const col = sf.sun_elevation > sf.dawn_threshold
+      ? "var(--yellow)" : "var(--dim)";
+    sunEl.style.color = col;
+    sunEl.textContent = `☀ ${el >= 0 ? "+" : ""}${el}°`;
+    sunEl.title       = `Sun elevation (dawn at ${thr}°)`;
+  } else {
+    sunEl.textContent = "";
+  }
 }
 
 function renderHeader(s) {
@@ -1133,6 +1220,8 @@ def launch(port: int = 5000) -> None:
 
     Called by both ``python dashboard.py`` and ``python main.py``.
     """
+    global _safety_mgr
+
     import urllib.request
     import webbrowser
 
@@ -1142,6 +1231,11 @@ def launch(port: int = 5000) -> None:
         level=log_cfg.get("level", "INFO"),
         format=log_cfg.get("format", "%(asctime)s [%(levelname)s] %(name)s: %(message)s"),
     )
+
+    # Create and start the safety manager from the main thread so that
+    # OS signal handlers (SIGTERM, SIGINT) are registered correctly.
+    _safety_mgr = SafetyManager(config=cfg, on_unsafe=_on_safety_unsafe)
+    _safety_mgr.start()
 
     # Start Flask in a daemon thread so it dies when the process exits.
     flask_thread = threading.Thread(
@@ -1181,6 +1275,9 @@ def launch(port: int = 5000) -> None:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\n  Shutting down.", file=sys.__stdout__)
+    finally:
+        if _safety_mgr is not None:
+            _safety_mgr.stop()
 
 
 if __name__ == "__main__":

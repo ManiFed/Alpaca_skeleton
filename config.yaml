@@ -29,3 +29,15 @@ camera:
 logging:
   level: INFO
   format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+safety:
+  enabled: true
+  disconnect_timeout: 600       # seconds — park after this long without telescope contact
+  heartbeat_interval: 30        # seconds between connection checks
+  reconnect_attempts: 3         # retries before declaring connection lost
+  reconnect_delay: 10           # seconds between reconnect attempts
+  park_at_dawn: true            # park automatically at dawn
+  dawn_type: astronomical       # astronomical (-18°), nautical (-12°), civil (-6°)
+  observer:
+    latitude: 0.0               # decimal degrees N  ← set your location
+    longitude: 0.0              # decimal degrees E  (negative = West)

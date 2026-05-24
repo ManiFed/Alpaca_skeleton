@@ -1,9 +1,17 @@
-# ALPACA Skeleton
+# NODE v1 — ALPACA Agent with Safety Manager
 
-A lightweight Python implementation of the ALPACA protocol for reliable communication with networked astronomy devices. This skeleton automatically discovers ALPACA servers on the local network, connects to their components (telescope, camera, focuser, filter wheel), and executes basic remote commands with clear logging at every step.
+A robust Python agent for automated observatory control via the ALPACA protocol, with an integrated **Safety Manager** that monitors telescope connectivity, parks automatically at dawn, and handles graceful shutdown on connection loss or system signals.
 
 **What is ALPACA?**  
 ALPACA (Astronomy Low-level Control And Automation) is an open, standardized HTTP/JSON protocol defined by the [ASCOM Initiative](https://ascom-standards.org/). It allows astronomy software to talk to mounts, cameras, focusers, and other equipment over a network without worrying about proprietary drivers or serial ports.
+
+**What is the Safety Manager?**  
+The Safety Manager is a protective watchdog that runs continuously in the background, ensuring the telescope is safely stowed whenever the system is at risk:
+- **Heartbeat monitoring**: Pings the telescope every 30 seconds; auto-parks if unreachable for >10 minutes
+- **Reconnect logic**: Automatically attempts to re-establish lost connections with retry backoff
+- **Dawn parking**: Calculates solar elevation and parks the telescope at astronomical dawn (or nautical/civil dawn if configured)
+- **Graceful signals**: On `SIGTERM` or `SIGINT` (Ctrl-C), parks the mount before exiting
+- **Safe-to-operate check**: Other modules can query `is_safe()` to gate operations and avoid damage
 
 ---
 
@@ -83,45 +91,79 @@ camera:
   exposure_duration: 1.0       # Seconds
   binning: 1                   # 1x1, 2x2, etc.
 
+safety:
+  enabled: true                                    # Enable the Safety Manager
+  disconnect_timeout: 600                          # Park after 10 min without contact
+  heartbeat_interval: 30                           # Ping every 30 seconds
+  reconnect_attempts: 3                            # Try 3 times before giving up
+  reconnect_delay: 10                              # 10 seconds between reconnect attempts
+  park_at_dawn: true                               # Park at astronomical dawn
+  dawn_type: astronomical                          # astronomical (-18°), nautical (-12°), civil (-6°)
+  observer:
+    latitude: 37.7749                              # ← SET TO YOUR LOCATION
+    longitude: -122.4194                           # (negative = West)
+
 logging:
   level: INFO                  # DEBUG, INFO, WARNING, ERROR
   format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 ```
 
-### 3. Run the Skeleton
+**Safety parameters:**
+- **`disconnect_timeout`**: After this many seconds without telescope contact, park the mount (prevents damage if the network drops). Default 600 s (10 minutes).
+- **`heartbeat_interval`**: Ping the telescope this often. Default 30 s; decrease for faster detection of dropouts (at the cost of more network traffic).
+- **`reconnect_attempts` / `reconnect_delay`**: On heartbeat failure, retry this many times with this delay between attempts. E.g., 3 attempts × 10 s = up to 30 s spent trying to reconnect before starting the disconnect timer.
+- **`park_at_dawn`**: Enable automatic parking at dawn. Disable if you want to run observations through twilight.
+- **`dawn_type`**: Which solar elevation threshold defines dawn:
+  - `astronomical`: −18° (civil twilight ends; stars invisible)
+  - `nautical`: −12° (practical horizon visible, star count drops sharply)
+  - `civil`: −6° (sunrise/sunset area, horizon clearly visible)
+- **`observer.latitude` / `longitude`**: Your site coordinates (decimal degrees). **Set these for accurate dawn detection.** If left at `0/0`, dawn checking is disabled.
+
+### 3. Run the Dashboard
 
 ```bash
-python main.py
+python dashboard.py
 ```
 
 **What happens:**
 
-1. **Discovery**: Broadcasts `alpacadiscovery1` on port 32227 (UDP) and waits up to 5 seconds for responses.
-2. **Server selection**: Uses the first responding server (e.g., `192.168.1.100:11111`).
-3. **Connection**: Connects to each enabled device (telescope, camera, etc.) in sequence.
-4. **Smoke test**:
-   - Unparks the telescope (if enabled)
-   - Enables tracking (sidereal rate)
-   - Slews to the RA/Dec from `config.yaml`
-   - Takes a short exposure with the camera
-   - Parks the telescope
-5. **Cleanup**: Disconnects all devices gracefully, even on error or Ctrl-C.
+1. **Flask web server** starts on `http://localhost:5000`
+2. **Safety Manager** starts (registers OS signal handlers, begins monitoring)
+3. **Browser opens** automatically to the dashboard
+4. **Automatic sequence** begins:
+   - Discovers ALPACA servers on the LAN
+   - Connects to the first server (telescope, camera, etc.)
+   - Executes: unpark → track → slew → expose → park
+   - All actions show live in the dashboard with timestamps and coordinates
+5. **Concurrent monitoring**: While the sequence runs, the Safety Manager watches for:
+   - Connection drops (auto-reconnects, parks after 10 minutes if unreachable)
+   - Astronomical dawn (parks automatically at −18° solar elevation)
+   - User abort or system signals (parks before exiting)
 
-**Sample output:**
+**Dashboard features:**
+- **Live sequence progress** with step indicators (Discover → Connect → Unpark → Slew → Hold → Expose → Park)
+- **Telescope state**: real-time RA/Dec coordinates, slewing status, tracking, park status
+- **Camera state**: exposure mode, image readiness
+- **Safety status**: ✓ SAFE or ✗ UNSAFE (with reason), sun elevation, heartbeat indicator
+- **Live log stream**: every action logged with timestamps and colours
+- **Manual controls**: Discover, Run Sequence, Abort buttons
+
+**Sample dashboard log:**
 ```
-2026-05-22 14:35:22,123 [INFO] alpaca.discovery: Broadcasting ALPACA discovery on port 32227
-2026-05-22 14:35:24,456 [INFO] alpaca.discovery: Discovered ALPACA server at 192.168.1.100:11111
-2026-05-22 14:35:24,500 [INFO] main: Using server 192.168.1.100:11111
-2026-05-22 14:35:24,700 [INFO] alpaca.telescope: Telescope connected: Simulator Telescope
-2026-05-22 14:35:24,850 [INFO] alpaca.camera: Camera connected: Simulator Camera
-2026-05-22 14:35:25,100 [INFO] alpaca.telescope: Telescope unparked
-2026-05-22 14:35:25,300 [INFO] alpaca.telescope: Slewing to RA=10.6833 h  Dec=41.2692 °
-2026-05-22 14:35:27,500 [INFO] alpaca.telescope: Slew complete — RA=10.6833 h  Dec=41.2692 °
-2026-05-22 14:35:27,700 [INFO] alpaca.camera: Starting 1.00 s light exposure
-2026-05-22 14:35:28,900 [INFO] alpaca.camera: Exposure complete — image ready for download
-2026-05-22 14:35:29,100 [INFO] alpaca.telescope: Parking telescope…
-2026-05-22 14:35:31,300 [INFO] alpaca.telescope: Telescope parked
-2026-05-22 14:35:31,400 [INFO] main: Done.
+14:35:22 [INFO] alpaca.discovery: Broadcasting ALPACA discovery on port 32227
+14:35:24 [INFO] alpaca.discovery: Discovered ALPACA server at 192.168.1.100:11111
+14:35:24 [INFO] dashboard: Connecting to ALPACA server 192.168.1.100:11111
+14:35:24 [INFO] alpaca.telescope: Telescope connected: Simulator Telescope
+14:35:24 [INFO] alpaca.camera: Camera connected: Simulator Camera
+14:35:25 [INFO] alpaca.telescope: Telescope unparked
+14:35:25 [INFO] alpaca.telescope: Tracking set to True
+14:35:25 [INFO] alpaca.telescope: Slewing to RA=10.6833 h  Dec=41.2692 °
+14:35:27 [INFO] alpaca.telescope: Slew complete — RA=10.6833 h  Dec=41.2692 °
+14:35:29 [INFO] alpaca.camera: Starting 1.00 s light exposure
+14:35:30 [INFO] alpaca.camera: Exposure complete — image ready for download
+14:35:31 [INFO] alpaca.telescope: Parking telescope…
+14:35:33 [INFO] alpaca.telescope: Telescope parked
+14:35:33 [INFO] dashboard: Sequence complete.
 ```
 
 ---
@@ -131,14 +173,33 @@ python main.py
 ### Architecture
 
 ```
-main.py (entry point)
-  └─ discover_servers()  ← UDP broadcast discovery
-       └─ DeviceManager  ← owns device lifecycle
+dashboard.py (entry point)
+  ├─ Flask web server (port 5000)
+  │   ├─ /api/discover       — UDP broadcast discovery
+  │   ├─ /api/connect        — manual server connect
+  │   ├─ /api/run            — start sequence
+  │   ├─ /api/abort          — stop sequence
+  │   ├─ /api/status         — current state (telescope, camera, phase, safety)
+  │   ├─ /api/safety         — safety manager status
+  │   └─ /api/logs           — live log stream (Server-Sent Events)
+  │
+  ├─ SafetyManager (daemon thread)
+  │   ├─ Heartbeat monitor (every 30s)
+  │   ├─ Reconnect logic (retry + exponential backoff)
+  │   ├─ Dawn calculator (solar elevation NOAA algorithm)
+  │   ├─ Signal handlers (SIGTERM, SIGINT)
+  │   └─ Emergency park on: timeout / dawn / disconnect / signals
+  │
+  └─ Sequence runner (daemon thread)
+       └─ DeviceManager (owns device lifecycle)
             ├─ Telescope
+            │   └─ AlpacaClient (HTTP/JSON wrapper)
             ├─ Camera
-            ├─ Focuser
-            └─ FilterWheel
-                 └─ AlpacaClient (HTTP/JSON wrapper)
+            │   └─ AlpacaClient
+            ├─ Focuser (optional)
+            │   └─ AlpacaClient
+            └─ FilterWheel (optional)
+                 └─ AlpacaClient
 ```
 
 ### Module Breakdown
@@ -192,19 +253,33 @@ Owns all device objects and their lifecycle:
 - `connect_all()`: connects all devices in sequence, logs connection strings
 - `disconnect_all()`: gracefully disconnects each device, catches exceptions so one failure doesn't break cleanup
 
-#### `main.py`
-Orchestrates the full session:
-1. Load `config.yaml`
-2. Set up logging
-3. Broadcast discovery; fail with a clear message if no servers respond
-4. Build DeviceManager with the first server
-5. Call `connect_all()` to establish connections
-6. Run `run_smoke_test()`: unpark → track → slew → expose → park
-7. Catch `KeyboardInterrupt` (Ctrl-C) and unhandled exceptions gracefully
-8. Always call `disconnect_all()` in the `finally` block
+#### `alpaca/safety_manager.py`
+**Protective watchdog** that monitors the telescope and ensures safe operation:
 
-**Why `finally`?**  
-Ensures devices are disconnected even if the user hits Ctrl-C or an exception occurs. This prevents dangling connections that could lock the server.
+**Key responsibilities:**
+- **Heartbeat pings**: Every 30 seconds, queries `GET /connected` to verify the server is reachable
+- **Reconnect logic**: On heartbeat failure, immediately tries up to 3 reconnection attempts with 10-second backoff
+- **Connection timeout**: If the telescope remains unreachable for >10 minutes (configurable), sends an emergency park command
+- **Dawn parking**: Calculates solar elevation using the NOAA algorithm; parks when the sun crosses the astronomical dawn threshold (−18°, or −12° for nautical, −6° for civil)
+- **Signal handling**: On `SIGTERM` or `SIGINT` (Ctrl-C), parks the mount before exiting — prevents damaging slew if power/network is lost
+- **Safe-to-operate API**: Other modules call `is_safe()` and `status()` to check if it's safe to continue operations
+
+**Why a separate thread?**  
+The Safety Manager runs continuously in the background, independent of the sequence. It can trigger an emergency park even if the sequence is hung or doesn't respond.
+
+#### `dashboard.py`
+Web-based sequence runner with live monitoring:
+- **Flask server** on port 5000 with real-time log streaming (Server-Sent Events)
+- **Background poller** updates telescope/camera state every second
+- **Sequence runner thread** orchestrates: discover → connect → unpark → track → slew → expose → park
+- **Safety integration**: SafetyManager is instantiated at startup (so signal handlers are registered from the main thread), and `on_unsafe()` callback aborts the sequence if the system becomes unsafe
+- **Live UI**: Shows current phase, coordinates, camera state, safety status, and a live scrolling log
+
+**Key files:**
+- `/api/status` — returns full system state (telescope, camera, sequence phase, safety flags)
+- `/api/logs` — Server-Sent Events stream of all logged messages
+- `/api/run` — POST to start the sequence
+- `/api/abort` — POST to stop the sequence
 
 ---
 
@@ -222,9 +297,34 @@ Most ALPACA servers have only one of each device (number 0). If yours supports m
 - **Dec**: decimal degrees (-90 to +90). Example: 41.2692° = 41° 16' 09"
 - **Tracking rate**: 0 = Sidereal (default), 1 = Lunar, 2 = Solar, 3 = King
 
+### Safety Manager & Dawn Calculation
+The Safety Manager calculates solar elevation at your site using the NOAA algorithm (accurate to ±0.3° for 2000–2050). To enable dawn parking:
+
+1. **Set your location** in `config.yaml`:
+   ```yaml
+   observer:
+     latitude: 37.7749       # decimal degrees N (or S if negative)
+     longitude: -122.4194    # decimal degrees E (or W if negative)
+   ```
+   Use Google Maps or similar to find your coordinates.
+
+2. **Pick a dawn type**:
+   - `astronomical`: Sun at −18° → civil twilight completely ends; all stars visible (typical for deep-sky imaging)
+   - `nautical`: Sun at −12° → horizon clearly visible; some faint stars disappear
+   - `civil`: Sun at −6° → typical sunrise/sunset area
+
+3. **The Safety Manager will:**
+   - Calculate the current solar elevation every 5 seconds
+   - Park the telescope when the sun crosses the threshold
+   - Log: `SafetyManager: EMERGENCY PARK — dawn — sun 14.5° > threshold −18.0°`
+
+**Why 5-second polling?**  
+The sun moves ~0.01° per minute near dawn, so 5-second checks are more than sufficient to catch the exact moment. The overhead is negligible.
+
 ### Logging
-- Set `level: DEBUG` to see HTTP requests/responses
+- Set `level: DEBUG` to see HTTP requests/responses and detailed safety checks
 - Set `level: WARNING` to suppress verbose INFO messages
+- Logs appear both in the terminal and in the dashboard's **Live Log** pane
 
 ---
 
@@ -255,25 +355,96 @@ Most ALPACA servers have only one of each device (number 0). If yours supports m
 - For production, consider FITS file export or a binary protocol like ASCOM COM (Windows-only)
 - For testing, skip image download in `run_smoke_test()` (it's already commented out)
 
+### Safety Manager Never Parks (even though connection is lost)
+- **Check observer location**: If `latitude: 0.0, longitude: 0.0`, dawn checking is disabled but connection monitoring should still work
+- **Check `safety.enabled: true`**: The Safety Manager must be enabled in `config.yaml`
+- **Increase disconnect_timeout**: Default is 600 seconds (10 min). If you set it too high, it may appear to not work
+- **Check logs for heartbeat errors**: The dashboard's **Live Log** shows `SafetyManager: heartbeat failed` when disconnections are detected
+- **Test with a manual disconnect**: Stop the ALPACA server and verify the Safety Manager tries to reconnect (check the logs)
+
+### Safety Manager Parks Too Early (false positive)
+- **Check network stability**: Transient dropouts (milliseconds to seconds) should not trigger parks, but sustained dropouts will
+- **Reduce `disconnect_timeout`**: Default 600 s. If you want faster response to dropouts, try 300 s (5 minutes)
+- **Check reconnect settings**: If `reconnect_attempts` or `reconnect_delay` are too short, valid reconnections might fail. Try increasing them
+
+### Dawn Parking Not Triggering
+- **Verify observer location**: Set `latitude` and `longitude` to your actual site (not 0, 0)
+- **Check dawn_type**: Default is `astronomical` (−18°). In summer at mid-latitude sites, the sun may not dip to −18° during nautical twilight. Try `civil` (−6°) or `nautical` (−12°) instead
+- **Check current sun elevation**: The dashboard header shows `☀ +14.5°` etc. If the sun is already above the threshold, it won't trigger until the next night
+- **Disable and re-enable**: Stop the app, set a much higher `dawn_threshold` (e.g., `5.0°` to trigger while sun is still above horizon for testing), restart, and verify it parks immediately
+
+### Dashboard Shows "UNSAFE" But Sequence Keeps Running
+- This is the safety manager successfully **aborting** the sequence. Check:
+  - Logs will show `SafetyManager: EMERGENCY PARK — <reason>` and `Safety manager triggered abort: <reason>`
+  - The phase will change to `error`
+  - The telescope should be parking or already parked
+- If the telescope didn't park, check its connection and logs for errors
+
 ---
 
-## Extending the Skeleton
+## Extending the Agent
 
 ### Adding a New Device Type
 1. Create `alpaca/mydevice.py` modeled on `telescope.py`
 2. Subclass or wrap `AlpacaClient` with your device-specific methods
 3. Add it to `DeviceManager.connect_all()` and `disconnect_all()`
 4. Add a config entry in `config.yaml`
-5. Use it in `run_smoke_test()` in `main.py`
+5. Use it in the sequence (in `_run_sequence()` in `dashboard.py`)
 
-### Adding Error Recovery
-Wrap device calls in try-except blocks and retry with exponential backoff. The `AlpacaClient.wait_for()` method is a good model.
+### Gating Operations on Safety
+If you add custom operations that might be dangerous (e.g., motor movement, focuser motion), **check the Safety Manager before starting:**
+
+```python
+if not _safety_mgr.is_safe():
+    logger.critical("Cannot proceed: system is unsafe (%s)", 
+                    _safety_mgr.status()["reason"])
+    return
+
+# Safe to proceed with movement
+my_device.move()
+```
+
+This prevents operations while the mount is being parked, during signal shutdown, or if the connection is lost.
+
+### Extending the Safety Manager
+The Safety Manager is self-contained but extensible:
+
+- **Add custom safety checks**: Subclass `SafetyManager` and override `_run_dawn_check()` to add, e.g., wind speed monitoring, temperature warnings, etc.
+- **Change park behavior**: Override `_emergency_park()` to log to a database, send alerts, or execute custom shutdown procedures
+- **Adjust heartbeat strategy**: Change `_heartbeat()` to use a different device method or add redundant checks (e.g., poll both telescope and camera)
+
+Example (wind monitoring):
+```python
+class ExtendedSafetyManager(SafetyManager):
+    def _run_wind_check(self):
+        # Query weather API
+        wind_speed = get_wind_speed()
+        if wind_speed > 30:  # mph
+            self._emergency_park(f"high wind ({wind_speed} mph)")
+
+# In dashboard.py launch():
+_safety_mgr = ExtendedSafetyManager(config=cfg, on_unsafe=_on_safety_unsafe)
+_safety_mgr.start()
+```
 
 ### Adding Automated Sequences
-Replace `run_smoke_test()` with your own function, e.g., `run_imaging_sequence()` that coordinates the telescope, camera, focuser, and filter wheel for a full observation.
+Modify `_run_sequence()` in `dashboard.py` to add more sophisticated workflows:
+- Iterative exposure loops
+- Focus optimization
+- Dither patterns
+- Thermal or guide camera loops
 
-### Adding a Web Dashboard
-Use Flask or FastAPI to wrap `DeviceManager` and expose its state via REST or WebSocket. The discovery and device modules are already modular enough for this.
+All sequences have access to `_safety_mgr` and should check `is_safe()` before starting long operations.
+
+### Exposing Additional Status
+Add new routes to `dashboard.py` to expose custom state. For example:
+```python
+@app.route("/api/wind")
+def api_wind():
+    return jsonify({"wind_speed": get_wind_speed(), "safe": get_wind_speed() < 30})
+```
+
+Update the dashboard HTML to display the new data (add panels or status pills like the safety indicator).
 
 ---
 
@@ -326,6 +497,26 @@ filterwheel.is_moving() -> bool
 filterwheel.filter_names() -> list[str]
 filterwheel.set_position(slot: int)  # blocks until done
 ```
+
+### Safety Manager
+```python
+safety_mgr = SafetyManager(telescope=None, config=cfg, on_unsafe=callback)
+safety_mgr.attach_telescope(telescope)  # call after device connects
+safety_mgr.start()                      # install signal handlers + start monitor thread
+safety_mgr.stop()                       # request graceful shutdown
+safety_mgr.is_safe() -> bool            # safe to continue operations?
+safety_mgr.status() -> dict             # {safe, parked, reason, heartbeat_ok, ...}
+```
+
+**Safety status dict keys:**
+- `safe`: bool — True if safe to operate
+- `parked`: bool — True if mount was parked by safety manager
+- `reason`: str — why system is unsafe (empty if safe)
+- `heartbeat_ok`: bool — True if last heartbeat succeeded
+- `last_heartbeat`: float | None — UTC Unix timestamp of last successful ping
+- `disconnected_secs`: float | None — seconds since connection loss (None if connected)
+- `sun_elevation`: float | None — current solar elevation in degrees at observer location
+- `dawn_threshold`: float — elevation angle that triggers dawn parking
 
 ---
 
