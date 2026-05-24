@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Web dashboard for monitoring the ALPACA telescope control script.
+NODE v1 — Interactive ALPACA control panel.
 
 Run:  python dashboard.py
-Then open http://localhost:5000 in a browser.
+Then open http://localhost:5173 in a browser.
 """
 
 import base64
@@ -19,14 +19,11 @@ from typing import Any, Optional
 import yaml
 from flask import Flask, Response, jsonify, render_template_string, request, stream_with_context
 
-from alpaca.client import AlpacaError
 from alpaca.discovery import discover_servers
 from alpaca.safety_manager import SafetyManager
 from alpaca.telescope import Telescope
 from alpaca.camera import Camera
 
-
-# ── Flask app ──────────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
@@ -35,10 +32,8 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 # ── Shared state ───────────────────────────────────────────────────────────────
 
 _state: dict[str, Any] = {
-    "server":         None,   # {"address": str, "port": int} | None
-    "connected":      False,
-    "phase":          "idle", # idle | discovering | connecting | unpark | tracking_on |
-                              # verify_movement | slew | hold | expose | park | done | error
+    "server":    None,
+    "connected": False,
     "telescope": {
         "enabled":   False,
         "connected": False,
@@ -47,6 +42,7 @@ _state: dict[str, Any] = {
         "tracking":  None,
         "ra":        None,
         "dec":       None,
+        "busy":      False,
     },
     "camera": {
         "enabled":     False,
@@ -54,6 +50,7 @@ _state: dict[str, Any] = {
         "state":       None,
         "state_name":  None,
         "image_ready": None,
+        "exposing":    False,
     },
     "safety": {
         "safe":              True,
@@ -64,10 +61,9 @@ _state: dict[str, Any] = {
         "sun_elevation":     None,
         "dawn_threshold":    -18.0,
     },
-    "hold_remaining":  None,
-    "error":           None,
-    "run_active":      False,
-    "image_captured":  False,
+    "image_captured": False,
+    "image_id":       0,
+    "error":          None,
 }
 _state_lock = threading.Lock()
 
@@ -121,11 +117,7 @@ logging.getLogger().addHandler(_BroadcastHandler())
 logger = logging.getLogger("dashboard")
 
 
-# ── Stdout capture (catches print() calls in verify_movement etc.) ─────────────
-
 class _StdoutCapture:
-    _orig = sys.__stdout__
-
     def write(self, text: str) -> None:
         text = text.strip()
         if text:
@@ -138,19 +130,15 @@ class _StdoutCapture:
 sys.stdout = _StdoutCapture()  # type: ignore[assignment]
 
 
-# ── Device handles (set by poller/sequence, read by both) ─────────────────────
+# ── Device handles ─────────────────────────────────────────────────────────────
 
 _tel: Optional[Telescope] = None
 _cam: Optional[Camera] = None
-
-# ── Captured image (base64-encoded PNG, set after expose) ─────────────────────
-
 _last_image_b64: Optional[str] = None
 _last_image_lock = threading.Lock()
 
 
 def _capture_image() -> None:
-    """Download the latest image from the camera, convert to PNG, and store as base64."""
     global _last_image_b64
     if _cam is None:
         return
@@ -162,13 +150,11 @@ def _capture_image() -> None:
         raw = _cam.image_array()
         arr = np.array(raw, dtype=np.float32)
 
-        # ALPACA returns shape (planes, height, width) for color or (height, width) for mono.
         if arr.ndim == 3 and arr.shape[0] in (1, 3):
             arr = np.transpose(arr, (1, 2, 0))
             if arr.shape[2] == 1:
                 arr = arr[:, :, 0]
 
-        # Stretch to 8-bit
         mn, mx = float(arr.min()), float(arr.max())
         if mx > mn:
             arr = (arr - mn) / (mx - mn) * 255.0
@@ -185,24 +171,22 @@ def _capture_image() -> None:
             _last_image_b64 = b64
         with _state_lock:
             _state["image_captured"] = True
+            _state["image_id"] += 1
         logger.info("Image stored — %.1f KB PNG", len(b64) * 3 / 4 / 1024)
     except Exception as exc:
         logger.error("Image capture failed: %s", exc)
 
 
-# ── Safety manager (created in launch(), telescope attached after connect) ─────
+# ── Safety manager ─────────────────────────────────────────────────────────────
 
 _safety_mgr: Optional[SafetyManager] = None
 
 
 def _on_safety_unsafe() -> None:
-    """Called by SafetyManager when the system becomes unsafe."""
-    _run_abort.set()
     reason = _safety_mgr.status()["reason"] if _safety_mgr else "unknown"
     with _state_lock:
-        _state["phase"] = "error"
         _state["error"] = f"Safety stop: {reason}"
-    logger.critical("Safety manager triggered abort: %s", reason)
+    logger.critical("Safety manager triggered: %s", reason)
 
 
 # ── Background poller ──────────────────────────────────────────────────────────
@@ -263,140 +247,6 @@ def _start_poller() -> None:
     t.start()
 
 
-# ── Sequence runner ────────────────────────────────────────────────────────────
-
-_run_abort = threading.Event()
-
-
-def _phase(name: str) -> None:
-    with _state_lock:
-        _state["phase"] = name
-    logger.info("── Phase: %s", name)
-
-
-def _run_sequence(cfg: dict) -> None:
-    global _tel, _cam
-    try:
-        with _state_lock:
-            _state.update(run_active=True, error=None, phase="idle", image_captured=False)
-
-        alpaca_cfg  = cfg.get("alpaca", {})
-        devices_cfg = cfg.get("devices", {})
-        api_ver     = alpaca_cfg.get("api_version", 1)
-
-        # Discovery
-        _phase("discovering")
-        servers = discover_servers(
-            port=alpaca_cfg.get("discovery_port", 32227),
-            timeout=alpaca_cfg.get("discovery_timeout", 5),
-        )
-        if not servers:
-            raise RuntimeError("No ALPACA servers found on LAN")
-        if _run_abort.is_set():
-            return
-
-        server = servers[0]
-        with _state_lock:
-            _state["server"] = server
-
-        # Connect devices
-        _phase("connecting")
-
-        if devices_cfg.get("telescope", {}).get("enabled", False):
-            num = devices_cfg["telescope"].get("device_number", 0)
-            _tel = Telescope(server["address"], server["port"], num, api_ver)
-            _tel.connect()
-            with _state_lock:
-                _state["telescope"].update(enabled=True, connected=True)
-            if _safety_mgr is not None:
-                _safety_mgr.attach_telescope(_tel)
-
-        if devices_cfg.get("camera", {}).get("enabled", False):
-            num = devices_cfg["camera"].get("device_number", 0)
-            _cam = Camera(server["address"], server["port"], num, api_ver)
-            _cam.connect()
-            with _state_lock:
-                _state["camera"].update(enabled=True, connected=True)
-
-        with _state_lock:
-            _state["connected"] = True
-
-        _start_poller()
-
-        if _run_abort.is_set():
-            return
-
-        # ── Telescope sequence ─────────────────────────────────────────────────
-        if _tel is not None:
-            tel_cfg = cfg.get("telescope", {})
-
-            _phase("unpark")
-            _tel.unpark()
-            if _run_abort.is_set(): return
-
-            _phase("tracking_on")
-            _tel.set_tracking(True)
-            if _run_abort.is_set(): return
-
-            _phase("verify_movement")
-            _tel.verify_movement()
-            if _run_abort.is_set(): return
-
-            _phase("slew")
-            _tel.slew_to_coordinates(
-                ra=tel_cfg.get("slew_ra", 0.0),
-                dec=tel_cfg.get("slew_dec", 0.0),
-            )
-            if _run_abort.is_set(): return
-
-            _phase("hold")
-            logger.info("Holding at destination for 3 minutes — check your pier cam…")
-            hold_end = time.monotonic() + 180
-            while time.monotonic() < hold_end and not _run_abort.is_set():
-                remaining = max(0, int(hold_end - time.monotonic()))
-                with _state_lock:
-                    _state["hold_remaining"] = remaining
-                time.sleep(1)
-            with _state_lock:
-                _state["hold_remaining"] = None
-            logger.info("Hold complete, continuing.")
-            if _run_abort.is_set(): return
-
-        # ── Camera sequence ────────────────────────────────────────────────────
-        if _cam is not None:
-            cam_cfg  = cfg.get("camera", {})
-            binning  = cam_cfg.get("binning", 1)
-            duration = cam_cfg.get("exposure_duration", 1.0)
-
-            _phase("expose")
-            _cam.set_binning(binning)
-            _cam.expose(duration=duration, light=True)
-            if _run_abort.is_set(): return
-            _capture_image()
-
-        # ── Park ───────────────────────────────────────────────────────────────
-        if _tel is not None:
-            _phase("park")
-            _tel.park()
-
-        _phase("done")
-        logger.info("Sequence complete.")
-
-    except Exception as exc:
-        logger.exception("Sequence error: %s", exc)
-        with _state_lock:
-            _state["phase"] = "error"
-            _state["error"] = str(exc)
-    finally:
-        with _state_lock:
-            _state["run_active"] = False
-        if _run_abort.is_set():
-            logger.warning("Sequence aborted by user.")
-            with _state_lock:
-                _state["phase"] = "idle"
-                _state["hold_remaining"] = None
-
-
 # ── Config helper ──────────────────────────────────────────────────────────────
 
 def _load_config() -> dict:
@@ -422,7 +272,6 @@ def api_status():
 
 @app.route("/api/logs")
 def api_logs():
-    """Server-Sent Events stream of log records."""
     q: queue.Queue = queue.Queue(maxsize=400)
     for entry in _log_history:
         try:
@@ -469,12 +318,12 @@ def api_discover():
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
     global _tel, _cam
-    data       = request.get_json(force=True) or {}
-    host       = data.get("host", "")
-    port       = int(data.get("port", 11111))
-    cfg        = _load_config()
-    api_ver    = cfg.get("alpaca", {}).get("api_version", 1)
-    devices    = cfg.get("devices", {})
+    data    = request.get_json(force=True) or {}
+    host    = data.get("host", "")
+    port    = int(data.get("port", 11111))
+    cfg     = _load_config()
+    api_ver = cfg.get("alpaca", {}).get("api_version", 1)
+    devices = cfg.get("devices", {})
 
     logger.info("Connecting to ALPACA server %s:%d", host, port)
     with _state_lock:
@@ -510,30 +359,64 @@ def api_connect():
     return jsonify({"ok": True})
 
 
-@app.route("/api/run", methods=["POST"])
-def api_run():
-    with _state_lock:
-        if _state["run_active"]:
-            return jsonify({"error": "Already running"}), 409
-    _run_abort.clear()
-    cfg = _load_config()
-    t = threading.Thread(
-        target=_run_sequence, args=(cfg,), daemon=True, name="sequence"
-    )
-    t.start()
+@app.route("/api/telescope/unpark", methods=["POST"])
+def api_unpark():
+    if _tel is None:
+        return jsonify({"error": "Telescope not connected"}), 400
+
+    def _do():
+        with _state_lock:
+            _state["telescope"]["busy"] = True
+        try:
+            _tel.unpark()
+        except Exception as exc:
+            logger.error("Unpark failed: %s", exc)
+        finally:
+            with _state_lock:
+                _state["telescope"]["busy"] = False
+
+    threading.Thread(target=_do, daemon=True, name="tel-unpark").start()
+    logger.info("Unpark commanded")
     return jsonify({"ok": True})
 
 
-@app.route("/api/abort", methods=["POST"])
-def api_abort():
-    _run_abort.set()
-    logger.warning("Abort requested by user.")
+@app.route("/api/telescope/park", methods=["POST"])
+def api_park():
+    if _tel is None:
+        return jsonify({"error": "Telescope not connected"}), 400
+
+    def _do():
+        with _state_lock:
+            _state["telescope"]["busy"] = True
+        try:
+            _tel.park()
+        except Exception as exc:
+            logger.error("Park failed: %s", exc)
+        finally:
+            with _state_lock:
+                _state["telescope"]["busy"] = False
+
+    threading.Thread(target=_do, daemon=True, name="tel-park").start()
+    logger.info("Park commanded")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/telescope/tracking", methods=["POST"])
+def api_tracking():
+    if _tel is None:
+        return jsonify({"error": "Telescope not connected"}), 400
+    data    = request.get_json(force=True) or {}
+    enabled = bool(data.get("enabled", True))
+    try:
+        _tel.set_tracking(enabled)
+    except Exception as exc:
+        logger.error("Set tracking failed: %s", exc)
+        return jsonify({"error": str(exc)}), 500
     return jsonify({"ok": True})
 
 
 @app.route("/api/slew", methods=["POST"])
 def api_slew():
-    global _tel
     if _tel is None:
         return jsonify({"error": "Telescope not connected"}), 400
     data = request.get_json(force=True) or {}
@@ -547,14 +430,64 @@ def api_slew():
     if not (-90.0 <= dec <= 90.0):
         return jsonify({"error": "Dec must be in range [-90, 90]"}), 400
 
-    def _do_slew():
+    def _do():
         try:
             _tel.slew_to_coordinates(ra=ra, dec=dec)
         except Exception as exc:
-            logger.error("Manual slew failed: %s", exc)
+            logger.error("Slew failed: %s", exc)
 
-    threading.Thread(target=_do_slew, daemon=True, name="manual-slew").start()
-    logger.info("Manual slew commanded: RA=%.4f h  Dec=%.4f °", ra, dec)
+    threading.Thread(target=_do, daemon=True, name="tel-slew").start()
+    logger.info("Slew commanded: RA=%.4f h  Dec=%.4f °", ra, dec)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/camera/expose", methods=["POST"])
+def api_expose():
+    if _cam is None:
+        return jsonify({"error": "Camera not connected"}), 400
+    with _state_lock:
+        if _state["camera"]["exposing"]:
+            return jsonify({"error": "Exposure already in progress"}), 409
+
+    data     = request.get_json(force=True) or {}
+    duration = float(data.get("duration", 1.0))
+    binning  = int(data.get("binning", 1))
+
+    if duration <= 0:
+        return jsonify({"error": "Duration must be > 0"}), 400
+    if binning < 1:
+        return jsonify({"error": "Binning must be >= 1"}), 400
+
+    def _do():
+        with _state_lock:
+            _state["camera"]["exposing"]  = True
+            _state["image_captured"]      = False
+        try:
+            _cam.set_binning(binning)
+            _cam.expose(duration=duration, light=True)
+            _capture_image()
+        except Exception as exc:
+            logger.error("Exposure failed: %s", exc)
+        finally:
+            with _state_lock:
+                _state["camera"]["exposing"] = False
+
+    threading.Thread(target=_do, daemon=True, name="cam-expose").start()
+    logger.info("Exposure started: %.2f s  binning %dx%d", duration, binning, binning)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/camera/abort", methods=["POST"])
+def api_abort_exposure():
+    if _cam is None:
+        return jsonify({"error": "Camera not connected"}), 400
+    try:
+        _cam.abort_exposure()
+        with _state_lock:
+            _state["camera"]["exposing"] = False
+    except Exception as exc:
+        logger.error("Abort exposure failed: %s", exc)
+        return jsonify({"error": str(exc)}), 500
     return jsonify({"ok": True})
 
 
@@ -583,7 +516,7 @@ _HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NODE v1 — ALPACA Dashboard</title>
+<title>NODE v1 — ALPACA Control</title>
 <style>
 :root {
   --bg:       #070a0e;
@@ -624,11 +557,12 @@ body {
   gap: 14px;
   flex-shrink: 0;
 }
-.hdr-logo  { font-size: 17px; font-weight: bold; color: var(--green-hi); letter-spacing: 3px; }
-.hdr-sub   { color: var(--dim); font-size: 10px; letter-spacing: 2px; margin-top: 2px; }
+.hdr-logo { font-size: 17px; font-weight: bold; color: var(--green-hi); letter-spacing: 3px; }
+.hdr-sub  { color: var(--dim); font-size: 10px; letter-spacing: 2px; margin-top: 2px; }
 .hdr-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .hdr-server { color: var(--dim); font-size: 12px; }
 .hdr-server span { color: var(--blue); }
+.hdr-server.hidden { display: none; }
 
 .conn-pill {
   display: flex; align-items: center; gap: 5px;
@@ -647,15 +581,18 @@ body {
   text-transform: uppercase;
   transition: background 0.12s, color 0.12s;
 }
-.btn-green { border-color: var(--green);  color: var(--green); }
-.btn-green:hover:not(:disabled) { background: var(--green);  color: var(--bg); }
-.btn-red   { border-color: var(--red);    color: var(--red); }
-.btn-red:hover:not(:disabled)   { background: var(--red);    color: var(--bg); }
-.btn-blue  { border-color: var(--blue);   color: var(--blue); }
-.btn-blue:hover:not(:disabled)  { background: var(--blue);   color: var(--bg); }
-.btn-dim   { border-color: var(--gray);   color: var(--dim); }
-.btn-dim:hover:not(:disabled)   { background: var(--gray);   color: var(--text); }
+.btn-green  { border-color: var(--green);  color: var(--green); }
+.btn-green:hover:not(:disabled)  { background: var(--green);  color: var(--bg); }
+.btn-red    { border-color: var(--red);    color: var(--red); }
+.btn-red:hover:not(:disabled)    { background: var(--red);    color: var(--bg); }
+.btn-blue   { border-color: var(--blue);   color: var(--blue); }
+.btn-blue:hover:not(:disabled)   { background: var(--blue);   color: var(--bg); }
+.btn-yellow { border-color: var(--yellow); color: var(--yellow); }
+.btn-yellow:hover:not(:disabled) { background: var(--yellow); color: var(--bg); }
+.btn-dim    { border-color: var(--gray);   color: var(--dim); }
+.btn-dim:hover:not(:disabled)    { background: var(--gray);   color: var(--text); }
 .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-full { width: 100%; }
 
 /* ── Dot indicators ── */
 .dot {
@@ -670,11 +607,10 @@ body {
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 .pulse { animation: pulse 1.1s ease-in-out infinite; }
 
-/* ── Main layout ── */
+/* ── Layout ── */
 .main {
   flex: 1;
   display: grid;
-  grid-template-rows: auto 1fr auto;
   grid-template-columns: 1fr 1fr;
   gap: 1px;
   background: var(--border);
@@ -682,69 +618,49 @@ body {
   min-height: 0;
 }
 
-/* ── Log footer (pinned to bottom) ── */
 .log-footer {
   flex-shrink: 0;
-  height: 200px;
+  height: 180px;
   background: var(--surface);
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  min-height: 0;
 }
 
-/* ── Sequence strip (full width, row 1) ── */
-.seq-panel {
-  grid-column: 1 / -1;
-  background: var(--surface);
-  padding: 12px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.panel-label {
-  font-size: 10px; letter-spacing: 2px; color: var(--dim);
-  text-transform: uppercase;
-}
-.steps {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 3px 0;
-}
-.step-chip {
-  padding: 3px 11px;
-  border: 1px solid var(--gray);
-  color: var(--gray);
-  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
-  transition: border-color .15s, color .15s;
-}
-.step-chip.active { border-color: var(--yellow); color: var(--yellow); }
-.step-chip.done   { border-color: var(--green);  color: var(--green); }
-.step-chip.error  { border-color: var(--red);    color: var(--red); }
-.step-arrow { color: var(--gray); padding: 0 3px; font-size: 11px; }
-
-.hold-bar {
-  font-size: 13px; letter-spacing: 3px; color: var(--yellow);
-  margin-top: 2px;
-}
-.err-text { font-size: 12px; color: var(--red); margin-top: 2px; }
-
-/* ── Telescope & Camera panels (row 2) ── */
+/* ── Panels ── */
 .panel {
+  background: var(--surface);
+  padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto; min-height: 0;
+}
+
+.img-col {
+  grid-column: 1 / -1;
   background: var(--surface);
   padding: 14px 20px;
   display: flex; flex-direction: column; gap: 10px;
   overflow: hidden; min-height: 0;
 }
+.img-col.hidden { display: none; }
+
 .panel-hdr {
   display: flex; align-items: center; justify-content: space-between;
-  border-bottom: 1px solid var(--border); padding-bottom: 8px;
+  border-bottom: 1px solid var(--border); padding-bottom: 10px;
+  flex-shrink: 0;
 }
 .panel-name {
   display: flex; align-items: center; gap: 8px;
   font-size: 11px; font-weight: bold; letter-spacing: 2px;
   text-transform: uppercase;
 }
-.badges { display: flex; gap: 5px; flex-wrap: wrap; }
+.panel-label {
+  font-size: 10px; letter-spacing: 2px; color: var(--dim);
+  text-transform: uppercase;
+}
+
+.badges { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
 .badge {
   padding: 2px 7px; font-size: 10px; letter-spacing: 1px;
   text-transform: uppercase; border: 1px solid var(--gray); color: var(--gray);
@@ -754,14 +670,39 @@ body {
 .badge-err  { border-color: var(--red);    color: var(--red); }
 
 /* ── Coordinates ── */
-.coords { display: grid; grid-template-columns: 48px 1fr; gap: 5px 12px; align-items: center; }
+.coords { display: grid; grid-template-columns: 40px 1fr; gap: 4px 10px; align-items: center; }
 .coord-lbl { color: var(--dim); font-size: 11px; text-align: right; }
-.coord-val { font-size: 22px; color: var(--green-hi); letter-spacing: 2px; }
+.coord-val { font-size: 20px; color: var(--green-hi); letter-spacing: 2px; }
 .coord-val.dim { color: var(--gray); }
 .coord-raw { color: var(--dim); font-size: 11px; }
 
+/* ── Control groups ── */
+.ctrl-group {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ctrl-row {
+  display: flex; gap: 6px;
+}
+.ctrl-row .btn { flex: 1; }
+
+.section-div {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+/* ── Input fields ── */
+.inp {
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); font-family: var(--mono); font-size: 13px;
+  padding: 6px 10px; width: 100%;
+}
+.inp:focus { outline: none; border-color: var(--blue); }
+.inp-label { font-size: 10px; color: var(--dim); letter-spacing: 1px; margin-bottom: 3px; }
+.inp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.inp-group { display: flex; flex-direction: column; }
+
 /* ── Camera state ── */
-.cam-state { font-size: 26px; letter-spacing: 3px; }
+.cam-state { font-size: 24px; letter-spacing: 3px; }
 .cs-idle   { color: var(--gray); }
 .cs-wait   { color: var(--dim); }
 .cs-expose { color: var(--yellow); }
@@ -770,48 +711,24 @@ body {
 .cs-error  { color: var(--red); }
 .cam-sub   { color: var(--dim); font-size: 11px; }
 
-/* ── Image panel (row 3, full width) ── */
-.img-panel {
-  grid-column: 1 / -1;
-  background: var(--surface);
-  padding: 12px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.img-panel.hidden { display: none; }
+/* ── Image panel ── */
 .img-inner {
-  display: flex;
-  align-items: flex-start;
-  gap: 20px;
+  display: flex; align-items: flex-start; gap: 20px;
+  overflow: hidden; min-height: 0;
 }
 .img-frame {
-  border: 1px solid var(--border);
-  background: #000;
-  flex-shrink: 0;
-  max-width: 480px;
-  position: relative;
+  border: 1px solid var(--border); background: #000;
+  flex-shrink: 0; max-width: 420px;
 }
 .img-frame img {
-  display: block;
-  max-width: 480px;
-  max-height: 320px;
-  width: 100%;
-  image-rendering: pixelated;
+  display: block; max-width: 420px; max-height: 260px;
+  width: 100%; image-rendering: pixelated;
 }
-.img-meta {
-  color: var(--dim);
-  font-size: 11px;
-  line-height: 1.8;
-}
+.img-meta { color: var(--dim); font-size: 11px; line-height: 1.9; }
 .img-meta span { color: var(--text); }
 
-/* ── Log panel (inside footer) ── */
-.log-panel {
-  display: flex; flex-direction: column;
-  overflow: hidden; min-height: 0;
-  flex: 1;
-}
+/* ── Log ── */
+.log-panel { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
 .log-hdr {
   padding: 6px 20px; border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between;
@@ -819,12 +736,11 @@ body {
 }
 .log-body {
   flex: 1; overflow-y: auto;
-  padding: 5px 20px; font-size: 12px; line-height: 1.65;
+  padding: 4px 20px; font-size: 12px; line-height: 1.6;
 }
 .log-body::-webkit-scrollbar { width: 5px; }
 .log-body::-webkit-scrollbar-track { background: var(--bg); }
 .log-body::-webkit-scrollbar-thumb { background: var(--border); }
-
 .ll { display: flex; gap: 8px; }
 .lt  { color: var(--dim); flex-shrink:0; width:68px; }
 .llv { flex-shrink:0; width:50px; }
@@ -832,11 +748,10 @@ body {
 .llv.WARNING { color: var(--yellow); }
 .llv.ERROR   { color: var(--red); }
 .llv.DEBUG   { color: var(--gray); }
-.ln  { color: var(--blue); flex-shrink:0; min-width:110px; max-width:150px; overflow:hidden; }
+.ln  { color: var(--blue); flex-shrink:0; min-width:100px; max-width:140px; overflow:hidden; }
 .lm  { color: var(--text); word-break: break-all; }
 .lm.warn-msg { color: var(--yellow); }
 .lm.err-msg  { color: var(--red); }
-
 .count-badge {
   font-size: 10px; color: var(--dim);
   padding: 1px 7px; border: 1px solid var(--border);
@@ -852,19 +767,11 @@ body {
 }
 .overlay.hidden { display: none; }
 .card {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  padding: 24px 28px;
-  width: 420px;
+  background: var(--surface2); border: 1px solid var(--border);
+  padding: 24px 28px; width: 420px;
   display: flex; flex-direction: column; gap: 14px;
 }
 .card-title { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--green-hi); }
-.inp {
-  background: var(--bg); border: 1px solid var(--border);
-  color: var(--text); font-family: var(--mono); font-size: 13px;
-  padding: 6px 10px; width: 100%;
-}
-.inp:focus { outline: none; border-color: var(--blue); }
 .inp-row { display: flex; gap: 8px; }
 .srv-list { display: flex; flex-direction: column; gap: 5px; }
 .srv-item {
@@ -881,7 +788,7 @@ body {
 <div class="hdr">
   <div>
     <div class="hdr-logo">NODE v1</div>
-    <div class="hdr-sub">ALPACA DASHBOARD</div>
+    <div class="hdr-sub">ALPACA CONTROL</div>
   </div>
 
   <div class="conn-pill">
@@ -902,24 +809,14 @@ body {
   <div style="color:var(--dim);font-size:11px;" id="sunEl"></div>
 
   <div class="hdr-right">
-    <button class="btn btn-blue"  onclick="showDiscover()">Discover</button>
-    <button class="btn btn-green" id="btnRun"   onclick="apiRun()"   disabled>Run Sequence</button>
-    <button class="btn btn-red"   id="btnAbort" onclick="apiAbort()" disabled>Abort</button>
+    <button class="btn btn-blue" onclick="showDiscover()">Discover</button>
   </div>
 </div>
 
 <!-- Main grid -->
 <div class="main">
 
-  <!-- Sequence strip -->
-  <div class="seq-panel">
-    <div class="panel-label">Sequence Progress</div>
-    <div class="steps" id="steps"></div>
-    <div class="hold-bar hidden" id="holdBar"></div>
-    <div class="err-text hidden"  id="errText"></div>
-  </div>
-
-  <!-- Telescope -->
+  <!-- Telescope panel -->
   <div class="panel">
     <div class="panel-hdr">
       <div class="panel-name">
@@ -928,6 +825,8 @@ body {
       </div>
       <div class="badges" id="telBadges"></div>
     </div>
+
+    <!-- Coordinates -->
     <div class="coords">
       <div class="coord-lbl">R.A.</div>
       <div class="coord-val dim" id="telRA">—</div>
@@ -935,23 +834,43 @@ body {
       <div class="coord-val dim" id="telDec">—</div>
     </div>
     <div class="coord-raw" id="telRaw"></div>
-    <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
-      <div class="panel-label" style="margin-bottom:6px;">Slew Target</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <div>
-          <div style="font-size:10px;color:var(--dim);letter-spacing:1px;margin-bottom:3px;">R.A. (decimal hours)</div>
+
+    <!-- Mount controls -->
+    <div class="ctrl-group section-div">
+      <div class="panel-label">Mount</div>
+      <div class="ctrl-row">
+        <button class="btn btn-green" id="btnUnpark" onclick="apiUnpark()" disabled>Unpark</button>
+        <button class="btn btn-dim"   id="btnPark"   onclick="apiPark()"   disabled>Park</button>
+      </div>
+    </div>
+
+    <!-- Tracking controls -->
+    <div class="ctrl-group">
+      <div class="panel-label">Tracking</div>
+      <div class="ctrl-row">
+        <button class="btn btn-green"  id="btnTrackOn"  onclick="apiTracking(true)"  disabled>Track ON</button>
+        <button class="btn btn-yellow" id="btnTrackOff" onclick="apiTracking(false)" disabled>Track OFF</button>
+      </div>
+    </div>
+
+    <!-- Slew -->
+    <div class="ctrl-group section-div">
+      <div class="panel-label">Slew Target</div>
+      <div class="inp-grid">
+        <div class="inp-group">
+          <div class="inp-label">R.A. (decimal hours)</div>
           <input class="inp" id="slewRA" type="number" min="0" max="23.9999" step="0.0001" placeholder="0.0000">
         </div>
-        <div>
-          <div style="font-size:10px;color:var(--dim);letter-spacing:1px;margin-bottom:3px;">Dec (decimal degrees)</div>
+        <div class="inp-group">
+          <div class="inp-label">Dec (decimal degrees)</div>
           <input class="inp" id="slewDec" type="number" min="-90" max="90" step="0.0001" placeholder="0.0000">
         </div>
       </div>
-      <button class="btn btn-blue" id="btnSlew" onclick="apiSlew()" style="margin-top:8px;width:100%;" disabled>Slew to Target</button>
+      <button class="btn btn-blue btn-full" id="btnSlew" onclick="apiSlew()" disabled>Slew to Target</button>
     </div>
   </div>
 
-  <!-- Camera -->
+  <!-- Camera panel -->
   <div class="panel">
     <div class="panel-hdr">
       <div class="panel-name">
@@ -960,12 +879,33 @@ body {
       </div>
       <div id="camReady" style="font-size:11px;color:var(--gray)"></div>
     </div>
+
+    <!-- State display -->
     <div class="cam-state cs-idle" id="camState">—</div>
     <div class="cam-sub" id="camSub"></div>
+
+    <!-- Exposure controls -->
+    <div class="ctrl-group section-div">
+      <div class="panel-label">Exposure</div>
+      <div class="inp-grid">
+        <div class="inp-group">
+          <div class="inp-label">Duration (seconds)</div>
+          <input class="inp" id="expDuration" type="number" min="0.001" step="0.1" value="1.0" placeholder="1.0">
+        </div>
+        <div class="inp-group">
+          <div class="inp-label">Binning</div>
+          <input class="inp" id="expBinning" type="number" min="1" max="8" step="1" value="1" placeholder="1">
+        </div>
+      </div>
+      <div class="ctrl-row">
+        <button class="btn btn-green" id="btnExpose" onclick="apiExpose()" disabled>Expose</button>
+        <button class="btn btn-red"   id="btnAbortExp" onclick="apiAbortExposure()" disabled>Abort</button>
+      </div>
+    </div>
   </div>
 
-  <!-- Image panel (hidden until an exposure is captured) -->
-  <div class="img-panel hidden" id="imgPanel">
+  <!-- Image panel (hidden until capture) -->
+  <div class="img-col hidden" id="imgPanel">
     <div class="panel-label">Last Exposure</div>
     <div class="img-inner">
       <div class="img-frame">
@@ -975,10 +915,9 @@ body {
     </div>
   </div>
 
-
 </div><!-- /main -->
 
-<!-- Log footer (pinned to bottom) -->
+<!-- Log footer -->
 <div class="log-footer">
   <div class="log-panel">
     <div class="log-hdr">
@@ -996,12 +935,10 @@ body {
 <div class="overlay hidden" id="overlay">
   <div class="card">
     <div class="card-title">Connect to ALPACA Server</div>
-
     <button class="btn btn-blue" id="scanBtn" onclick="doScan()" style="width:100%">
       Scan LAN for servers
     </button>
     <div class="srv-list" id="srvList"></div>
-
     <div class="sep"></div>
     <div style="color:var(--dim);font-size:11px;">Manual entry</div>
     <div class="inp-row">
@@ -1010,44 +947,12 @@ body {
     </div>
     <div style="display:flex;gap:8px;">
       <button class="btn btn-green" onclick="doManualConnect()" style="flex:1">Connect</button>
-      <button class="btn btn-dim" onclick="hideDiscover()">Cancel</button>
+      <button class="btn btn-dim"   onclick="hideDiscover()">Cancel</button>
     </div>
   </div>
 </div>
 
 <script>
-// ── Step definitions ────────────────────────────────────────────────────────
-
-const STEPS = [
-  { id: "discovering",      label: "Discover" },
-  { id: "connecting",       label: "Connect" },
-  { id: "unpark",           label: "Unpark" },
-  { id: "tracking_on",      label: "Tracking" },
-  { id: "verify_movement",  label: "Verify" },
-  { id: "slew",             label: "Slew" },
-  { id: "hold",             label: "Hold" },
-  { id: "expose",           label: "Expose" },
-  { id: "park",             label: "Park" },
-  { id: "done",             label: "Done" },
-];
-
-const STEP_ORDER = STEPS.map(s => s.id);
-
-// Build step chips
-(function buildSteps() {
-  const c = document.getElementById("steps");
-  STEPS.forEach((s, i) => {
-    if (i > 0) {
-      const a = document.createElement("span");
-      a.className = "step-arrow"; a.textContent = "›"; c.appendChild(a);
-    }
-    const chip = document.createElement("div");
-    chip.className = "step-chip"; chip.id = "chip-" + s.id;
-    chip.textContent = s.label; c.appendChild(chip);
-  });
-})();
-
-
 // ── Status polling ──────────────────────────────────────────────────────────
 
 async function poll() {
@@ -1061,47 +966,35 @@ poll();
 
 function render(s) {
   renderHeader(s);
-  renderSteps(s);
   renderTelescope(s.telescope || {});
   renderCamera(s.camera || {});
   renderSafety(s.safety || {});
   renderImage(s);
 }
 
-let _imageFetched = false;
+// ── Header ──────────────────────────────────────────────────────────────────
 
-async function renderImage(s) {
-  if (!s.image_captured) return;
-  if (_imageFetched) return;
-  _imageFetched = true;
+function renderHeader(s) {
+  const dot   = document.getElementById("connDot");
+  const label = document.getElementById("connLabel");
 
-  const panel   = document.getElementById("imgPanel");
-  const img     = document.getElementById("lastImg");
-  const meta    = document.getElementById("imgMeta");
+  if (s.server) {
+    const srv = document.getElementById("hdrServer");
+    srv.classList.remove("hidden");
+    document.getElementById("hdrAddr").textContent =
+      `${s.server.address}:${s.server.port}`;
+  }
 
-  panel.classList.remove("hidden");
-  meta.innerHTML = "Downloading…";
-
-  try {
-    const r = await fetch("/api/image");
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const blob = await r.blob();
-    const url  = URL.createObjectURL(blob);
-    img.src = url;
-
-    const kb = (blob.size / 1024).toFixed(1);
-    const ts = new Date().toLocaleTimeString();
-    img.onload = () => {
-      meta.innerHTML =
-        `Captured: <span>${ts}</span><br>` +
-        `Size: <span>${img.naturalWidth} × ${img.naturalHeight} px</span><br>` +
-        `File: <span>${kb} KB (PNG)</span>`;
-    };
-  } catch (e) {
-    meta.innerHTML = `<span style="color:var(--red)">Image load failed: ${e.message}</span>`;
-    _imageFetched = false;
+  if (s.connected) {
+    dot.className    = "dot dot-green";
+    label.textContent = "Connected";
+  } else {
+    dot.className    = "dot dot-gray";
+    label.textContent = "Disconnected";
   }
 }
+
+// ── Safety ──────────────────────────────────────────────────────────────────
 
 function renderSafety(sf) {
   const pill   = document.getElementById("safetyPill");
@@ -1114,7 +1007,7 @@ function renderSafety(sf) {
   pill.style.display = "flex";
 
   if (sf.safe) {
-    dot.className    = "dot dot-green";
+    dot.className     = "dot dot-green";
     label.textContent = "SAFE";
     label.style.color = "var(--green)";
     reason.textContent = sf.heartbeat_ok ? "" : "hb?";
@@ -1125,12 +1018,10 @@ function renderSafety(sf) {
     reason.textContent = sf.reason ? `· ${sf.reason}` : "";
   }
 
-  if (sf.sun_elevation !== null && sf.sun_elevation !== undefined) {
+  if (sf.sun_elevation != null) {
     const el  = sf.sun_elevation.toFixed(1);
-    const thr = sf.dawn_threshold !== undefined ? sf.dawn_threshold.toFixed(0) : "-18";
-    const col = sf.sun_elevation > sf.dawn_threshold
-      ? "var(--yellow)" : "var(--dim)";
-    sunEl.style.color = col;
+    const thr = sf.dawn_threshold != null ? sf.dawn_threshold.toFixed(0) : "-18";
+    sunEl.style.color = sf.sun_elevation > sf.dawn_threshold ? "var(--yellow)" : "var(--dim)";
     sunEl.textContent = `☀ ${el >= 0 ? "+" : ""}${el}°`;
     sunEl.title       = `Sun elevation (dawn at ${thr}°)`;
   } else {
@@ -1138,92 +1029,7 @@ function renderSafety(sf) {
   }
 }
 
-function renderHeader(s) {
-  const dot   = document.getElementById("connDot");
-  const label = document.getElementById("connLabel");
-  const phase = s.phase || "idle";
-
-  // Server address
-  if (s.server) {
-    document.getElementById("hdrServer").classList.remove("hidden");
-    document.getElementById("hdrAddr").textContent =
-      `${s.server.address}:${s.server.port}`;
-  }
-
-  if (phase === "idle") {
-    dot.className = "dot dot-gray"; label.textContent = "Idle";
-  } else if (phase === "error") {
-    dot.className = "dot dot-red";  label.textContent = "Error";
-  } else if (phase === "done") {
-    dot.className = "dot dot-green"; label.textContent = "Complete";
-  } else if (s.connected) {
-    dot.className = "dot dot-green pulse"; label.textContent = "Connected";
-  } else {
-    dot.className = "dot dot-yellow pulse";
-    label.textContent = phase.replace("_", " ") + "…";
-  }
-
-  document.getElementById("btnRun").disabled   = s.run_active;
-  document.getElementById("btnAbort").disabled = !s.run_active;
-}
-
-function renderSteps(s) {
-  const phase    = s.phase || "idle";
-  const phaseIdx = STEP_ORDER.indexOf(phase);
-
-  STEPS.forEach((step, i) => {
-    const chip = document.getElementById("chip-" + step.id);
-    chip.className = "step-chip";
-    if (phase === step.id && phase !== "idle") {
-      chip.classList.add("active");
-      if (phase !== "done") chip.classList.add("pulse");
-    } else if (phase === "error" && i === phaseIdx) {
-      chip.classList.add("error");
-    } else if (phaseIdx > i || phase === "done") {
-      chip.classList.add("done");
-    }
-  });
-
-  // Hold countdown
-  const holdBar = document.getElementById("holdBar");
-  if (s.hold_remaining !== null && s.hold_remaining !== undefined) {
-    holdBar.classList.remove("hidden");
-    const m  = Math.floor(s.hold_remaining / 60);
-    const sc = String(s.hold_remaining % 60).padStart(2, "0");
-    holdBar.textContent = `⏱  HOLD  ${m}:${sc}  remaining`;
-  } else {
-    holdBar.classList.add("hidden");
-  }
-
-  // Error message
-  const errText = document.getElementById("errText");
-  if (s.error) {
-    errText.classList.remove("hidden");
-    errText.textContent = "ERROR: " + s.error;
-  } else {
-    errText.classList.add("hidden");
-  }
-}
-
-function fmtRA(h) {
-  if (h == null) return "—";
-  const hr  = Math.floor(h);
-  const mn  = Math.floor((h - hr) * 60);
-  const sec = ((h - hr) * 3600 - mn * 60).toFixed(1);
-  return `${pad(hr)}h ${pad(mn)}m ${String(sec).padStart(4,"0")}s`;
-}
-
-function fmtDec(d) {
-  if (d == null) return "—";
-  const sign = d >= 0 ? "+" : "−";
-  const abs = Math.abs(d);
-  const deg = Math.floor(abs);
-  const mn  = Math.floor((abs - deg) * 60);
-  const sec = ((abs - deg) * 3600 - mn * 60).toFixed(1);
-  return `${sign}${pad(deg)}° ${pad(mn)}' ${String(sec).padStart(4,"0")}"`;
-}
-
-function pad(n) { return String(n).padStart(2, "0"); }
+// ── Telescope ───────────────────────────────────────────────────────────────
 
 function renderTelescope(t) {
   document.getElementById("telDot").className =
@@ -1245,20 +1051,30 @@ function renderTelescope(t) {
     rawEl.textContent = "";
   }
 
-  const slewBtn = document.getElementById("btnSlew");
-  if (slewBtn) slewBtn.disabled = !t.connected || t.slewing;
-  const b = document.getElementById("telBadges");
-  b.innerHTML = "";
+  // Badges
+  const badges = document.getElementById("telBadges");
+  badges.innerHTML = "";
   if (t.connected) {
-    if (t.slewing)   b.innerHTML += `<span class="badge badge-warn pulse">Slewing</span>`;
-    if (t.tracking)  b.innerHTML += `<span class="badge badge-on">Tracking</span>`;
-    if (t.parked)    b.innerHTML += `<span class="badge badge-warn">Parked</span>`;
-    if (!t.slewing && !t.tracking && !t.parked)
-      b.innerHTML += `<span class="badge">Idle</span>`;
+    if (t.busy)                               badges.innerHTML += `<span class="badge badge-warn pulse">Busy</span>`;
+    if (t.slewing)                            badges.innerHTML += `<span class="badge badge-warn pulse">Slewing</span>`;
+    if (t.tracking)                           badges.innerHTML += `<span class="badge badge-on">Tracking</span>`;
+    if (t.parked)                             badges.innerHTML += `<span class="badge badge-warn">Parked</span>`;
+    if (!t.busy && !t.slewing && !t.tracking && !t.parked)
+                                              badges.innerHTML += `<span class="badge">Idle</span>`;
   } else if (t.enabled) {
-    b.innerHTML += `<span class="badge badge-err">Disconnected</span>`;
+    badges.innerHTML += `<span class="badge badge-err">Disconnected</span>`;
   }
+
+  // Button states — disabled while not connected, busy, or slewing
+  const blocked = !t.connected || t.busy || t.slewing;
+  document.getElementById("btnUnpark").disabled   = blocked;
+  document.getElementById("btnPark").disabled     = blocked;
+  document.getElementById("btnTrackOn").disabled  = blocked;
+  document.getElementById("btnTrackOff").disabled = blocked;
+  document.getElementById("btnSlew").disabled     = blocked;
 }
+
+// ── Camera ───────────────────────────────────────────────────────────────────
 
 const CAM_CLASSES = ["cs-idle","cs-wait","cs-expose","cs-read","cs-dl","cs-error"];
 
@@ -1271,10 +1087,10 @@ function renderCamera(c) {
   const rdEl  = document.getElementById("camReady");
 
   if (c.connected) {
-    stEl.textContent = (c.state_name || "—").toUpperCase();
+    stEl.textContent = (c.exposing ? (c.state_name || "Exposing") : (c.state_name || "—")).toUpperCase();
     stEl.className   = "cam-state " + (CAM_CLASSES[c.state] || "cs-idle");
-    if (c.state === 2) stEl.classList.add("pulse");
-    subEl.textContent = `ALPACA state ${c.state}`;
+    if (c.state === 2 || c.exposing) stEl.classList.add("pulse");
+    subEl.textContent = c.exposing ? `ALPACA state ${c.state} · exposure in progress` : `ALPACA state ${c.state}`;
     rdEl.textContent  = c.image_ready ? "✓ IMAGE READY" : "";
     rdEl.style.color  = c.image_ready ? "var(--green)" : "var(--gray)";
   } else {
@@ -1282,14 +1098,138 @@ function renderCamera(c) {
     subEl.textContent = c.enabled ? "Disconnected" : "Not enabled";
     rdEl.textContent  = "";
   }
+
+  document.getElementById("btnExpose").disabled   = !c.connected || c.exposing;
+  document.getElementById("btnAbortExp").disabled = !c.connected || !c.exposing;
 }
 
+// ── Image ────────────────────────────────────────────────────────────────────
 
-// ── Log stream (SSE) ────────────────────────────────────────────────────────
+let _lastImageId = -1;
 
-let logCount  = 0;
+async function renderImage(s) {
+  if (!s.image_captured) return;
+  if (s.image_id === _lastImageId) return;
+  _lastImageId = s.image_id;
+
+  const panel = document.getElementById("imgPanel");
+  const img   = document.getElementById("lastImg");
+  const meta  = document.getElementById("imgMeta");
+
+  panel.classList.remove("hidden");
+  meta.innerHTML = "Downloading…";
+
+  try {
+    const r    = await fetch("/api/image");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    img.src = url;
+    const kb = (blob.size / 1024).toFixed(1);
+    const ts = new Date().toLocaleTimeString();
+    img.onload = () => {
+      meta.innerHTML =
+        `Captured: <span>${ts}</span><br>` +
+        `Size: <span>${img.naturalWidth} × ${img.naturalHeight} px</span><br>` +
+        `File: <span>${kb} KB (PNG)</span>`;
+    };
+  } catch (e) {
+    meta.innerHTML = `<span style="color:var(--red)">Image load failed: ${e.message}</span>`;
+    _lastImageId = -1;
+  }
+}
+
+// ── Coordinate formatters ────────────────────────────────────────────────────
+
+function fmtRA(h) {
+  if (h == null) return "—";
+  const hr  = Math.floor(h);
+  const mn  = Math.floor((h - hr) * 60);
+  const sec = ((h - hr) * 3600 - mn * 60).toFixed(1);
+  return `${pad(hr)}h ${pad(mn)}m ${String(sec).padStart(4,"0")}s`;
+}
+
+function fmtDec(d) {
+  if (d == null) return "—";
+  const sign = d >= 0 ? "+" : "−";
+  const abs  = Math.abs(d);
+  const deg  = Math.floor(abs);
+  const mn   = Math.floor((abs - deg) * 60);
+  const sec  = ((abs - deg) * 3600 - mn * 60).toFixed(1);
+  return `${sign}${pad(deg)}° ${pad(mn)}' ${String(sec).padStart(4,"0")}"`;
+}
+
+function pad(n) { return String(n).padStart(2, "0"); }
+
+// ── Telescope actions ────────────────────────────────────────────────────────
+
+async function apiUnpark() {
+  try { await fetch("/api/telescope/unpark", { method: "POST" }); }
+  catch (e) { alert("Unpark failed: " + e.message); }
+}
+
+async function apiPark() {
+  try { await fetch("/api/telescope/park", { method: "POST" }); }
+  catch (e) { alert("Park failed: " + e.message); }
+}
+
+async function apiTracking(enabled) {
+  try {
+    await fetch("/api/telescope/tracking", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+  } catch (e) { alert("Set tracking failed: " + e.message); }
+}
+
+async function apiSlew() {
+  const ra  = parseFloat(document.getElementById("slewRA").value);
+  const dec = parseFloat(document.getElementById("slewDec").value);
+  if (isNaN(ra) || isNaN(dec)) { alert("Enter valid RA (h) and Dec (°) values."); return; }
+  const btn = document.getElementById("btnSlew");
+  btn.disabled = true; btn.textContent = "Slewing…";
+  try {
+    const r = await fetch("/api/slew", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ra, dec }),
+    });
+    const d = await r.json();
+    if (!d.ok) alert(d.error || "Slew failed");
+  } catch (e) { alert("Slew failed: " + e.message); }
+  btn.textContent = "Slew to Target";
+  // disabled state re-evaluated on next poll
+}
+
+// ── Camera actions ───────────────────────────────────────────────────────────
+
+async function apiExpose() {
+  const duration = parseFloat(document.getElementById("expDuration").value);
+  const binning  = parseInt(document.getElementById("expBinning").value);
+  if (isNaN(duration) || duration <= 0) { alert("Enter a valid exposure duration > 0 s."); return; }
+  if (isNaN(binning) || binning < 1)    { alert("Binning must be >= 1."); return; }
+  try {
+    const r = await fetch("/api/camera/expose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ duration, binning }),
+    });
+    const d = await r.json();
+    if (!d.ok) alert(d.error || "Expose failed");
+  } catch (e) { alert("Expose failed: " + e.message); }
+}
+
+async function apiAbortExposure() {
+  try { await fetch("/api/camera/abort", { method: "POST" }); }
+  catch (e) { alert("Abort failed: " + e.message); }
+}
+
+// ── Log stream (SSE) ─────────────────────────────────────────────────────────
+
+let logCount   = 0;
 let autoScroll = true;
-const logBody = document.getElementById("logBody");
+const logBody  = document.getElementById("logBody");
 
 logBody.addEventListener("scroll", () => {
   autoScroll = logBody.scrollTop + logBody.clientHeight >= logBody.scrollHeight - 24;
@@ -1299,49 +1239,37 @@ function appendLog(entry) {
   logCount++;
   document.getElementById("logCount").textContent = logCount + " lines";
 
-  // Parse name from formatted string: "HH:MM:SS [LEVEL] name: message"
-  const raw    = entry.msg || "";
-  const match  = raw.match(/^\S+\s+\[\w+\]\s+([^:]+):\s(.*)/s);
-  const name   = match ? match[1] : (entry.name || "");
-  const msg    = match ? match[2] : raw;
+  const raw   = entry.msg || "";
+  const match = raw.match(/^\S+\s+\[\w+\]\s+([^:]+):\s(.*)/s);
+  const name  = match ? match[1] : (entry.name || "");
+  const msg   = match ? match[2] : raw;
 
   const line = document.createElement("div");
   line.className = "ll";
 
-  const t = document.createElement("span");
-  t.className = "lt"; t.textContent = entry.time || "";
-
-  const lv = document.createElement("span");
-  lv.className = "llv " + entry.level;
+  const t  = document.createElement("span"); t.className = "lt"; t.textContent = entry.time || "";
+  const lv = document.createElement("span"); lv.className = "llv " + entry.level;
   lv.textContent = "[" + (entry.level || "").substring(0, 4) + "]";
-
-  const nm = document.createElement("span");
-  nm.className = "ln"; nm.textContent = name;
-
-  const ms = document.createElement("span");
-  ms.className = "lm";
+  const nm = document.createElement("span"); nm.className = "ln"; nm.textContent = name;
+  const ms = document.createElement("span"); ms.className = "lm";
   if (entry.level === "WARNING") ms.classList.add("warn-msg");
   if (entry.level === "ERROR")   ms.classList.add("err-msg");
   ms.textContent = msg;
 
-  line.appendChild(t); line.appendChild(lv);
-  line.appendChild(nm); line.appendChild(ms);
+  line.appendChild(t); line.appendChild(lv); line.appendChild(nm); line.appendChild(ms);
   logBody.appendChild(line);
-
   if (autoScroll) logBody.scrollTop = logBody.scrollHeight;
 }
 
 function clearLog() {
-  logBody.innerHTML = "";
-  logCount = 0;
+  logBody.innerHTML = ""; logCount = 0;
   document.getElementById("logCount").textContent = "0 lines";
 }
 
 const es = new EventSource("/api/logs");
 es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
 
-
-// ── Discovery overlay ───────────────────────────────────────────────────────
+// ── Discovery overlay ────────────────────────────────────────────────────────
 
 function showDiscover()  { document.getElementById("overlay").classList.remove("hidden"); }
 function hideDiscover()  { document.getElementById("overlay").classList.add("hidden"); }
@@ -1351,15 +1279,15 @@ async function doScan() {
   btn.textContent = "Scanning…"; btn.disabled = true;
   document.getElementById("srvList").innerHTML = "";
   try {
-    const r   = await fetch("/api/discover", { method: "POST" });
+    const r    = await fetch("/api/discover", { method: "POST" });
     const data = await r.json();
     const list = document.getElementById("srvList");
     if (data.servers?.length) {
       data.servers.forEach(srv => {
         const item = document.createElement("div");
-        item.className = "srv-item";
+        item.className   = "srv-item";
         item.textContent = `${srv.address}:${srv.port}`;
-        item.onclick = () => connectTo(srv.address, srv.port);
+        item.onclick     = () => connectTo(srv.address, srv.port);
         list.appendChild(item);
       });
     } else {
@@ -1389,65 +1317,18 @@ async function connectTo(host, port) {
     });
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || "failed");
-    document.getElementById("btnRun").disabled = false;
   } catch (e) {
     alert("Connection failed: " + e.message);
   }
-}
-
-async function apiRun() {
-  try {
-    const r = await fetch("/api/run", { method: "POST" });
-    const d = await r.json();
-    if (!d.ok) { alert(d.error || "Run failed"); return; }
-    // Reset image panel for the new run
-    _imageFetched = false;
-    document.getElementById("imgPanel").classList.add("hidden");
-    document.getElementById("lastImg").src = "";
-    document.getElementById("imgMeta").innerHTML = "";
-  } catch (e) {
-    alert("Run failed: " + e.message);
-  }
-}
-
-async function apiAbort() {
-  await fetch("/api/abort", { method: "POST" });
-}
-
-async function apiSlew() {
-  const ra  = parseFloat(document.getElementById("slewRA").value);
-  const dec = parseFloat(document.getElementById("slewDec").value);
-  if (isNaN(ra) || isNaN(dec)) { alert("Enter valid RA (h) and Dec (°) values."); return; }
-  const btn = document.getElementById("btnSlew");
-  btn.disabled = true; btn.textContent = "Slewing…";
-  try {
-    const r = await fetch("/api/slew", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ra, dec }),
-    });
-    const d = await r.json();
-    if (!d.ok) alert(d.error || "Slew failed");
-  } catch (e) {
-    alert("Slew failed: " + e.message);
-  }
-  btn.textContent = "Slew to Target";
-  // disabled state re-evaluated on next status poll
 }
 </script>
 </body>
 </html>"""
 
 
-# ── Public entry point ─────────────────────────────────────────────────────────
+# ── Entry point ────────────────────────────────────────────────────────────────
 
 def launch(port: int = 5173) -> None:
-    """
-    Start the Flask dashboard, open the browser, and immediately begin the
-    sequence.  Blocks until the user hits Ctrl-C.
-
-    Called by both ``python dashboard.py`` and ``python main.py``.
-    """
     global _safety_mgr
 
     import urllib.request
@@ -1460,12 +1341,9 @@ def launch(port: int = 5173) -> None:
         format=log_cfg.get("format", "%(asctime)s [%(levelname)s] %(name)s: %(message)s"),
     )
 
-    # Create and start the safety manager from the main thread so that
-    # OS signal handlers (SIGTERM, SIGINT) are registered correctly.
     _safety_mgr = SafetyManager(config=cfg, on_unsafe=_on_safety_unsafe)
     _safety_mgr.start()
 
-    # Start Flask in a daemon thread so it dies when the process exits.
     flask_thread = threading.Thread(
         target=lambda: app.run(
             host="0.0.0.0", port=port, debug=False,
@@ -1476,7 +1354,6 @@ def launch(port: int = 5173) -> None:
     )
     flask_thread.start()
 
-    # Wait until the server is accepting connections (up to 5 s).
     url = f"http://localhost:{port}"
     for _ in range(20):
         try:
@@ -1485,19 +1362,9 @@ def launch(port: int = 5173) -> None:
         except Exception:
             time.sleep(0.25)
 
-    print(f"\n  NODE v1 Dashboard  →  {url}\n", file=sys.__stdout__)
-
-    # Open the default browser.
+    print(f"\n  NODE v1  →  {url}\n", file=sys.__stdout__)
     webbrowser.open(url)
 
-    # Kick off the sequence automatically.
-    _run_abort.clear()
-    seq_thread = threading.Thread(
-        target=_run_sequence, args=(cfg,), daemon=True, name="sequence"
-    )
-    seq_thread.start()
-
-    # Block the main thread so the process stays alive.
     try:
         while True:
             time.sleep(1)
