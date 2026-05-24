@@ -1511,6 +1511,8 @@ body {
 </div>
 
 <script>
+let _nudgeStep = 60;
+
 // ── Status polling ──────────────────────────────────────────────────────────
 
 async function poll() {
@@ -1867,8 +1869,6 @@ async function apiTracking(enabled) {
     });
   } catch (e) { alert("Set tracking failed: " + e.message); }
 }
-
-let _nudgeStep = 60;
 
 function setNudgeStep(arcsec) {
   _nudgeStep = arcsec;
