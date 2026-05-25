@@ -1405,25 +1405,31 @@ body {
     <!-- Joystick -->
     <div class="ctrl-group">
       <div class="panel-label">Nudge</div>
-      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-        <div style="display:grid; grid-template-columns:40px 40px 40px; grid-template-rows:40px 40px 40px; gap:4px;">
-          <div></div>
-          <button class="btn btn-dim joy-btn" id="joyN" onclick="apiNudge('N')" disabled style="padding:0; font-size:16px;" title="North (+Dec)">▲</button>
-          <div></div>
-          <button class="btn btn-dim joy-btn" id="joyW" onclick="apiNudge('W')" disabled style="padding:0; font-size:16px;" title="West (+RA)">◄</button>
-          <div style="display:flex;align-items:center;justify-content:center;color:var(--border);font-size:10px;">✛</div>
-          <button class="btn btn-dim joy-btn" id="joyE" onclick="apiNudge('E')" disabled style="padding:0; font-size:16px;" title="East (−RA)">►</button>
-          <div></div>
-          <button class="btn btn-dim joy-btn" id="joyS" onclick="apiNudge('S')" disabled style="padding:0; font-size:16px;" title="South (−Dec)">▼</button>
-          <div></div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:10px;color:var(--dim);letter-spacing:1px;">SPEED</span>
+            <span id="joySpeedLabel" style="font-size:10px;color:var(--blue);">1×</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:9px;color:var(--dim);">Fine</span>
+            <input id="joySpeed" type="range" min="-2" max="2" step="0.1" value="0"
+              style="flex:1;accent-color:var(--blue);cursor:pointer;"
+              title="Speed multiplier (logarithmic)">
+            <span style="font-size:9px;color:var(--dim);">Fast</span>
+          </div>
         </div>
-        <div style="display:flex; flex-direction:column; gap:8px;">
-          <div style="font-size:10px; color:var(--dim); letter-spacing:1px;">STEP SIZE</div>
-          <div style="display:flex; flex-direction:column; gap:4px;" id="nudgeStepBtns">
-            <button class="btn btn-dim" style="font-size:11px; padding:3px 10px;" onclick="setNudgeStep(10)"   id="nudge10">10″</button>
-            <button class="btn btn-dim" style="font-size:11px; padding:3px 10px;" onclick="setNudgeStep(60)"   id="nudge60">1′</button>
-            <button class="btn btn-dim" style="font-size:11px; padding:3px 10px;" onclick="setNudgeStep(300)"  id="nudge300">5′</button>
-            <button class="btn btn-dim" style="font-size:11px; padding:3px 10px;" onclick="setNudgeStep(900)"  id="nudge900">15′</button>
+        <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+          <div id="joyPad" style="width:120px; height:120px; border-radius:50%; background:var(--panel-bg); border:2px solid var(--border); position:relative; cursor:grab; touch-action:none; user-select:none; flex-shrink:0;" title="Drag to nudge — distance sets step size">
+            <span style="position:absolute;top:4px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--dim);pointer-events:none;">N</span>
+            <span style="position:absolute;bottom:4px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--dim);pointer-events:none;">S</span>
+            <span style="position:absolute;left:5px;top:50%;transform:translateY(-50%);font-size:9px;color:var(--dim);pointer-events:none;">W</span>
+            <span style="position:absolute;right:5px;top:50%;transform:translateY(-50%);font-size:9px;color:var(--dim);pointer-events:none;">E</span>
+            <div id="joyKnob" style="width:34px;height:34px;border-radius:50%;background:var(--blue);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;transition:background 0.1s;box-shadow:0 0 8px rgba(96,165,250,0.4);"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div id="joyReadout" style="font-size:11px;color:var(--dim);">drag to nudge</div>
+            <div id="joyDir"     style="font-size:13px;color:var(--blue);min-height:18px;"></div>
           </div>
         </div>
       </div>
@@ -1507,7 +1513,7 @@ body {
 
 <script>
 
-let _nudgeStep = 60;
+let _joyBlocked = true;
 
 // ── Status polling ──────────────────────────────────────────────────────────
 
@@ -1519,7 +1525,6 @@ async function poll() {
 }
 setInterval(poll, 1000);
 poll();
-setNudgeStep(60);
 
 function render(s) {
   renderHeader(s);
@@ -1673,9 +1678,12 @@ function renderTelescope(t) {
   document.getElementById("btnModalTrackOn").disabled  = blocked;
   document.getElementById("btnModalTrackOff").disabled = blocked;
   document.getElementById("btnModalSlew").disabled     = blocked;
-  ["joyN","joyS","joyE","joyW"].forEach(id => {
-    document.getElementById(id).disabled = blocked;
-  });
+  _joyBlocked = blocked;
+  const pad = document.getElementById("joyPad");
+  if (pad) {
+    pad.style.opacity = blocked ? "0.35" : "1";
+    pad.style.cursor  = blocked ? "not-allowed" : "grab";
+  }
 }
 
 // ── Camera ───────────────────────────────────────────────────────────────────
@@ -1866,21 +1874,128 @@ async function apiTracking(enabled) {
   } catch (e) { alert("Set tracking failed: " + e.message); }
 }
 
-function setNudgeStep(arcsec) {
-  _nudgeStep = arcsec;
-  ["10","60","300","900"].forEach(v => {
-    const el = document.getElementById("nudge" + v);
-    if (el) el.style.borderColor = (parseInt(v) === arcsec) ? "var(--blue)" : "";
-    if (el) el.style.color       = (parseInt(v) === arcsec) ? "var(--blue)" : "";
-  });
-}
+// ── Joystick ─────────────────────────────────────────────────────────────────
 
-async function apiNudge(direction) {
+(function () {
+  const PAD_R   = 60;   // outer radius px
+  const KNOB_R  = 17;   // knob radius px
+  const MAX_R   = PAD_R - KNOB_R;   // max knob travel (43 px)
+  const MIN_ARC = 10;   // arcsec at inner edge
+  const MAX_ARC = 900;  // arcsec at outer edge
+
+  let active = false;
+  let originX = 0, originY = 0;
+
+  function speedMult() {
+    const slider = document.getElementById("joySpeed");
+    return slider ? Math.pow(10, parseFloat(slider.value)) : 1;
+  }
+
+  function stepFromRadius(r) {
+    const t = Math.min(r / MAX_R, 1);
+    // exponential: 10" → 900" over the travel range, then scaled by speed multiplier
+    const raw = MIN_ARC * Math.pow(MAX_ARC / MIN_ARC, t) * speedMult();
+    return Math.round(Math.min(Math.max(raw, 1), 3600));
+  }
+
+  function formatStep(arcsec) {
+    if (arcsec < 60)  return arcsec + "″";
+    if (arcsec < 3600) return (arcsec / 60).toFixed(arcsec % 60 === 0 ? 0 : 1) + "′";
+    return (arcsec / 3600).toFixed(1) + "°";
+  }
+
+  function resetKnob() {
+    const knob = document.getElementById("joyKnob");
+    if (knob) knob.style.transform = "translate(-50%, -50%)";
+    const readout = document.getElementById("joyReadout");
+    if (readout) readout.textContent = "drag to nudge";
+    const dir = document.getElementById("joyDir");
+    if (dir) dir.textContent = "";
+    const pad = document.getElementById("joyPad");
+    if (pad && !_joyBlocked) pad.style.cursor = "grab";
+  }
+
+  function onStart(e) {
+    if (_joyBlocked) return;
+    e.preventDefault();
+    active = true;
+    const pad  = document.getElementById("joyPad");
+    const rect = pad.getBoundingClientRect();
+    originX = rect.left + rect.width  / 2;
+    originY = rect.top  + rect.height / 2;
+    pad.style.cursor = "grabbing";
+    pad.setPointerCapture(e.pointerId);
+  }
+
+  function onMove(e) {
+    if (!active) return;
+    e.preventDefault();
+    const dx   = e.clientX - originX;
+    const dy   = e.clientY - originY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const clamp = Math.min(dist, MAX_R);
+    const scale = clamp / (dist || 1);
+    const cx = dx * scale;
+    const cy = dy * scale;
+
+    const knob = document.getElementById("joyKnob");
+    if (knob) knob.style.transform = `translate(calc(-50% + ${cx}px), calc(-50% + ${cy}px))`;
+
+    const step  = stepFromRadius(clamp);
+    const isNS  = Math.abs(dy) >= Math.abs(dx);
+    const label = isNS ? (dy < 0 ? "N" : "S") : (dx > 0 ? "E" : "W");
+
+    const readout = document.getElementById("joyReadout");
+    if (readout) readout.textContent = formatStep(step);
+    const dirEl = document.getElementById("joyDir");
+    if (dirEl) dirEl.textContent = { N:"↑ North", S:"↓ South", E:"→ East", W:"← West" }[label];
+  }
+
+  async function onEnd(e) {
+    if (!active) return;
+    active = false;
+
+    const dx   = e.clientX - originX;
+    const dy   = e.clientY - originY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    resetKnob();
+    if (dist < 6) return;  // dead zone — ignore tiny taps
+
+    const step  = stepFromRadius(Math.min(dist, MAX_R));
+    const isNS  = Math.abs(dy) >= Math.abs(dx);
+    const dir   = isNS ? (dy < 0 ? "N" : "S") : (dx > 0 ? "E" : "W");
+
+    await apiNudge(dir, step);
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const pad = document.getElementById("joyPad");
+    if (!pad) return;
+    pad.addEventListener("pointerdown", onStart);
+    pad.addEventListener("pointermove", onMove);
+    pad.addEventListener("pointerup",   onEnd);
+    pad.addEventListener("pointercancel", () => { active = false; resetKnob(); });
+
+    const slider = document.getElementById("joySpeed");
+    const label  = document.getElementById("joySpeedLabel");
+    if (slider && label) {
+      function updateSpeedLabel() {
+        const m = Math.pow(10, parseFloat(slider.value));
+        label.textContent = m < 1 ? (m).toFixed(2) + "×" : m.toFixed(m >= 10 ? 0 : 1) + "×";
+      }
+      slider.addEventListener("input", updateSpeedLabel);
+      updateSpeedLabel();
+    }
+  });
+})();
+
+async function apiNudge(direction, step) {
   try {
     const r = await fetch("/api/telescope/nudge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ direction, step: _nudgeStep }),
+      body: JSON.stringify({ direction, step }),
     });
     const d = await r.json();
     if (!d.ok) alert(d.error || "Nudge failed");
