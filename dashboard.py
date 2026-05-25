@@ -27,6 +27,7 @@ from alpaca.telescope import Telescope
 from alpaca.camera import Camera
 from image_watcher import ImageWatcher
 from photometry import run_pipeline as _run_photometry
+from aavso_submission import submit as _aavso_submit
 
 
 app = Flask(__name__)
@@ -83,6 +84,9 @@ _state: dict[str, Any] = {
         "enabled":    False,
         "last_result": None,   # most recent measurement dict
         "running":    False,
+    },
+    "aavso": {
+        "last_submission": None,   # most recent submit() result dict
     },
 }
 _state_lock = threading.Lock()
@@ -296,6 +300,14 @@ def _run_photometry_bg(fits_path: str) -> None:
                 result["target_name"], result["magnitude"],
                 result["uncertainty"], result["snr"], result["quality_flag"],
             )
+            if cfg.get("aavso", {}).get("observer_code", "").strip():
+                sub = _aavso_submit(result, cfg)
+                with _state_lock:
+                    _state["aavso"]["last_submission"] = sub
+                logger.info(
+                    "AAVSO submission: status=%s accepted=%d rejected=%d — %s",
+                    sub["status"], sub["accepted"], sub["rejected"], sub["message"],
+                )
         else:
             logger.warning("Photometry pipeline returned no result for %s",
                            os.path.basename(fits_path))
@@ -839,6 +851,13 @@ def api_photometry():
             "running":     _state["photometry"]["running"],
             "last_result": _state["photometry"]["last_result"],
         }
+    return jsonify(snap)
+
+
+@app.route("/api/aavso")
+def api_aavso():
+    with _state_lock:
+        snap = dict(_state["aavso"])
     return jsonify(snap)
 
 

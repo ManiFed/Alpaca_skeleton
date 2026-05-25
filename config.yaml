@@ -77,6 +77,16 @@ photometry:
   max_uncertainty:      0.3       # maximum magnitude uncertainty
   max_airmass:          3.0
 
+aavso:
+  observer_code: ""             # AAVSO observer code (OBSCODE), e.g. "MXYZ"  ← required
+  username: ""                  # AAVSO website login username                 ← required to POST
+  password: ""                  # AAVSO website login password                 ← required to POST
+
+  audit_dir: "aavso_submissions"  # local directory for submission files and audit records
+  dry_run: false                  # if true, format and save but do not POST to AAVSO
+  submit_poor_quality: false      # if true, submit observations flagged quality=poor
+  chart_id: ""                    # VSP chart ID used for comparison stars (leave blank = "na")
+
 safety:
   enabled: true
   disconnect_timeout: 600       # seconds — park after this long without telescope contact
