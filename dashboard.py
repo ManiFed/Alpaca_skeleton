@@ -337,6 +337,211 @@ def _on_safety_unsafe() -> None:
     logger.critical("Safety manager triggered: %s", reason)
 
 
+# ── Horizon scan state ────────────────────────────────────────────────────────
+
+_scan_lock  = threading.Lock()
+_scan_state: dict = {
+    "running":    False,
+    "cancelled":  False,
+    "directions": [],   # list of 12 dicts: {az, status, horizon_alt, steps}
+    "result":     None, # [[alt, az], …] on completion
+    "error":      None,
+}
+
+
+def _count_stars_in_array(image_array) -> int:
+    """Return a source count from a raw image array (nested list or ndarray)."""
+    try:
+        import numpy as np
+        from photutils.detection import DAOStarFinder
+        from astropy.stats import sigma_clipped_stats
+
+        data = np.array(image_array, dtype=np.float64)
+        if data.ndim == 3:          # colour / 3-axis ALPACA response → take first plane
+            data = data[0]
+        _, median, std = sigma_clipped_stats(data, sigma=3.0)
+        if std <= 0:
+            return 0
+        finder = DAOStarFinder(fwhm=4.0, threshold=5.0 * std, exclude_border=True)
+        sources = finder(data - median)
+        return len(sources) if sources is not None else 0
+    except Exception as exc:
+        logger.debug("_count_stars_in_array error: %s", exc)
+        # Crude fallback: count pixels > 8σ above mean
+        try:
+            import numpy as np
+            data = np.array(image_array, dtype=np.float64)
+            if data.ndim == 3:
+                data = data[0]
+            m, s = float(data.mean()), float(data.std())
+            return int((data > m + 8 * s).sum()) if s > 0 else 0
+        except Exception:
+            return 0
+
+
+def _wait_slew_complete(timeout: float = 120.0) -> None:
+    """Block until the telescope stops slewing (or times out)."""
+    # Brief window for the async command to be accepted and slewing to begin
+    start = time.monotonic()
+    while time.monotonic() - start < 6:
+        try:
+            if _tel and _tel.is_slewing():
+                break
+        except Exception:
+            pass
+        time.sleep(0.25)
+    # Now wait for it to finish
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if _tel and not _tel.is_slewing():
+                return
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+
+def _scan_slew_to(alt: float, az: float) -> None:
+    """
+    Slew to an Alt/Az position for the horizon scan.
+    Tries native Alt/Az first; falls back to RA/Dec conversion via astropy.
+    Blocks until the slew completes.
+    """
+    try:
+        _tel.begin_slew_altaz(alt, az)
+        _wait_slew_complete()
+        return
+    except Exception as exc:
+        logger.debug("Alt/Az slew failed (%s) — trying RA/Dec fallback", exc)
+
+    # RA/Dec fallback
+    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+    from astropy.time import Time
+    import astropy.units as u
+    cfg = _load_config()
+    obs = cfg.get("safety", {}).get("observer", {})
+    lat = float(obs.get("latitude", 0.0))
+    lon = float(obs.get("longitude", 0.0))
+    loc   = EarthLocation(lat=lat * u.deg, lon=lon * u.deg)
+    frame = AltAz(obstime=Time.now(), location=loc)
+    coord = SkyCoord(alt=alt * u.deg, az=az * u.deg, frame=frame)
+    eq    = coord.icrs
+    _tel.slew_to_coordinates(float(eq.ra.deg) / 15.0, float(eq.dec.deg))
+
+
+def _run_horizon_scan(
+    floor_alt: float,
+    start_alt: float,
+    step_deg:  float,
+    exposure_s: float,
+    star_threshold: int,
+    settle_s: float,
+) -> None:
+    """Background thread: slew to 12 azimuths × N altitudes, count stars, build mask."""
+    import numpy as np
+
+    N       = 12
+    AZ_STEP = 30
+
+    directions = [
+        {"az": i * AZ_STEP, "status": "pending", "horizon_alt": None, "steps": []}
+        for i in range(N)
+    ]
+    with _scan_lock:
+        _scan_state.update({
+            "running":    True,
+            "cancelled":  False,
+            "directions": directions,
+            "result":     None,
+            "error":      None,
+        })
+
+    result_alts: list[float] = []
+
+    try:
+        for i in range(N):
+            az = i * AZ_STEP
+
+            with _scan_lock:
+                if _scan_state["cancelled"]:
+                    _scan_state["running"] = False
+                    return
+                _scan_state["directions"][i]["status"] = "scanning"
+
+            altitudes = list(np.arange(start_alt, floor_alt - 1e-6, -step_deg))
+            if not altitudes or altitudes[-1] > floor_alt + 1e-6:
+                altitudes.append(floor_alt)
+
+            last_clear_alt: Optional[float] = None
+
+            for alt in altitudes:
+                with _scan_lock:
+                    if _scan_state["cancelled"]:
+                        _scan_state["running"] = False
+                        return
+
+                # ── slew ──────────────────────────────────────────────────────
+                try:
+                    _scan_slew_to(alt, az)
+                except Exception as exc:
+                    logger.error("Scan: slew to Alt=%.1f Az=%.1f failed: %s", alt, az, exc)
+                    with _scan_lock:
+                        _scan_state["directions"][i]["steps"].append(
+                            {"alt": alt, "stars": None, "error": str(exc)}
+                        )
+                    continue
+
+                time.sleep(settle_s)   # vibration settle
+
+                # ── expose + count ────────────────────────────────────────────
+                stars: Optional[int] = None
+                try:
+                    _cam.expose(exposure_s, readout_timeout=60.0)
+                    img = _cam.image_array()
+                    stars = _count_stars_in_array(img)
+                    logger.info("Scan: Alt=%.1f Az=%.1f → %d stars", alt, az, stars)
+                except Exception as exc:
+                    logger.error("Scan: exposure at Alt=%.1f Az=%.1f failed: %s", alt, az, exc)
+
+                with _scan_lock:
+                    _scan_state["directions"][i]["steps"].append(
+                        {"alt": alt, "stars": stars}
+                    )
+
+                if stars is not None and stars >= star_threshold:
+                    last_clear_alt = alt
+                elif last_clear_alt is not None:
+                    # Transition found: had sky, now blocked → stop descending
+                    break
+
+            # ── derive horizon altitude for this azimuth ──────────────────────
+            if last_clear_alt is None:
+                # Never saw sky from start_alt down — fully blocked
+                horizon_alt = round(start_alt, 1)
+            elif last_clear_alt <= floor_alt + 1e-6:
+                # Still clear at the hardware floor — horizon is below it
+                horizon_alt = 0.0
+            else:
+                horizon_alt = round(last_clear_alt, 1)
+
+            result_alts.append(horizon_alt)
+            with _scan_lock:
+                _scan_state["directions"][i]["status"]      = "done"
+                _scan_state["directions"][i]["horizon_alt"] = horizon_alt
+
+        result = [[result_alts[i], i * AZ_STEP] for i in range(N)]
+        with _scan_lock:
+            _scan_state["result"]  = result
+            _scan_state["running"] = False
+        logger.info("Horizon scan complete: %s", result)
+
+    except Exception as exc:
+        logger.error("Horizon scan crashed: %s", exc)
+        with _scan_lock:
+            _scan_state["error"]   = str(exc)
+            _scan_state["running"] = False
+
+
 # ── Background poller ──────────────────────────────────────────────────────────
 
 _poller_stop = threading.Event()
@@ -1116,6 +1321,57 @@ def api_horizon_mask_post():
         return jsonify({"error": str(exc)}), 500
     logger.info("Horizon mask updated in config.yaml: %d vertices", len(polygon))
     return jsonify({"ok": True})
+
+
+@app.route("/api/safety/horizon-scan", methods=["POST"])
+def api_horizon_scan_start():
+    if _tel is None:
+        return jsonify({"error": "Telescope not connected"}), 400
+    if _cam is None:
+        return jsonify({"error": "Camera not connected"}), 400
+    with _scan_lock:
+        if _scan_state["running"]:
+            return jsonify({"error": "Scan already running"}), 409
+
+    data        = request.get_json(force=True) or {}
+    floor_alt   = max(5.0,  min(45.0, float(data.get("floor_alt",   25.0))))
+    start_alt   = max(30.0, min(85.0, float(data.get("start_alt",   60.0))))
+    step_deg    = max(2.0,  min(15.0, float(data.get("step",         5.0))))
+    exposure_s  = max(1.0,  min(60.0, float(data.get("exposure",     5.0))))
+    star_thresh = max(1,    min(100,  int(  data.get("star_threshold", 5))))
+    settle_s    = max(0.0,  min(15.0, float(data.get("settle",        2.0))))
+
+    if start_alt <= floor_alt:
+        return jsonify({"error": "start_alt must be greater than floor_alt"}), 400
+
+    t = threading.Thread(
+        target=_run_horizon_scan,
+        args=(floor_alt, start_alt, step_deg, exposure_s, star_thresh, settle_s),
+        daemon=True,
+        name="horizon-scan",
+    )
+    t.start()
+    logger.info(
+        "Horizon scan started (floor=%.1f start=%.1f step=%.1f exp=%.1fs thresh=%d settle=%.1fs)",
+        floor_alt, start_alt, step_deg, exposure_s, star_thresh, settle_s,
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/safety/horizon-scan", methods=["DELETE"])
+def api_horizon_scan_cancel():
+    with _scan_lock:
+        if not _scan_state["running"]:
+            return jsonify({"ok": True, "message": "No scan running"})
+        _scan_state["cancelled"] = True
+    logger.info("Horizon scan cancellation requested")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/safety/horizon-scan/status", methods=["GET"])
+def api_horizon_scan_status():
+    with _scan_lock:
+        return jsonify(dict(_scan_state))
 
 
 @app.route("/api/pier-cam/snapshot")
@@ -2204,7 +2460,10 @@ body {
           </div>
         </div>
         <div class="cfg-section-hdr">Horizon Mask</div>
-        <div style="font-size:11px;color:var(--dim);margin-bottom:8px;">Draw a polygon defining the safe pointing zone. Click to add vertices, click near the first point to close. Zenith at centre, North at top.</div>
+        <div style="font-size:11px;color:var(--dim);margin-bottom:8px;">
+          Drag each handle radially to set the minimum safe altitude in that direction.
+          Or use <strong style="color:var(--blue);">Auto-Scan</strong> to detect your horizon automatically.
+        </div>
         <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
           <div class="sky-canvas-ring">
             <canvas id="skyCanvas" width="360" height="360"></canvas>
@@ -2214,10 +2473,61 @@ body {
             <div id="skyHint"      style="font-size:10px;color:var(--dim);letter-spacing:1px;text-align:right;"></div>
           </div>
           <div style="display:flex;gap:8px;width:360px;">
-            <button class="btn btn-dim"   onclick="undoSkyMask()"  style="flex:1;">Undo</button>
-            <button class="btn btn-red"   onclick="clearSkyMask()" style="flex:1;">Clear</button>
-            <button class="btn btn-green" id="btnSkyMaskSave" onclick="saveSkyMask()" style="flex:2;">Save Horizon Mask</button>
+            <button class="btn btn-dim"   onclick="clearSkyMask()" style="flex:1;">Reset</button>
+            <button class="btn btn-green" id="btnSkyMaskSave" onclick="saveSkyMask()" style="flex:2;">Save Mask</button>
           </div>
+
+          <!-- ── Auto-Scan ─────────────────────────────────────────────────── -->
+          <div style="width:360px;border-top:1px solid var(--border);padding-top:10px;margin-top:2px;">
+            <div style="font-size:11px;font-weight:600;color:var(--blue);margin-bottom:8px;letter-spacing:.5px;">AUTO-SCAN HORIZON</div>
+            <div style="font-size:10px;color:var(--dim);margin-bottom:8px;line-height:1.5;">
+              Slews the telescope to 12 azimuths, stepping down from <em>Start Alt</em> to the hardware
+              <em>Floor</em>. Star count at each step determines your obstruction profile.
+              Run at night with a clear sky. Takes ~15–40 min.
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px;" id="scanConfigFields">
+              <div class="inp-group">
+                <div class="inp-label">Floor Alt °</div>
+                <input class="inp" id="scanFloorAlt" type="number" value="25" min="5" max="45" step="5">
+              </div>
+              <div class="inp-group">
+                <div class="inp-label">Start Alt °</div>
+                <input class="inp" id="scanStartAlt" type="number" value="60" min="30" max="85" step="5">
+              </div>
+              <div class="inp-group">
+                <div class="inp-label">Step °</div>
+                <input class="inp" id="scanStep" type="number" value="5" min="2" max="15" step="1">
+              </div>
+              <div class="inp-group">
+                <div class="inp-label">Exposure s</div>
+                <input class="inp" id="scanExposure" type="number" value="5" min="1" max="60" step="1">
+              </div>
+              <div class="inp-group">
+                <div class="inp-label">Min Stars</div>
+                <input class="inp" id="scanStarThresh" type="number" value="5" min="1" max="100" step="1">
+              </div>
+              <div class="inp-group">
+                <div class="inp-label">Settle s</div>
+                <input class="inp" id="scanSettle" type="number" value="2" min="0" max="15" step="1">
+              </div>
+            </div>
+
+            <!-- Progress strip (hidden when idle) -->
+            <div id="scanProgress" style="display:none;margin-bottom:8px;">
+              <div id="scanProgressLabel" style="font-size:10px;color:var(--dim);margin-bottom:6px;font-family:var(--mono);"></div>
+              <div id="scanDirectionBars" style="display:flex;gap:2px;height:20px;align-items:flex-end;"></div>
+            </div>
+
+            <div style="display:flex;gap:8px;">
+              <button id="btnStartScan"  class="btn" style="flex:1;background:var(--blue);color:#fff;"
+                      onclick="startHorizonScan()">Scan Horizon</button>
+              <button id="btnCancelScan" class="btn btn-red"   style="flex:1;display:none;"
+                      onclick="cancelHorizonScan()">Cancel</button>
+              <button id="btnApplyScan"  class="btn btn-green" style="flex:1;display:none;"
+                      onclick="applyHorizonScanResult()">Apply Result</button>
+            </div>
+          </div>
+          <!-- ── /Auto-Scan ──────────────────────────────────────────────── -->
         </div>
       </div>
 
@@ -3046,10 +3356,11 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
   const N = 12, AZ_STEP = 30;
   const DIR_LABELS = ["N","NNE","ENE","E","ESE","SSE","S","SSW","WSW","W","WNW","NNW"];
 
-  let alts    = new Array(N).fill(0);
-  let ctx     = null;
-  let dragIdx = -1;
-  let hovIdx  = -1;
+  let alts       = new Array(N).fill(0);
+  let ctx        = null;
+  let dragIdx    = -1;
+  let hovIdx     = -1;
+  let _scanOvly  = null;   // set by window.setScanOverlay from the scan polling loop
 
   function toXY(alt, az) {
     const r = MAX_R * (1 - alt / 90);
@@ -3174,6 +3485,78 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     ctx.lineJoin = "round";
     ctx.stroke();
     ctx.restore();
+
+    // ── Scan overlay ──────────────────────────────────────────────────────────
+    if (_scanOvly && _scanOvly.directions && _scanOvly.directions.length === N) {
+      const dirs = _scanOvly.directions;
+
+      // Colour-code each spoke by status
+      for (let i = 0; i < N; i++) {
+        const d   = dirs[i];
+        const az  = i * AZ_STEP;
+        const a   = az * Math.PI / 180;
+        const [ex, ey] = toXY(0, az);
+        const col = d.status === 'scanning' ? '#f0c040'
+                  : d.status === 'done'     ? (d.horizon_alt === 0 ? '#3fb950' : '#e06030')
+                  : '#243040';  // pending
+        ctx.save();
+        ctx.strokeStyle = col;
+        ctx.lineWidth   = d.status === 'scanning' ? 2.5 : 1.5;
+        ctx.globalAlpha = d.status === 'pending'  ? 0.4  : 0.85;
+        ctx.beginPath(); ctx.moveTo(CX, CY); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.restore();
+
+        // Dots at each tested altitude along this spoke
+        if (d.steps && d.steps.length) {
+          for (const step of d.steps) {
+            if (step.alt == null) continue;
+            const [sx, sy] = toXY(step.alt, az);
+            const hasSky   = step.stars != null && step.stars >= 0;
+            const clear    = step.stars > 0;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(sx, sy, 3, 0, 2 * Math.PI);
+            ctx.fillStyle   = clear ? '#56d364' : (hasSky ? '#e06030' : '#888');
+            ctx.globalAlpha = 0.9;
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+
+        // Rim label: show found altitude for done directions
+        if (d.status === 'done' || d.status === 'scanning') {
+          const lx = CX + (MAX_R + 14) * Math.sin(a);
+          const ly = CY - (MAX_R + 14) * Math.cos(a);
+          ctx.save();
+          ctx.font          = "bold 10px monospace";
+          ctx.fillStyle     = d.status === 'scanning' ? '#f0c040' : (d.horizon_alt === 0 ? '#3fb950' : '#e06030');
+          ctx.textAlign     = "center";
+          ctx.textBaseline  = "middle";
+          const rimLbl = d.status === 'scanning' ? '…'
+                       : (d.horizon_alt === 0 ? DIR_LABELS[i] + ' ✓' : DIR_LABELS[i] + ' ' + d.horizon_alt + '°');
+          ctx.fillText(rimLbl, lx, ly);
+          ctx.restore();
+        }
+      }
+
+      // If scan result exists, draw it as a faint orange preview polygon
+      if (_scanOvly.result && _scanOvly.result.length === N) {
+        const rcoords = _scanOvly.result.map(p => toXY(p[0], p[1]));
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(rcoords[0][0], rcoords[0][1]);
+        for (let i = 1; i < N; i++) ctx.lineTo(rcoords[i][0], rcoords[i][1]);
+        ctx.closePath();
+        ctx.fillStyle   = "rgba(224,96,48,0.15)";
+        ctx.fill();
+        ctx.strokeStyle = "#e06030";
+        ctx.lineWidth   = 1.5;
+        ctx.setLineDash([5, 3]);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    // ── /Scan overlay ─────────────────────────────────────────────────────────
 
     // Handles
     for (let i = 0; i < N; i++) {
@@ -3310,7 +3693,7 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     } catch (_) {}
     dragIdx = -1; hovIdx = -1;
     const btn = document.getElementById("btnSkyMaskSave");
-    if (btn) { btn.textContent = "Save to config.yaml"; btn.disabled = false; }
+    if (btn) { btn.textContent = "Save Mask"; btn.disabled = false; }
     draw();
     updateInfo();
   };
@@ -3318,6 +3701,23 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
   window.clearSkyMask = function () {
     alts = new Array(N).fill(0);
     dragIdx = -1; hovIdx = -1;
+    draw(); updateInfo();
+  };
+
+  window.setScanOverlay = function (state) {
+    _scanOvly = state;
+    draw();
+  };
+
+  window.loadAltsFromResult = function (result) {
+    // result: [[alt, az], …]
+    alts = new Array(N).fill(0);
+    (result || []).forEach(function (p) {
+      const az  = ((p[1] % 360) + 360) % 360;
+      const idx = Math.round(az / AZ_STEP) % N;
+      alts[idx] = Math.max(0, Math.min(90, p[0]));
+    });
+    _scanOvly = null;
     draw(); updateInfo();
   };
 
@@ -3334,14 +3734,14 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
       const d = await r.json();
       if (d.ok) {
         btn.textContent = "Saved ✓";
-        setTimeout(function () { btn.textContent = "Save to config.yaml"; btn.disabled = false; }, 1800);
+        setTimeout(function () { btn.textContent = "Save Mask"; btn.disabled = false; }, 1800);
       } else {
         alert("Save failed: " + (d.error || "unknown"));
-        btn.textContent = "Save to config.yaml"; btn.disabled = false;
+        btn.textContent = "Save Mask"; btn.disabled = false;
       }
     } catch (e) {
       alert("Save failed: " + e.message);
-      btn.textContent = "Save to config.yaml"; btn.disabled = false;
+      btn.textContent = "Save Mask"; btn.disabled = false;
     }
   };
 
@@ -3389,6 +3789,154 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     canvas.addEventListener("pointerleave", function () {
       if (dragIdx < 0) { hovIdx = -1; draw(); updateInfo(); }
     });
+  });
+})();
+
+// ── Horizon scan controls ────────────────────────────────────────────────────
+
+(function () {
+  const DIR_LABELS = ["N","NNE","ENE","E","ESE","SSE","S","SSW","WSW","W","WNW","NNW"];
+  let _pollTimer  = null;
+  let _scanResult = null;
+
+  function _scanEl(id) { return document.getElementById(id); }
+
+  function _setScanUI(running, hasResult) {
+    const start  = _scanEl("btnStartScan");
+    const cancel = _scanEl("btnCancelScan");
+    const apply  = _scanEl("btnApplyScan");
+    const fields = _scanEl("scanConfigFields");
+    const prog   = _scanEl("scanProgress");
+    if (start)  start.style.display  = running || hasResult ? "none" : "";
+    if (cancel) cancel.style.display = running ? "" : "none";
+    if (apply)  apply.style.display  = (!running && hasResult) ? "" : "none";
+    if (fields) fields.style.opacity = running ? "0.4" : "1";
+    if (prog)   prog.style.display   = (running || hasResult) ? "" : "none";
+  }
+
+  function _updateProgressUI(state) {
+    const label = _scanEl("scanProgressLabel");
+    const bars  = _scanEl("scanDirectionBars");
+    if (!label || !bars || !state.directions) return;
+
+    // Status line
+    const scanning = state.directions.find(d => d.status === "scanning");
+    const done     = state.directions.filter(d => d.status === "done").length;
+    if (state.running && scanning) {
+      label.textContent = `Scanning ${DIR_LABELS[state.directions.indexOf(scanning)]} (${done}/12)…`;
+      label.style.color = "var(--blue)";
+    } else if (!state.running && state.error) {
+      label.textContent = "Scan failed: " + state.error;
+      label.style.color = "var(--red)";
+    } else if (!state.running && state.result) {
+      label.textContent = "Scan complete — review the dashed orange profile, then Apply.";
+      label.style.color = "var(--green)";
+    }
+
+    // Per-direction bar chart
+    bars.innerHTML = "";
+    state.directions.forEach(function (d, i) {
+      const bar = document.createElement("div");
+      bar.title = DIR_LABELS[i] + (d.horizon_alt != null ? "  " + d.horizon_alt + "°" : "");
+      const heightPct = d.status === "done"
+        ? Math.max(4, Math.round((d.horizon_alt / 90) * 100))
+        : (d.status === "scanning" ? 50 : 4);
+      bar.style.cssText = [
+        "flex:1", "border-radius:2px 2px 0 0", "transition:height .3s",
+        "height:" + heightPct + "%",
+        "background:" + (d.status === "done"
+          ? (d.horizon_alt === 0 ? "var(--green)" : "#e06030")
+          : (d.status === "scanning" ? "#f0c040" : "var(--border)")),
+      ].join(";");
+      bars.appendChild(bar);
+    });
+  }
+
+  async function _poll() {
+    try {
+      const r = await fetch("/api/safety/horizon-scan/status");
+      const s = await r.json();
+      window.setScanOverlay(s);
+      _updateProgressUI(s);
+      _setScanUI(s.running, !!s.result);
+      if (!s.running) {
+        clearInterval(_pollTimer); _pollTimer = null;
+        _scanResult = s.result || null;
+      }
+    } catch (_) {}
+  }
+
+  window.startHorizonScan = async function () {
+    const params = {
+      floor_alt:      parseFloat(_scanEl("scanFloorAlt")?.value)    || 25,
+      start_alt:      parseFloat(_scanEl("scanStartAlt")?.value)    || 60,
+      step:           parseFloat(_scanEl("scanStep")?.value)        || 5,
+      exposure:       parseFloat(_scanEl("scanExposure")?.value)    || 5,
+      star_threshold: parseInt(  _scanEl("scanStarThresh")?.value)  || 5,
+      settle:         parseFloat(_scanEl("scanSettle")?.value)      || 2,
+    };
+    _scanResult = null;
+    _setScanUI(true, false);
+    try {
+      const r = await fetch("/api/safety/horizon-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      });
+      const d = await r.json();
+      if (!d.ok) {
+        alert("Scan failed to start: " + (d.error || "unknown"));
+        _setScanUI(false, false); return;
+      }
+    } catch (e) {
+      alert("Scan failed to start: " + e.message);
+      _setScanUI(false, false); return;
+    }
+    _pollTimer = setInterval(_poll, 1500);
+    _poll();
+  };
+
+  window.cancelHorizonScan = async function () {
+    try {
+      await fetch("/api/safety/horizon-scan", { method: "DELETE" });
+    } catch (_) {}
+    clearInterval(_pollTimer); _pollTimer = null;
+    window.setScanOverlay(null);
+    _setScanUI(false, false);
+    const label = _scanEl("scanProgressLabel");
+    if (label) { label.textContent = "Scan cancelled."; label.style.color = "var(--dim)"; }
+  };
+
+  window.applyHorizonScanResult = function () {
+    if (!_scanResult) return;
+    window.loadAltsFromResult(_scanResult);
+    _scanResult = null;
+    _setScanUI(false, false);
+    const prog = _scanEl("scanProgress");
+    if (prog) prog.style.display = "none";
+    // Prompt the user to review and save
+    const btn = document.getElementById("btnSkyMaskSave");
+    if (btn) {
+      btn.textContent = "Save Mask ← review & save!";
+      btn.style.animation = "pulse 1s ease 3";
+      setTimeout(function () {
+        btn.textContent = "Save Mask";
+        btn.style.animation = "";
+      }, 4000);
+    }
+  };
+
+  // Re-poll on tab open in case a scan is already running
+  document.addEventListener("DOMContentLoaded", function () {
+    fetch("/api/safety/horizon-scan/status").then(r => r.json()).then(function (s) {
+      if (s.running || s.result) {
+        window.setScanOverlay(s);
+        _updateProgressUI(s);
+        _setScanUI(s.running, !!s.result);
+        _scanResult = s.result || null;
+        if (s.running) _pollTimer = setInterval(_poll, 1500);
+      }
+    }).catch(function () {});
   });
 })();
 
