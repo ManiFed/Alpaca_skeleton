@@ -1617,6 +1617,37 @@ body {
 .cfg-toggle-lg { margin-bottom: 2px; }
 .cfg-toggle-lg span { font-size: 13px; font-weight: bold; color: var(--green-hi); }
 
+/* ── Help tooltips ── */
+.help-tip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 1px solid var(--gray); color: var(--dim);
+  font-size: 9px; cursor: help; margin-left: 4px;
+  position: relative; vertical-align: middle;
+  flex-shrink: 0; letter-spacing: 0; font-family: var(--mono);
+  transition: border-color 0.12s, color 0.12s;
+}
+.help-tip:hover { border-color: var(--blue); color: var(--blue); }
+.help-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  right: 0;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px; line-height: 1.55;
+  padding: 8px 12px;
+  width: 240px;
+  z-index: 400;
+  pointer-events: none;
+  visibility: hidden; opacity: 0;
+  transition: opacity 0.12s;
+  letter-spacing: 0; text-transform: none;
+  font-family: var(--mono); font-weight: normal;
+}
+.help-tip:hover::after { visibility: visible; opacity: 1; }
+
 /* ── Sky mask ── */
 .sky-canvas-ring {
   border: 1px solid var(--border);
@@ -1627,7 +1658,7 @@ body {
   display: block;
 }
 .sky-canvas-ring canvas {
-  display: block; cursor: crosshair;
+  display: block; cursor: default;
 }
 </style>
 </head>
@@ -1883,110 +1914,205 @@ body {
 
     <!-- Tab bar -->
     <div id="cfgTabs" style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;">
-      <button id="cfgTab_connection" class="cfg-tab active" onclick="switchCfgTab('connection')">Connection</button>
-      <button id="cfgTab_devices"    class="cfg-tab" onclick="switchCfgTab('devices')">Devices</button>
-      <button id="cfgTab_safety"     class="cfg-tab" onclick="switchCfgTab('safety')">Safety</button>
-      <button id="cfgTab_horizon"    class="cfg-tab" onclick="switchCfgTab('horizon')">Horizon Mask</button>
+      <button id="cfgTab_setup"      class="cfg-tab active" onclick="switchCfgTab('setup')">Setup</button>
       <button id="cfgTab_photometry" class="cfg-tab" onclick="switchCfgTab('photometry')">Photometry</button>
       <button id="cfgTab_aavso"      class="cfg-tab" onclick="switchCfgTab('aavso')">AAVSO</button>
+      <button id="cfgTab_safety"     class="cfg-tab" onclick="switchCfgTab('safety')">Safety</button>
       <button id="cfgTab_advanced"   class="cfg-tab" onclick="switchCfgTab('advanced')">Advanced</button>
     </div>
 
     <!-- Form view -->
     <div id="cfgFormView" style="flex:1;overflow-y:auto;min-height:0;">
 
-      <!-- CONNECTION -->
-      <div id="cfgPanel_connection" class="cfg-panel">
-        <div class="cfg-section-hdr">ALPACA Discovery</div>
-        <div class="cfg-field-grid">
-          <div class="inp-group">
-            <div class="inp-label">Discovery Port</div>
-            <input class="inp" type="number" id="cfgAlpacaPort" min="1024" max="65535" step="1">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Discovery Timeout (sec)</div>
-            <input class="inp" type="number" id="cfgAlpacaTimeout" min="1" max="60" step="1">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">API Version</div>
-            <input class="inp" type="number" id="cfgAlpacaApiVer" min="1" max="2" step="1">
-          </div>
-        </div>
+      <!-- SETUP -->
+      <div id="cfgPanel_setup" class="cfg-panel">
         <div class="cfg-section-hdr">Observer Location</div>
-        <div style="font-size:11px;color:var(--dim);margin-bottom:4px;">Required for Alt-Az slewing and sun elevation calculations.</div>
+        <div style="font-size:11px;color:var(--dim);margin-bottom:6px;">Your site coordinates — used for Alt-Az slewing, sun elevation, and dawn time calculations.</div>
         <div class="cfg-field-grid">
           <div class="inp-group">
-            <div class="inp-label">Latitude (° N, negative = South)</div>
+            <div class="inp-label">Latitude (° N) <span class="help-tip" data-tip="Decimal degrees north of the equator. North is positive, South is negative. Example: 51.5074 for London, -33.8688 for Sydney.">?</span></div>
             <input class="inp" type="number" id="cfgObsLat" min="-90" max="90" step="0.0001" placeholder="e.g. 51.5074">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Longitude (° E, negative = West)</div>
+            <div class="inp-label">Longitude (° E) <span class="help-tip" data-tip="Decimal degrees east of Greenwich. West is negative. Example: -0.1278 for London, 151.2093 for Sydney.">?</span></div>
             <input class="inp" type="number" id="cfgObsLon" min="-180" max="180" step="0.0001" placeholder="e.g. -0.1278">
           </div>
         </div>
-      </div>
-
-      <!-- DEVICES -->
-      <div id="cfgPanel_devices" class="cfg-panel" style="display:none;">
-        <div class="cfg-section-hdr">ALPACA Devices</div>
-        <div style="font-size:11px;color:var(--dim);margin-bottom:4px;">Enable devices to connect. Device numbers are per-server indices (usually 0).</div>
+        <div class="cfg-section-hdr">Devices</div>
+        <div style="font-size:11px;color:var(--dim);margin-bottom:6px;">Which ALPACA devices to connect when you hit Discover/Connect. Device numbers are per-server indices — almost always 0.</div>
         <div class="cfg-device-row">
-          <label class="cfg-toggle" style="min-width:130px;">
-            <input type="checkbox" id="cfgDevTelEnabled"><span>Telescope</span>
+          <label class="cfg-toggle" style="flex:1;">
+            <input type="checkbox" id="cfgDevTelEnabled">
+            <span>Telescope</span>
+            <span class="help-tip" data-tip="Enable ALPACA telescope control. Required for slewing, tracking, parking, and nudging.">?</span>
           </label>
           <div class="inp-group" style="max-width:110px;">
-            <div class="inp-label">Device #</div>
+            <div class="inp-label">Device # <span class="help-tip" data-tip="ALPACA device index on the server. Almost always 0 unless multiple mounts are connected to the same server.">?</span></div>
             <input class="inp" type="number" id="cfgDevTelNum" min="0" max="99" step="1">
           </div>
         </div>
         <div class="cfg-device-row">
-          <label class="cfg-toggle" style="min-width:130px;">
-            <input type="checkbox" id="cfgDevCamEnabled"><span>Camera</span>
+          <label class="cfg-toggle" style="flex:1;">
+            <input type="checkbox" id="cfgDevCamEnabled">
+            <span>Camera</span>
+            <span class="help-tip" data-tip="Enable ALPACA camera control. Required for taking exposures through the dashboard.">?</span>
           </label>
           <div class="inp-group" style="max-width:110px;">
-            <div class="inp-label">Device #</div>
+            <div class="inp-label">Device # <span class="help-tip" data-tip="ALPACA device index for the camera. Almost always 0.">?</span></div>
             <input class="inp" type="number" id="cfgDevCamNum" min="0" max="99" step="1">
           </div>
         </div>
-        <div class="cfg-device-row">
-          <label class="cfg-toggle" style="min-width:130px;">
-            <input type="checkbox" id="cfgDevFocEnabled"><span>Focuser</span>
+        <div class="cfg-device-row" style="opacity:0.55;">
+          <label class="cfg-toggle" style="flex:1;">
+            <input type="checkbox" id="cfgDevFocEnabled">
+            <span>Focuser</span>
+            <span class="help-tip" data-tip="Enable ALPACA focuser. Not yet exposed in the dashboard UI — connecting it here enables future support.">?</span>
           </label>
           <div class="inp-group" style="max-width:110px;">
             <div class="inp-label">Device #</div>
             <input class="inp" type="number" id="cfgDevFocNum" min="0" max="99" step="1">
           </div>
         </div>
-        <div class="cfg-device-row">
-          <label class="cfg-toggle" style="min-width:130px;">
-            <input type="checkbox" id="cfgDevFwEnabled"><span>Filter Wheel</span>
+        <div class="cfg-device-row" style="opacity:0.55;">
+          <label class="cfg-toggle" style="flex:1;">
+            <input type="checkbox" id="cfgDevFwEnabled">
+            <span>Filter Wheel</span>
+            <span class="help-tip" data-tip="Enable ALPACA filter wheel. Not yet exposed in the dashboard UI — connecting it here enables future support.">?</span>
           </label>
           <div class="inp-group" style="max-width:110px;">
             <div class="inp-label">Device #</div>
             <input class="inp" type="number" id="cfgDevFwNum" min="0" max="99" step="1">
           </div>
         </div>
-        <div class="cfg-section-hdr">Telescope Defaults</div>
+      </div>
+
+      <!-- PHOTOMETRY -->
+      <div id="cfgPanel_photometry" class="cfg-panel" style="display:none;">
+        <label class="cfg-toggle cfg-toggle-lg">
+          <input type="checkbox" id="cfgPhotEnabled">
+          <span>Photometry Pipeline Enabled</span>
+          <span class="help-tip" data-tip="Automatically run aperture photometry on each new FITS file detected by the image watcher. Requires the image watcher to be configured in Advanced.">?</span>
+        </label>
         <div class="cfg-field-grid">
           <div class="inp-group">
-            <div class="inp-label">Default Tracking Rate</div>
-            <select class="inp" id="cfgTrackingRate">
-              <option value="0">0 — Sidereal</option>
-              <option value="1">1 — Lunar</option>
-              <option value="2">2 — Solar</option>
-              <option value="3">3 — King</option>
-            </select>
+            <div class="inp-label">Node ID <span class="help-tip" data-tip="Unique name for this observing node in the Boundless Skies network. Used to label your data contributions. Example: node_001.">?</span></div>
+            <input class="inp" type="text" id="cfgPhotNodeId" placeholder="node_001">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Filter (AAVSO code) <span class="help-tip" data-tip="AAVSO filter code for your instrument. CV = Clear/Visual broadband (Seestar S50 default), V = Johnson-V, B = Johnson-B, R = Cousins-R.">?</span></div>
+            <input class="inp" type="text" id="cfgPhotFilter" placeholder="CV">
           </div>
         </div>
-        <div class="cfg-section-hdr">Camera Defaults</div>
-        <div class="cfg-field-grid">
+        <div class="cfg-section-hdr">Target Override</div>
+        <div style="font-size:11px;color:var(--dim);margin-bottom:4px;">Leave all blank to use coordinates from the FITS header — the normal mode when your Seestar is scheduled to a target.</div>
+        <div class="cfg-field-grid" style="grid-template-columns:2fr 1fr 1fr;">
           <div class="inp-group">
-            <div class="inp-label">Exposure Duration (sec)</div>
-            <input class="inp" type="number" id="cfgCamExposure" min="0.001" step="0.1">
+            <div class="inp-label">Target Name <span class="help-tip" data-tip="Override the star name in submissions. Leave blank to use the OBJECT field from your FITS header.">?</span></div>
+            <input class="inp" type="text" id="cfgPhotTargetName" placeholder="e.g. SS Cyg">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Binning</div>
-            <input class="inp" type="number" id="cfgCamBinning" min="1" max="8" step="1">
+            <div class="inp-label">RA (° decimal) <span class="help-tip" data-tip="Override the target right ascension in decimal degrees (0-360). Leave blank to use WCS from the FITS header.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotTargetRA" step="0.0001" placeholder="null">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Dec (° decimal) <span class="help-tip" data-tip="Override the target declination in decimal degrees (-90 to +90). Leave blank to use WCS from the FITS header.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotTargetDec" step="0.0001" placeholder="null">
+          </div>
+        </div>
+        <div class="cfg-section-hdr">Plate Solving</div>
+        <div style="font-size:11px;color:var(--dim);margin-bottom:4px;">Only runs when a FITS file has no WCS solution. The Seestar S50 usually includes WCS.</div>
+        <div class="cfg-field-grid">
+          <div class="inp-group">
+            <div class="inp-label">ASTAP Path <span class="help-tip" data-tip="Path to the ASTAP executable. Use 'astap' if it's on your system PATH, or the full path e.g. /usr/local/bin/astap.">?</span></div>
+            <input class="inp" type="text" id="cfgPhotAstap" placeholder="astap">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Search Radius (°) <span class="help-tip" data-tip="How far from the expected position ASTAP will search. Larger is slower but more forgiving of pointing errors.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotAstapRadius" min="1" max="90" step="1">
+          </div>
+        </div>
+        <div class="cfg-section-hdr">Aperture Geometry <span style="font-size:9px;color:var(--dim);letter-spacing:0;text-transform:none;">(multiples of FWHM)</span></div>
+        <div class="cfg-field-grid" style="grid-template-columns:1fr 1fr 1fr;">
+          <div class="inp-group">
+            <div class="inp-label">Aperture Radius <span class="help-tip" data-tip="Photometric aperture radius as a multiple of the stellar FWHM. 2.5x captures ~99% of a star's light with a well-focused PSF. Increase if seeing is poor.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotAperture" min="0.5" max="10" step="0.1">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Sky Annulus Inner <span class="help-tip" data-tip="Inner edge of the sky background annulus in multiples of FWHM. Must be large enough to exclude the star's PSF wings.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotAnnulusIn" min="1" max="20" step="0.1">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Sky Annulus Outer <span class="help-tip" data-tip="Outer edge of the sky background annulus. Larger gives a better background estimate but more contamination from nearby stars.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotAnnulusOut" min="2" max="30" step="0.1">
+          </div>
+        </div>
+        <div class="cfg-section-hdr">Comparison Stars &amp; Quality</div>
+        <div class="cfg-field-grid">
+          <div class="inp-group">
+            <div class="inp-label">Field Radius (°) <span class="help-tip" data-tip="Half-width of the region to search for AAVSO comparison stars. Should match your FOV — the Seestar S50 is about 0.5 degrees on the short axis.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotFieldRadius" min="0.1" max="5" step="0.1">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Magnitude Limit <span class="help-tip" data-tip="Faintest comparison stars to retrieve from AAVSO. Stars fainter than this are excluded. 15.0 mag is suitable for the Seestar S50.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotMagLimit" min="8" max="20" step="0.5">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Min Comparison Stars <span class="help-tip" data-tip="Minimum comparison stars required for a valid observation. Below this count the observation is flagged poor quality.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotMinComp" min="1" max="20" step="1">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Min SNR <span class="help-tip" data-tip="Minimum signal-to-noise ratio for the target star. Observations below this are flagged poor quality.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotSNR" min="5" max="200" step="1">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Max Uncertainty (mag) <span class="help-tip" data-tip="Maximum magnitude uncertainty for a good-quality result. Measurements with higher uncertainty are flagged poor.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotMaxUnc" min="0.01" max="1" step="0.01">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Max Airmass <span class="help-tip" data-tip="Maximum airmass (atmospheric path length) for a valid observation. High airmass = low altitude = more atmospheric distortion. 3.0 is the standard AAVSO limit.">?</span></div>
+            <input class="inp" type="number" id="cfgPhotMaxAirmass" min="1" max="5" step="0.1">
+          </div>
+        </div>
+      </div>
+
+      <!-- AAVSO -->
+      <div id="cfgPanel_aavso" class="cfg-panel" style="display:none;">
+        <div style="font-size:11px;color:var(--dim);margin-bottom:8px;">Your AAVSO account credentials for submitting photometry to the International Variable Star Database.</div>
+        <div class="cfg-field-grid">
+          <div class="inp-group">
+            <div class="inp-label">Observer Code (OBSCODE) <span class="help-tip" data-tip="Your AAVSO observer code — 4 to 7 capital letters, found in your AAVSO account settings. Required. Embedded in every observation to link it to your account.">?</span></div>
+            <input class="inp" type="text" id="cfgAavsoCode" placeholder="MXYZ" style="text-transform:uppercase;">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Username <span class="help-tip" data-tip="Your AAVSO website login username or email. Required to POST observations. Stored in plain text in config.yaml — keep this file private.">?</span></div>
+            <input class="inp" type="text" id="cfgAavsoUser" autocomplete="username">
+          </div>
+          <div class="inp-group" style="grid-column:1/-1;">
+            <div class="inp-label">Password <span class="help-tip" data-tip="Your AAVSO website login password. Stored in plain text in config.yaml — keep this file private and do not commit it to version control.">?</span></div>
+            <input class="inp" type="password" id="cfgAavsoPass" autocomplete="current-password">
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px;">
+          <label class="cfg-toggle">
+            <input type="checkbox" id="cfgAavsosDryRun">
+            <span>Dry run — format &amp; save locally but do not submit to AAVSO</span>
+            <span class="help-tip" data-tip="Test mode: the pipeline runs fully and saves formatted observation files, but nothing is uploaded to AAVSO. Use this to verify your pipeline before going live.">?</span>
+          </label>
+          <label class="cfg-toggle">
+            <input type="checkbox" id="cfgAavsoSubmitPoor">
+            <span>Submit poor-quality observations</span>
+            <span class="help-tip" data-tip="Allow uploading observations flagged poor quality (low SNR, high uncertainty, or high airmass). Off by default — AAVSO prefers high-quality data.">?</span>
+          </label>
+        </div>
+        <div class="cfg-section-hdr">Additional Settings</div>
+        <div class="cfg-field-grid">
+          <div class="inp-group">
+            <div class="inp-label">Chart ID <span class="help-tip" data-tip="The AAVSO Variable Star Plotter (VSP) chart ID for your target. Leave blank for 'na'. Find chart IDs on the AAVSO website under Variable Star Plotter.">?</span></div>
+            <input class="inp" type="text" id="cfgAavsoChartId" placeholder="X26297EX (or leave blank)">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Audit Directory <span class="help-tip" data-tip="Local directory where formatted observation files and submission records are saved. Created automatically if it does not exist.">?</span></div>
+            <input class="inp" type="text" id="cfgAavsoAuditDir" placeholder="aavso_submissions">
           </div>
         </div>
       </div>
@@ -1994,18 +2120,21 @@ body {
       <!-- SAFETY -->
       <div id="cfgPanel_safety" class="cfg-panel" style="display:none;">
         <label class="cfg-toggle cfg-toggle-lg">
-          <input type="checkbox" id="cfgSafetyEnabled"><span>Safety Manager Enabled</span>
+          <input type="checkbox" id="cfgSafetyEnabled">
+          <span>Safety Manager Enabled</span>
+          <span class="help-tip" data-tip="Enable the safety manager. Monitors telescope connection health, parks at dawn, and enforces the horizon mask. Only disable for manual testing.">?</span>
         </label>
-        <div style="font-size:11px;color:var(--dim);">Monitors telescope connection, parks at dawn, and enforces the horizon mask.</div>
         <div class="cfg-section-hdr">Dawn Protection</div>
         <label class="cfg-toggle">
-          <input type="checkbox" id="cfgSafetyParkDawn"><span>Auto-park at dawn</span>
+          <input type="checkbox" id="cfgSafetyParkDawn">
+          <span>Auto-park at dawn</span>
+          <span class="help-tip" data-tip="Automatically park the telescope when the sun rises to the dawn threshold. Protects the optics from daytime sun exposure.">?</span>
         </label>
-        <div class="cfg-field-grid">
+        <div class="cfg-field-grid" style="grid-template-columns:1fr;">
           <div class="inp-group">
-            <div class="inp-label">Dawn Type</div>
+            <div class="inp-label">Dawn Type <span class="help-tip" data-tip="Which definition of dawn triggers the park. Astronomical (-18 deg) is the latest and darkest — standard for deep-sky. Nautical (-12) and civil (-6) park progressively earlier.">?</span></div>
             <select class="inp" id="cfgSafetyDawnType">
-              <option value="astronomical">Astronomical (−18°)</option>
+              <option value="astronomical">Astronomical (−18° — standard for deep-sky)</option>
               <option value="nautical">Nautical (−12°)</option>
               <option value="civil">Civil (−6°)</option>
             </select>
@@ -2014,226 +2143,133 @@ body {
         <div class="cfg-section-hdr">Connection Watchdog</div>
         <div class="cfg-field-grid">
           <div class="inp-group">
-            <div class="inp-label">Heartbeat Interval (sec)</div>
+            <div class="inp-label">Heartbeat Interval (sec) <span class="help-tip" data-tip="How often the safety manager checks that the telescope is still responding. Lower values catch disconnects faster but add a little network traffic.">?</span></div>
             <input class="inp" type="number" id="cfgSafetyHb" min="5" max="300" step="1">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Disconnect Timeout (sec)</div>
+            <div class="inp-label">Disconnect Timeout (sec) <span class="help-tip" data-tip="If the telescope is unreachable for this many seconds, the safety manager parks and flags an error. Set high enough to survive brief network glitches.">?</span></div>
             <input class="inp" type="number" id="cfgSafetyDiscoTo" min="30" max="3600" step="30">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Reconnect Attempts</div>
+            <div class="inp-label">Reconnect Attempts <span class="help-tip" data-tip="How many times to retry a failed connection check before declaring the telescope lost and triggering a park.">?</span></div>
             <input class="inp" type="number" id="cfgSafetyReconAttempts" min="0" max="20" step="1">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Reconnect Delay (sec)</div>
+            <div class="inp-label">Reconnect Delay (sec) <span class="help-tip" data-tip="Seconds to wait between connection retry attempts.">?</span></div>
             <input class="inp" type="number" id="cfgSafetyReconDelay" min="1" max="120" step="1">
           </div>
         </div>
-      </div>
-
-      <!-- HORIZON MASK -->
-      <div id="cfgPanel_horizon" class="cfg-panel" style="display:none;align-items:center;">
-        <div style="font-size:10px;color:var(--dim);letter-spacing:1px;line-height:1.7;align-self:stretch;">
-          Click to place polygon vertices defining the safe pointing zone.
-          Saves to <span style="color:var(--blue);font-family:var(--mono);">safety.horizon_mask</span> in config.yaml.
-          Zenith at centre · N at top · polygon is always implicitly closed.
-        </div>
-        <div class="sky-canvas-ring">
-          <canvas id="skyCanvas" width="360" height="360"></canvas>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:18px;align-self:stretch;">
-          <div id="skyCoordInfo" style="font-size:12px;color:var(--blue);font-family:var(--mono);"></div>
-          <div id="skyHint"      style="font-size:10px;color:var(--dim);letter-spacing:1px;text-align:right;"></div>
-        </div>
-        <div style="display:flex;gap:8px;align-self:stretch;">
-          <button class="btn btn-dim"   onclick="undoSkyMask()"  style="flex:1;">Undo</button>
-          <button class="btn btn-red"   onclick="clearSkyMask()" style="flex:1;">Clear</button>
-          <button class="btn btn-green" id="btnSkyMaskSave" onclick="saveSkyMask()" style="flex:2;">Save to config.yaml</button>
-        </div>
-      </div>
-
-      <!-- PHOTOMETRY -->
-      <div id="cfgPanel_photometry" class="cfg-panel" style="display:none;">
-        <label class="cfg-toggle cfg-toggle-lg">
-          <input type="checkbox" id="cfgPhotEnabled"><span>Photometry Pipeline Enabled</span>
-        </label>
-        <div style="font-size:11px;color:var(--dim);">Automatically runs on each new FITS file detected by the image watcher.</div>
-        <div class="cfg-field-grid">
-          <div class="inp-group">
-            <div class="inp-label">Node ID</div>
-            <input class="inp" type="text" id="cfgPhotNodeId" placeholder="node_001">
+        <div class="cfg-section-hdr">Horizon Mask</div>
+        <div style="font-size:11px;color:var(--dim);margin-bottom:8px;">Draw a polygon defining the safe pointing zone. Click to add vertices, click near the first point to close. Zenith at centre, North at top.</div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
+          <div class="sky-canvas-ring">
+            <canvas id="skyCanvas" width="360" height="360"></canvas>
           </div>
-          <div class="inp-group">
-            <div class="inp-label">Filter (AAVSO code)</div>
-            <input class="inp" type="text" id="cfgPhotFilter" placeholder="CV">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:360px;min-height:18px;">
+            <div id="skyCoordInfo" style="font-size:12px;color:var(--blue);font-family:var(--mono);"></div>
+            <div id="skyHint"      style="font-size:10px;color:var(--dim);letter-spacing:1px;text-align:right;"></div>
           </div>
-        </div>
-        <div class="cfg-section-hdr">Target Override</div>
-        <div style="font-size:11px;color:var(--dim);margin-bottom:4px;">Leave blank to use FITS header values (normal operation).</div>
-        <div class="cfg-field-grid" style="grid-template-columns:2fr 1fr 1fr;">
-          <div class="inp-group">
-            <div class="inp-label">Target Name</div>
-            <input class="inp" type="text" id="cfgPhotTargetName" placeholder="e.g. SS Cyg">
+          <div style="display:flex;gap:8px;width:360px;">
+            <button class="btn btn-dim"   onclick="undoSkyMask()"  style="flex:1;">Undo</button>
+            <button class="btn btn-red"   onclick="clearSkyMask()" style="flex:1;">Clear</button>
+            <button class="btn btn-green" id="btnSkyMaskSave" onclick="saveSkyMask()" style="flex:2;">Save Horizon Mask</button>
           </div>
-          <div class="inp-group">
-            <div class="inp-label">RA (° decimal)</div>
-            <input class="inp" type="number" id="cfgPhotTargetRA" step="0.0001" placeholder="null">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Dec (° decimal)</div>
-            <input class="inp" type="number" id="cfgPhotTargetDec" step="0.0001" placeholder="null">
-          </div>
-        </div>
-        <div class="cfg-section-hdr">Plate Solving (ASTAP)</div>
-        <div class="cfg-field-grid">
-          <div class="inp-group">
-            <div class="inp-label">ASTAP Executable Path</div>
-            <input class="inp" type="text" id="cfgPhotAstap" placeholder="astap">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Search Radius (°)</div>
-            <input class="inp" type="number" id="cfgPhotAstapRadius" min="1" max="90" step="1">
-          </div>
-        </div>
-        <div class="cfg-section-hdr">Aperture Geometry (× FWHM)</div>
-        <div class="cfg-field-grid" style="grid-template-columns:1fr 1fr 1fr;">
-          <div class="inp-group">
-            <div class="inp-label">Aperture Radius</div>
-            <input class="inp" type="number" id="cfgPhotAperture" min="0.5" max="10" step="0.1">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Annulus Inner</div>
-            <input class="inp" type="number" id="cfgPhotAnnulusIn" min="1" max="20" step="0.1">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Annulus Outer</div>
-            <input class="inp" type="number" id="cfgPhotAnnulusOut" min="2" max="30" step="0.1">
-          </div>
-        </div>
-        <div class="cfg-section-hdr">Comparison Stars</div>
-        <div class="cfg-field-grid">
-          <div class="inp-group">
-            <div class="inp-label">Field Radius (°)</div>
-            <input class="inp" type="number" id="cfgPhotFieldRadius" min="0.1" max="5" step="0.1">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Magnitude Limit</div>
-            <input class="inp" type="number" id="cfgPhotMagLimit" min="8" max="20" step="0.5">
-          </div>
-        </div>
-        <div class="cfg-section-hdr">Quality Thresholds</div>
-        <div class="cfg-field-grid" style="grid-template-columns:1fr 1fr 1fr 1fr;">
-          <div class="inp-group">
-            <div class="inp-label">Min Comp Stars</div>
-            <input class="inp" type="number" id="cfgPhotMinComp" min="1" max="20" step="1">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Min SNR</div>
-            <input class="inp" type="number" id="cfgPhotSNR" min="5" max="200" step="1">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Max Uncertainty (mag)</div>
-            <input class="inp" type="number" id="cfgPhotMaxUnc" min="0.01" max="1" step="0.01">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Max Airmass</div>
-            <input class="inp" type="number" id="cfgPhotMaxAirmass" min="1" max="5" step="0.1">
-          </div>
-        </div>
-      </div>
-
-      <!-- AAVSO -->
-      <div id="cfgPanel_aavso" class="cfg-panel" style="display:none;">
-        <div style="font-size:11px;color:var(--dim);">Credentials for submitting photometry to the AAVSO International Database.</div>
-        <div class="cfg-field-grid">
-          <div class="inp-group">
-            <div class="inp-label">Observer Code (OBSCODE)</div>
-            <input class="inp" type="text" id="cfgAavsoCode" placeholder="MXYZ" style="text-transform:uppercase;">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Username</div>
-            <input class="inp" type="text" id="cfgAavsoUser" autocomplete="username">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Password</div>
-            <input class="inp" type="password" id="cfgAavsoPass" autocomplete="current-password">
-          </div>
-          <div class="inp-group">
-            <div class="inp-label">Chart ID (blank = "na")</div>
-            <input class="inp" type="text" id="cfgAavsoChartId" placeholder="X26297EX">
-          </div>
-          <div class="inp-group" style="grid-column:1/-1;">
-            <div class="inp-label">Audit Directory</div>
-            <input class="inp" type="text" id="cfgAavsoAuditDir" placeholder="aavso_submissions">
-          </div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
-          <label class="cfg-toggle">
-            <input type="checkbox" id="cfgAavsosDryRun">
-            <span>Dry run — format &amp; save locally but do not POST to AAVSO</span>
-          </label>
-          <label class="cfg-toggle">
-            <input type="checkbox" id="cfgAavsoSubmitPoor">
-            <span>Submit observations flagged as poor quality</span>
-          </label>
         </div>
       </div>
 
       <!-- ADVANCED -->
       <div id="cfgPanel_advanced" class="cfg-panel" style="display:none;">
+        <div class="cfg-section-hdr">ALPACA Discovery</div>
+        <div class="cfg-field-grid">
+          <div class="inp-group">
+            <div class="inp-label">Discovery Port <span class="help-tip" data-tip="UDP broadcast port for ALPACA server discovery. The ALPACA spec defines 32227. Only change if your server uses a non-standard port.">?</span></div>
+            <input class="inp" type="number" id="cfgAlpacaPort" min="1024" max="65535" step="1">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Timeout (sec) <span class="help-tip" data-tip="How long to wait for ALPACA servers to respond during a LAN scan. Increase for slow or congested networks.">?</span></div>
+            <input class="inp" type="number" id="cfgAlpacaTimeout" min="1" max="60" step="1">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">API Version <span class="help-tip" data-tip="ALPACA API version to use. Almost always 1. Only change if your server requires a different version.">?</span></div>
+            <input class="inp" type="number" id="cfgAlpacaApiVer" min="1" max="2" step="1">
+          </div>
+        </div>
+        <div class="cfg-section-hdr">Device Defaults</div>
+        <div class="cfg-field-grid">
+          <div class="inp-group">
+            <div class="inp-label">Tracking Rate <span class="help-tip" data-tip="Default tracking rate when the telescope connects. 0 = Sidereal (for stars — the usual choice), 1 = Lunar, 2 = Solar, 3 = King rate (corrects for refraction).">?</span></div>
+            <select class="inp" id="cfgTrackingRate">
+              <option value="0">0 — Sidereal (stars)</option>
+              <option value="1">1 — Lunar</option>
+              <option value="2">2 — Solar</option>
+              <option value="3">3 — King rate</option>
+            </select>
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Camera Exposure (sec) <span class="help-tip" data-tip="Default exposure duration pre-filled in the Camera panel. You can override it per-exposure.">?</span></div>
+            <input class="inp" type="number" id="cfgCamExposure" min="0.001" step="0.1">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Camera Binning <span class="help-tip" data-tip="Default binning pre-filled in the Camera panel. 1 = full resolution. 2 = 2x2 binning (4x faster readout, lower resolution).">?</span></div>
+            <input class="inp" type="number" id="cfgCamBinning" min="1" max="8" step="1">
+          </div>
+        </div>
         <div class="cfg-section-hdr">Pier Camera (ZWO Live View)</div>
         <label class="cfg-toggle" style="margin-bottom:6px;">
-          <input type="checkbox" id="cfgPierEnabled"><span>Enabled</span>
+          <input type="checkbox" id="cfgPierEnabled">
+          <span>Enabled</span>
+          <span class="help-tip" data-tip="Enable live video preview from a ZWO ASI camera at the pier. Requires the zwoasi Python package and the ZWO ASI SDK library.">?</span>
         </label>
         <div class="cfg-field-grid" style="grid-template-columns:1fr 1fr 1fr;">
           <div class="inp-group">
-            <div class="inp-label">Device Index</div>
+            <div class="inp-label">Device Index <span class="help-tip" data-tip="ZWO SDK camera index (not the ALPACA device number). Usually 0 for the first connected ZWO camera.">?</span></div>
             <input class="inp" type="number" id="cfgPierDevIdx" min="0" max="9" step="1">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Exposure (ms)</div>
+            <div class="inp-label">Exposure (ms) <span class="help-tip" data-tip="Exposure time per preview frame in milliseconds. Shorter = faster frame rate but noisier in low light.">?</span></div>
             <input class="inp" type="number" id="cfgPierExpMs" min="1" max="30000" step="1">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Gain</div>
+            <div class="inp-label">Gain <span class="help-tip" data-tip="Camera gain (0-600 for most ZWO cameras). Higher = more sensitive but more noise.">?</span></div>
             <input class="inp" type="number" id="cfgPierGain" min="0" max="600" step="1">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Bin</div>
+            <div class="inp-label">Bin <span class="help-tip" data-tip="Binning factor for live preview. 2 = half resolution, 4x faster — recommended for most setups.">?</span></div>
             <input class="inp" type="number" id="cfgPierBin" min="1" max="4" step="1">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Target FPS</div>
+            <div class="inp-label">Target FPS <span class="help-tip" data-tip="Maximum preview frames per second. Capped by exposure time and USB bandwidth.">?</span></div>
             <input class="inp" type="number" id="cfgPierFps" min="1" max="60" step="1">
           </div>
           <div class="inp-group">
-            <div class="inp-label">JPEG Quality</div>
+            <div class="inp-label">JPEG Quality <span class="help-tip" data-tip="JPEG compression quality for preview frames (10-100). Lower = smaller and faster streaming. Higher = better image quality.">?</span></div>
             <input class="inp" type="number" id="cfgPierJpegQ" min="10" max="100" step="5">
           </div>
         </div>
         <div class="inp-group">
-          <div class="inp-label">SDK Library Path (blank = auto-detect)</div>
-          <input class="inp" type="text" id="cfgPierSdkLib" placeholder="/usr/lib/libASICamera2.so">
+          <div class="inp-label">SDK Library Path <span class="help-tip" data-tip="Full path to the ZWO ASI SDK shared library (libASICamera2.so or .dylib). Leave blank to auto-detect. Example: /usr/lib/libASICamera2.so">?</span></div>
+          <input class="inp" type="text" id="cfgPierSdkLib" placeholder="Leave blank to auto-detect">
         </div>
         <div class="cfg-section-hdr">Image Watcher</div>
         <label class="cfg-toggle" style="margin-bottom:6px;">
-          <input type="checkbox" id="cfgIwEnabled"><span>Enabled — watch for incoming FITS files</span>
+          <input type="checkbox" id="cfgIwEnabled">
+          <span>Enabled — watch for incoming FITS files</span>
+          <span class="help-tip" data-tip="Monitor a directory for new FITS files. When a new file appears it is displayed in the dashboard and optionally processed by the photometry pipeline.">?</span>
         </label>
         <div class="cfg-field-grid">
           <div class="inp-group" style="grid-column:1/-1;">
-            <div class="inp-label">Watch Path</div>
+            <div class="inp-label">Watch Path <span class="help-tip" data-tip="Directory to monitor. For a Seestar on your network, this is the mount point of its SMB share. For local imaging software, this is its output directory.">?</span></div>
             <input class="inp" type="text" id="cfgIwPath" placeholder="/mnt/seestar">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Debounce Delay (sec)</div>
+            <div class="inp-label">Debounce Delay (sec) <span class="help-tip" data-tip="Seconds to wait after a file appears before processing it. Prevents reading incomplete files still being written. 2 seconds is safe for SMB network shares.">?</span></div>
             <input class="inp" type="number" id="cfgIwDebounce" min="0.1" max="30" step="0.1">
           </div>
         </div>
         <div class="cfg-section-hdr">Logging</div>
         <div class="cfg-field-grid" style="grid-template-columns:1fr 2fr;">
           <div class="inp-group">
-            <div class="inp-label">Log Level</div>
+            <div class="inp-label">Log Level <span class="help-tip" data-tip="Minimum severity to log. DEBUG is verbose. INFO is recommended for normal use. WARNING and ERROR suppress routine messages.">?</span></div>
             <select class="inp" id="cfgLogLevel">
               <option value="DEBUG">DEBUG</option>
               <option value="INFO">INFO</option>
@@ -2949,14 +2985,17 @@ function clearLog() {
 const es = new EventSource("/api/logs");
 es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
 
-// ── Sky Mask ──────────────────────────────────────────────────────────────────
+// ── Sky Mask (12-spoke radial drag) ──────────────────────────────────────────
 
 (function () {
   const W = 360, H = 360, CX = 180, CY = 180, MAX_R = 155;
+  const N = 12, AZ_STEP = 30;
+  const DIR_LABELS = ["N","NNE","ENE","E","ESE","SSE","S","SSW","WSW","W","WNW","NNW"];
 
-  let pts   = [];      // [{alt, az}, ...]
-  let hover = null;    // {alt, az} | null
-  let ctx   = null;
+  let alts    = new Array(N).fill(0);
+  let ctx     = null;
+  let dragIdx = -1;
+  let hovIdx  = -1;
 
   function toXY(alt, az) {
     const r = MAX_R * (1 - alt / 90);
@@ -2964,14 +3003,24 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
   }
 
-  function fromXY(x, y) {
-    const dx = x - CX, dy = CY - y;
-    const r  = Math.sqrt(dx * dx + dy * dy);
-    if (r > MAX_R + 2) return null;
-    const alt = 90 * (1 - Math.min(r, MAX_R) / MAX_R);
-    let   az  = Math.atan2(dx, dy) * 180 / Math.PI;
-    if (az < 0) az += 360;
-    return { alt: Math.round(alt * 10) / 10, az: Math.round(az * 10) / 10 };
+  function handleXY(i)  { return toXY(alts[i], i * AZ_STEP); }
+
+  function altFromMouse(i, cx, cy) {
+    const a  = (i * AZ_STEP) * Math.PI / 180;
+    const mx = cx - CX, my = cy - CY;
+    // Project mouse onto the radial direction for this spoke
+    const r  = mx * Math.sin(a) + my * (-Math.cos(a));
+    return Math.round(90 * (1 - Math.max(0, Math.min(MAX_R, r)) / MAX_R) * 10) / 10;
+  }
+
+  function findHandle(cx, cy) {
+    let best = -1, bestD = 14;
+    for (let i = 0; i < N; i++) {
+      const [hx, hy] = handleXY(i);
+      const d = Math.sqrt((cx - hx) ** 2 + (cy - hy) ** 2);
+      if (d < bestD) { best = i; bestD = d; }
+    }
+    return best;
   }
 
   function draw() {
@@ -2998,12 +3047,13 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     ctx.setLineDash([]);
     ctx.restore();
 
-    // Azimuth spokes every 45°
+    // Azimuth spokes — draw all 12 (one per handle)
     ctx.save();
-    ctx.strokeStyle = "#1e2936";
     ctx.lineWidth = 1;
-    for (let az = 0; az < 360; az += 45) {
+    for (let i = 0; i < N; i++) {
+      const az = i * AZ_STEP;
       const [x, y] = toXY(0, az);
+      ctx.strokeStyle = (i === hovIdx || i === dragIdx) ? "#2a4060" : "#1e2936";
       ctx.beginPath();
       ctx.moveTo(CX, CY);
       ctx.lineTo(x, y);
@@ -3018,7 +3068,7 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Altitude labels
+    // Altitude ring labels
     ctx.save();
     ctx.font = "9px monospace";
     ctx.fillStyle = "#3a4a56";
@@ -3036,18 +3086,14 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     ctx.textBaseline = "middle";
     const dirs = [
       [0,   "N",  "#56d364", true ],
-      [45,  "NE", "#3a4a56", false],
       [90,  "E",  "#3a4a56", false],
-      [135, "SE", "#3a4a56", false],
       [180, "S",  "#3a4a56", false],
-      [225, "SW", "#3a4a56", false],
       [270, "W",  "#3a4a56", false],
-      [315, "NW", "#3a4a56", false],
     ];
     for (const [az, label, color, bold] of dirs) {
       const a  = az * Math.PI / 180;
-      const lx = CX + (MAX_R + 15) * Math.sin(a);
-      const ly = CY - (MAX_R + 15) * Math.cos(a);
+      const lx = CX + (MAX_R + 14) * Math.sin(a);
+      const ly = CY - (MAX_R + 14) * Math.cos(a);
       ctx.font = (bold ? "bold " : "") + "11px monospace";
       ctx.fillStyle = color;
       ctx.fillText(label, lx, ly);
@@ -3060,106 +3106,72 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     ctx.fillStyle = "#2d3d4d";
     ctx.fill();
 
-    // Check snap-to-close
-    let snapClose = false;
-    if (hover && pts.length >= 3) {
-      const [fx, fy] = toXY(pts[0].alt, pts[0].az);
-      const [hx, hy] = toXY(hover.alt, hover.az);
-      snapClose = Math.sqrt((hx - fx) ** 2 + (hy - fy) ** 2) < 14;
-    }
+    // Safe-zone polygon (always closed, all 12 handles)
+    const coords = alts.map((_, i) => handleXY(i));
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(coords[0][0], coords[0][1]);
+    for (let i = 1; i < N; i++) ctx.lineTo(coords[i][0], coords[i][1]);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(63,185,80,0.13)";
+    ctx.fill();
+    ctx.strokeStyle = "#3fb950";
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+    ctx.restore();
 
-    // Polygon
-    if (pts.length > 0) {
-      const coords = pts.map(p => toXY(p.alt, p.az));
-
-      // Filled area (3+ points)
-      if (pts.length >= 3) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(coords[0][0], coords[0][1]);
-        for (let i = 1; i < coords.length; i++) ctx.lineTo(coords[i][0], coords[i][1]);
-        ctx.closePath();
-        ctx.fillStyle = snapClose
-          ? "rgba(248, 81, 73, 0.12)"
-          : "rgba(63, 185, 80, 0.14)";
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Edges
+    // Handles
+    for (let i = 0; i < N; i++) {
+      const [hx, hy] = coords[i];
+      const active = (i === dragIdx || i === hovIdx);
       ctx.save();
-      ctx.strokeStyle = snapClose ? "#f85149" : "#3fb950";
-      ctx.lineWidth = 1.5;
-      ctx.lineJoin = "round";
+      if (active) {
+        ctx.shadowColor = "#58a6ff";
+        ctx.shadowBlur  = 10;
+      }
       ctx.beginPath();
-      ctx.moveTo(coords[0][0], coords[0][1]);
-      for (let i = 1; i < coords.length; i++) ctx.lineTo(coords[i][0], coords[i][1]);
-      if (pts.length >= 3) ctx.closePath();
-      ctx.stroke();
+      ctx.arc(hx, hy, active ? 7 : 5, 0, 2 * Math.PI);
+      ctx.fillStyle = active ? "#58a6ff" : "#3fb950";
+      ctx.fill();
       ctx.restore();
 
-      // Dashed preview edge to hover
-      if (hover && !snapClose) {
-        const [hx, hy] = toXY(hover.alt, hover.az);
-        const [lx, ly] = coords[coords.length - 1];
+      // Direction label near handle when active
+      if (active) {
         ctx.save();
-        ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = "rgba(63, 185, 80, 0.3)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(lx, ly);
-        ctx.lineTo(hx, hy);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // Vertex dots
-      for (let i = 0; i < coords.length; i++) {
-        const [vx, vy] = coords[i];
-        const isFirst  = i === 0;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(vx, vy, isFirst ? (snapClose ? 7 : 5) : 4, 0, 2 * Math.PI);
-        if (snapClose && isFirst) {
-          ctx.fillStyle = "#f85149";
-          ctx.shadowColor = "#f85149";
-          ctx.shadowBlur  = 8;
-        } else {
-          ctx.fillStyle = isFirst ? "#56d364" : "#3fb950";
-        }
-        ctx.fill();
+        ctx.font = "bold 10px monospace";
+        ctx.fillStyle = "#58a6ff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const a   = (i * AZ_STEP) * Math.PI / 180;
+        const lx  = CX + (MAX_R + 14) * Math.sin(a);
+        const ly  = CY - (MAX_R + 14) * Math.cos(a);
+        ctx.fillText(DIR_LABELS[i], lx, ly);
         ctx.restore();
       }
     }
 
-    // Hover crosshair
-    if (hover) {
-      const [hx, hy] = toXY(hover.alt, hover.az);
-      ctx.save();
-      ctx.strokeStyle = "rgba(88,166,255,0.55)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(hx - 8, hy); ctx.lineTo(hx + 8, hy);
-      ctx.moveTo(hx, hy - 8); ctx.lineTo(hx, hy + 8);
-      ctx.stroke();
-      ctx.restore();
+    // Alt readout for active handle
+    const activeIdx = dragIdx >= 0 ? dragIdx : hovIdx;
+    if (activeIdx >= 0) {
+      const infoEl = document.getElementById("skyCoordInfo");
+      if (infoEl) {
+        infoEl.textContent =
+          DIR_LABELS[activeIdx] + "  Az " + (activeIdx * AZ_STEP) + "°  Alt " +
+          alts[activeIdx].toFixed(1) + "°";
+      }
     }
   }
 
   function updateInfo() {
     const infoEl = document.getElementById("skyCoordInfo");
     const hintEl = document.getElementById("skyHint");
-    if (infoEl) {
-      infoEl.textContent = hover
-        ? ("Alt " + hover.alt.toFixed(1) + "°  Az " + hover.az.toFixed(1) + "°")
-        : "";
-    }
+    const activeIdx = dragIdx >= 0 ? dragIdx : hovIdx;
+    if (infoEl && activeIdx < 0) infoEl.textContent = "";
     if (hintEl) {
-      const n = pts.length;
-      if (n === 0)      hintEl.textContent = "Click to start polygon";
-      else if (n === 1) hintEl.textContent = "1 point";
-      else if (n === 2) hintEl.textContent = "2 points — need 1 more to close";
-      else              hintEl.textContent = n + " points — hover first vertex to close";
+      hintEl.textContent = dragIdx >= 0
+        ? "Drag radially to change altitude"
+        : "Drag a handle to set min altitude";
     }
   }
 
@@ -3174,25 +3186,26 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
   window.loadSkyMask = async function () {
     const canvas = document.getElementById("skyCanvas");
     if (canvas && !ctx) ctx = canvas.getContext("2d");
+    alts = new Array(N).fill(0);
     try {
       const r = await fetch("/api/safety/horizon-mask");
       const d = await r.json();
-      pts = (d.polygon || []).map(function (p) { return { alt: p[0], az: p[1] }; });
-    } catch (_) { pts = []; }
-    hover = null;
+      (d.polygon || []).forEach(function (p) {
+        const az  = ((p[1] % 360) + 360) % 360;
+        const idx = Math.round(az / AZ_STEP) % N;
+        alts[idx] = Math.max(0, Math.min(90, p[0]));
+      });
+    } catch (_) {}
+    dragIdx = -1; hovIdx = -1;
     const btn = document.getElementById("btnSkyMaskSave");
     if (btn) { btn.textContent = "Save to config.yaml"; btn.disabled = false; }
     draw();
     updateInfo();
   };
 
-  window.undoSkyMask = function () {
-    pts.pop();
-    draw(); updateInfo();
-  };
-
   window.clearSkyMask = function () {
-    pts = [];
+    alts = new Array(N).fill(0);
+    dragIdx = -1; hovIdx = -1;
     draw(); updateInfo();
   };
 
@@ -3200,10 +3213,11 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     const btn = document.getElementById("btnSkyMaskSave");
     btn.disabled = true; btn.textContent = "Saving…";
     try {
+      const polygon = alts.map(function (alt, i) { return [alt, i * AZ_STEP]; });
       const r = await fetch("/api/safety/horizon-mask", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ polygon: pts.map(function (p) { return [p.alt, p.az]; }) }),
+        body:    JSON.stringify({ polygon }),
       });
       const d = await r.json();
       if (d.ok) {
@@ -3222,32 +3236,46 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
   document.addEventListener("DOMContentLoaded", function () {
     const canvas = document.getElementById("skyCanvas");
     if (!canvas) return;
+    ctx = canvas.getContext("2d");
+    draw();
 
-    canvas.addEventListener("mousemove", function (e) {
+    canvas.addEventListener("pointermove", function (e) {
       const [cx, cy] = canvasPos(canvas, e);
-      hover = fromXY(cx, cy);
-      draw(); updateInfo();
-    });
-
-    canvas.addEventListener("mouseleave", function () {
-      hover = null;
-      draw(); updateInfo();
-    });
-
-    canvas.addEventListener("click", function (e) {
-      const [cx, cy] = canvasPos(canvas, e);
-      const pos = fromXY(cx, cy);
-      if (!pos) return;
-
-      // Snap-to-close: clicking near the first vertex when 3+ points already placed
-      if (pts.length >= 3) {
-        const [fx, fy] = toXY(pts[0].alt, pts[0].az);
-        if (Math.sqrt((cx - fx) ** 2 + (cy - fy) ** 2) < 14) {
-          return; // polygon is already implicitly closed — just give feedback
-        }
+      if (dragIdx >= 0) {
+        alts[dragIdx] = altFromMouse(dragIdx, cx, cy);
+        draw(); updateInfo();
+      } else {
+        const h = findHandle(cx, cy);
+        if (h !== hovIdx) { hovIdx = h; draw(); updateInfo(); }
       }
-      pts.push(pos);
+    });
+
+    canvas.addEventListener("pointerdown", function (e) {
+      const [cx, cy] = canvasPos(canvas, e);
+      const h = findHandle(cx, cy);
+      if (h < 0) return;
+      dragIdx = h; hovIdx = -1;
+      canvas.setPointerCapture(e.pointerId);
+      canvas.style.cursor = "ns-resize";
       draw(); updateInfo();
+    });
+
+    canvas.addEventListener("pointerup", function (e) {
+      dragIdx = -1;
+      canvas.style.cursor = "default";
+      const [cx, cy] = canvasPos(canvas, e);
+      hovIdx = findHandle(cx, cy);
+      draw(); updateInfo();
+    });
+
+    canvas.addEventListener("pointercancel", function () {
+      dragIdx = -1; hovIdx = -1;
+      canvas.style.cursor = "default";
+      draw(); updateInfo();
+    });
+
+    canvas.addEventListener("pointerleave", function () {
+      if (dragIdx < 0) { hovIdx = -1; draw(); updateInfo(); }
     });
   });
 })();
@@ -3320,8 +3348,8 @@ async function connectTo(host, port) {
 
 let _cfgView      = 'form';
 let _cfgParsed    = {};
-let _cfgActiveTab = 'connection';
-const _CFG_TABS   = ['connection','devices','safety','horizon','photometry','aavso','advanced'];
+let _cfgActiveTab = 'setup';
+const _CFG_TABS   = ['setup','photometry','aavso','safety','advanced'];
 
 function switchCfgTab(tab) {
   _cfgActiveTab = tab;
