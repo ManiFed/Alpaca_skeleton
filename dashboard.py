@@ -1456,6 +1456,7 @@ body {
   padding: 28px;
   max-height: 90vh;
   overflow-y: auto;
+  overflow-x: visible;
   width: 90%;
   max-width: 600px;
   display: flex;
@@ -1632,7 +1633,8 @@ body {
   content: attr(data-tip);
   position: absolute;
   bottom: calc(100% + 7px);
-  right: 0;
+  left: 50%;
+  transform: translateX(-50%);
   background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -1645,6 +1647,7 @@ body {
   transition: opacity 0.12s;
   letter-spacing: 0; text-transform: none;
   font-family: var(--mono); font-weight: normal;
+  white-space: normal;
 }
 .help-tip:hover::after { visibility: visible; opacity: 1; }
 
