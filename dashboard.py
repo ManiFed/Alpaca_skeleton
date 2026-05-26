@@ -702,8 +702,27 @@ def api_slew():
         try:
             _tel.begin_slew_altaz(alt, az)
         except Exception as exc:
-            logger.error("Alt-Az slew failed: %s", exc)
-            return jsonify({"error": str(exc)}), 500
+            logger.warning("Alt-Az slew not supported by driver (%s) — converting to RA/Dec", exc)
+            cfg = _load_config()
+            obs = cfg.get("safety", {}).get("observer", {})
+            lat = float(obs.get("latitude", 0.0))
+            lon = float(obs.get("longitude", 0.0))
+            try:
+                from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+                from astropy.time import Time
+                import astropy.units as u
+                location = EarthLocation(lat=lat * u.deg, lon=lon * u.deg)
+                t = Time.now()
+                altaz_frame = AltAz(obstime=t, location=location)
+                coord = SkyCoord(alt=alt * u.deg, az=az * u.deg, frame=altaz_frame)
+                eq = coord.icrs
+                ra_h = float(eq.ra.deg) / 15.0
+                dec_d = float(eq.dec.deg)
+                _tel.begin_slew(ra_h, dec_d)
+                logger.info("Alt-Az fallback slew: RA=%.4f h  Dec=%.4f °", ra_h, dec_d)
+            except Exception as exc2:
+                logger.error("Alt-Az fallback slew failed: %s", exc2)
+                return jsonify({"error": str(exc2)}), 500
     else:
         try:
             ra  = float(data["ra"])
