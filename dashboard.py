@@ -916,6 +916,31 @@ def api_aavso():
     return jsonify(snap)
 
 
+@app.route("/api/config", methods=["GET"])
+def api_config_get():
+    try:
+        with open("config.yaml") as fh:
+            return fh.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    except FileNotFoundError:
+        return "", 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/api/config", methods=["POST"])
+def api_config_post():
+    raw = request.get_data(as_text=True)
+    try:
+        yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        with open("config.yaml", "w") as fh:
+            fh.write(raw)
+    except OSError as exc:
+        return jsonify({"error": str(exc)}), 500
+    logger.info("config.yaml updated via dashboard")
+    return jsonify({"ok": True})
+
+
 @app.route("/api/pier-cam/snapshot")
 def pier_cam_snapshot():
     with _pier_cam_frame_lock:
@@ -1333,6 +1358,36 @@ body {
 }
 .srv-item:hover { border-color: var(--blue); background: rgba(88,166,255,.06); }
 .sep { border-top: 1px solid var(--border); }
+
+/* ── Config editor ── */
+.cfg-modal .modal-content {
+  max-width: 720px;
+  width: 95%;
+  max-height: 90vh;
+}
+.cfg-textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 10px 14px;
+  resize: vertical;
+  width: 100%;
+  min-height: 420px;
+  tab-size: 2;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.cfg-textarea:focus { border-color: var(--blue); }
+.cfg-error {
+  color: var(--red);
+  font-size: 11px;
+  min-height: 16px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 </style>
 </head>
 <body>
@@ -1370,6 +1425,7 @@ body {
     <button class="btn btn-dim" id="btnHdrCam" onclick="openCameraModal()">
       <span class="dot dot-gray" id="camDot" style="vertical-align:middle;margin-right:5px;"></span>Camera
     </button>
+    <button class="btn btn-dim" id="btnConfig" onclick="openConfigModal()">Config</button>
     <button class="btn btn-blue" id="btnDiscover" onclick="showDiscover()">Discover</button>
   </div>
 </div>
@@ -1568,6 +1624,27 @@ body {
   </div>
 </div>
 
+<!-- Config editor modal -->
+<div class="modal hidden cfg-modal" id="cfgModal" onclick="if(event.target===this)closeConfigModal()">
+  <div class="modal-content" style="max-width:720px;width:95%;max-height:90vh;">
+    <div class="modal-header">
+      <div class="modal-title" style="font-size:14px;">
+        ⚙ config.yaml
+      </div>
+      <button class="modal-close" onclick="closeConfigModal()">×</button>
+    </div>
+    <div style="font-size:10px;color:var(--dim);letter-spacing:1px;">
+      LIVE FILE — changes take effect on next restart or reload of config-dependent subsystems
+    </div>
+    <textarea class="cfg-textarea" id="cfgTextarea" spellcheck="false"></textarea>
+    <div class="cfg-error" id="cfgError"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-dim" onclick="closeConfigModal()">Cancel</button>
+      <button class="btn btn-green" id="btnCfgSave" onclick="saveConfig()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Log footer -->
 <div class="log-footer">
   <div class="log-panel">
@@ -1650,6 +1727,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeTelescopeModal();
     closeCameraModal();
+    closeConfigModal();
     hideDiscover();
   }
 });
@@ -2296,6 +2374,71 @@ async function connectTo(host, port) {
     if (!d.ok) throw new Error(d.error || "failed");
   } catch (e) {
     alert("Connection failed: " + e.message);
+  }
+}
+
+// ── Config editor ─────────────────────────────────────────────────────────────
+
+async function openConfigModal() {
+  const modal    = document.getElementById("cfgModal");
+  const textarea = document.getElementById("cfgTextarea");
+  const errEl    = document.getElementById("cfgError");
+  const saveBtn  = document.getElementById("btnCfgSave");
+
+  errEl.textContent = "";
+  saveBtn.disabled  = false;
+  saveBtn.textContent = "Save";
+  textarea.value    = "Loading…";
+  modal.classList.remove("hidden");
+
+  try {
+    const r    = await fetch("/api/config");
+    const text = await r.text();
+    textarea.value = text;
+    textarea.focus();
+    textarea.setSelectionRange(0, 0);
+    textarea.scrollTop = 0;
+  } catch (e) {
+    textarea.value    = "";
+    errEl.textContent = "Failed to load config: " + e.message;
+  }
+}
+
+function closeConfigModal() {
+  document.getElementById("cfgModal").classList.add("hidden");
+}
+
+async function saveConfig() {
+  const textarea = document.getElementById("cfgTextarea");
+  const errEl    = document.getElementById("cfgError");
+  const saveBtn  = document.getElementById("btnCfgSave");
+
+  errEl.textContent   = "";
+  saveBtn.disabled    = true;
+  saveBtn.textContent = "Saving…";
+
+  try {
+    const r = await fetch("/api/config", {
+      method:  "POST",
+      headers: { "Content-Type": "text/plain" },
+      body:    textarea.value,
+    });
+    if (r.ok) {
+      saveBtn.textContent = "Saved ✓";
+      setTimeout(() => {
+        saveBtn.textContent = "Save";
+        saveBtn.disabled    = false;
+      }, 1800);
+    } else {
+      const d = await r.json().catch(() => ({}));
+      errEl.textContent   = "Error: " + (d.error || r.statusText);
+      saveBtn.textContent = "Save";
+      saveBtn.disabled    = false;
+    }
+  } catch (e) {
+    errEl.textContent   = "Request failed: " + e.message;
+    saveBtn.textContent = "Save";
+    saveBtn.disabled    = false;
   }
 }
 </script>
