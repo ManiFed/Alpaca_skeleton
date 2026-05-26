@@ -1258,8 +1258,8 @@ body {
 /* ── Discovery overlay ── */
 .overlay {
   position: fixed; inset: 0;
-  background: rgba(7,10,14,.88);
-  backdrop-filter: blur(3px);
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(4px) brightness(0.45);
   display: flex; align-items: center; justify-content: center;
   z-index: 50;
 }
@@ -1315,7 +1315,7 @@ body {
     <button class="btn btn-dim" id="btnHdrCam" onclick="openCameraModal()">
       <span class="dot dot-gray" id="camDot" style="vertical-align:middle;margin-right:5px;"></span>Camera
     </button>
-    <button class="btn btn-blue" onclick="showDiscover()">Discover</button>
+    <button class="btn btn-blue" id="btnDiscover" onclick="showDiscover()">Discover</button>
   </div>
 </div>
 
@@ -1510,7 +1510,7 @@ body {
 </div>
 
 <!-- Discovery overlay -->
-<div class="overlay hidden" id="overlay">
+<div class="overlay hidden" id="overlay" onclick="if(event.target===this)hideDiscover()">
   <div class="card">
     <div class="card-title">Connect to ALPACA Server</div>
     <button class="btn btn-blue" id="scanBtn" onclick="doScan()" style="width:100%">
@@ -1577,6 +1577,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeTelescopeModal();
     closeCameraModal();
+    hideDiscover();
   }
 });
 
@@ -2109,8 +2110,15 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
 
 // ── Discovery overlay ────────────────────────────────────────────────────────
 
-function showDiscover()  { document.getElementById("overlay").classList.remove("hidden"); doScan(); }
-function hideDiscover()  { document.getElementById("overlay").classList.add("hidden"); }
+function showDiscover() {
+  document.getElementById("overlay").classList.remove("hidden");
+  document.getElementById("btnDiscover").textContent = "● Scanning";
+  doScan();
+}
+function hideDiscover() {
+  document.getElementById("overlay").classList.add("hidden");
+  document.getElementById("btnDiscover").textContent = "Discover";
+}
 
 async function doScan() {
   const btn = document.getElementById("scanBtn");
@@ -2136,6 +2144,10 @@ async function doScan() {
       '<div style="color:var(--red);font-size:12px;">Discovery request failed.</div>';
   }
   btn.textContent = "Scan LAN for servers"; btn.disabled = false;
+  const discoverBtn = document.getElementById("btnDiscover");
+  if (discoverBtn && document.getElementById("overlay").classList.contains("hidden")) {
+    discoverBtn.textContent = "Discover";
+  }
 }
 
 async function doManualConnect() {
