@@ -687,21 +687,38 @@ def api_slew():
     if _tel is None:
         return jsonify({"error": "Telescope not connected"}), 400
     data = request.get_json(force=True) or {}
-    try:
-        ra  = float(data["ra"])
-        dec = float(data["dec"])
-    except (KeyError, ValueError):
-        return jsonify({"error": "Invalid ra/dec"}), 400
-    if not (0.0 <= ra < 24.0):
-        return jsonify({"error": "RA must be in range [0, 24)"}), 400
-    if not (-90.0 <= dec <= 90.0):
-        return jsonify({"error": "Dec must be in range [-90, 90]"}), 400
+    mode = data.get("mode", "eq")
 
-    try:
-        _tel.begin_slew(ra, dec)
-    except Exception as exc:
-        logger.error("Slew failed: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+    if mode == "altaz":
+        try:
+            alt = float(data["alt"])
+            az  = float(data["az"])
+        except (KeyError, ValueError):
+            return jsonify({"error": "Invalid alt/az"}), 400
+        if not (0.0 <= alt <= 90.0):
+            return jsonify({"error": "Altitude must be in range [0, 90]"}), 400
+        if not (0.0 <= az < 360.0):
+            return jsonify({"error": "Azimuth must be in range [0, 360)"}), 400
+        try:
+            _tel.begin_slew_altaz(alt, az)
+        except Exception as exc:
+            logger.error("Alt-Az slew failed: %s", exc)
+            return jsonify({"error": str(exc)}), 500
+    else:
+        try:
+            ra  = float(data["ra"])
+            dec = float(data["dec"])
+        except (KeyError, ValueError):
+            return jsonify({"error": "Invalid ra/dec"}), 400
+        if not (0.0 <= ra < 24.0):
+            return jsonify({"error": "RA must be in range [0, 24)"}), 400
+        if not (-90.0 <= dec <= 90.0):
+            return jsonify({"error": "Dec must be in range [-90, 90]"}), 400
+        try:
+            _tel.begin_slew(ra, dec)
+        except Exception as exc:
+            logger.error("Slew failed: %s", exc)
+            return jsonify({"error": str(exc)}), 500
 
     return jsonify({"ok": True})
 
@@ -752,6 +769,25 @@ def api_nudge():
 
     logger.info("Nudge %s %.0f\" → RA=%.4f h  Dec=%.4f °", direction, step_arcsec, new_ra, new_dec)
     return jsonify({"ok": True})
+
+
+@app.route("/api/telescope/moveaxis", methods=["POST"])
+def api_move_axis():
+    if _tel is None:
+        return jsonify({"error": "Telescope not connected"}), 400
+    data = request.get_json(force=True) or {}
+    try:
+        ra_rate  = float(data.get("ra_rate",  0))
+        dec_rate = float(data.get("dec_rate", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid parameters"}), 400
+    try:
+        _tel.move_axis(0, ra_rate)
+        _tel.move_axis(1, dec_rate)
+        return jsonify({"ok": True})
+    except Exception as exc:
+        logger.error("MoveAxis failed: %s", exc)
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/camera/expose", methods=["POST"])
@@ -1407,8 +1443,16 @@ body {
 
     <!-- Slew -->
     <div class="ctrl-group">
-      <div class="panel-label">Slew Target</div>
-      <div class="inp-grid">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div class="panel-label" style="margin:0;">Slew Target</div>
+        <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+          <button id="slewModeEQ" onclick="setSlewMode('eq')"
+            style="padding:3px 10px;font-size:10px;letter-spacing:1px;border:none;cursor:pointer;background:var(--blue);color:#fff;">EQ</button>
+          <button id="slewModeAltAz" onclick="setSlewMode('altaz')"
+            style="padding:3px 10px;font-size:10px;letter-spacing:1px;border:none;cursor:pointer;background:var(--panel-bg);color:var(--dim);">ALT-AZ</button>
+        </div>
+      </div>
+      <div id="slewInputsEQ" class="inp-grid">
         <div class="inp-group">
           <div class="inp-label">R.A. (decimal hours)</div>
           <input class="inp" id="slewRA" type="number" min="0" max="23.9999" step="0.0001" placeholder="0.0000">
@@ -1416,6 +1460,16 @@ body {
         <div class="inp-group">
           <div class="inp-label">Dec (decimal degrees)</div>
           <input class="inp" id="slewDec" type="number" min="-90" max="90" step="0.0001" placeholder="0.0000">
+        </div>
+      </div>
+      <div id="slewInputsAltAz" class="inp-grid" style="display:none;">
+        <div class="inp-group">
+          <div class="inp-label">Altitude (degrees, 0–90)</div>
+          <input class="inp" id="slewAlt" type="number" min="0" max="90" step="0.0001" placeholder="0.0000">
+        </div>
+        <div class="inp-group">
+          <div class="inp-label">Azimuth (degrees, 0–360)</div>
+          <input class="inp" id="slewAz" type="number" min="0" max="359.9999" step="0.0001" placeholder="0.0000">
         </div>
       </div>
       <button class="btn btn-blue btn-full" id="btnModalSlew" onclick="apiSlew()" disabled>Slew to Target</button>
@@ -1439,7 +1493,7 @@ body {
           </div>
         </div>
         <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-          <div id="joyPad" style="width:120px; height:120px; border-radius:50%; background:var(--panel-bg); border:2px solid var(--border); position:relative; cursor:grab; touch-action:none; user-select:none; flex-shrink:0;" title="Drag to nudge — distance sets step size">
+          <div id="joyPad" style="width:120px; height:120px; border-radius:50%; background:var(--panel-bg); border:2px solid var(--border); position:relative; cursor:grab; touch-action:none; user-select:none; flex-shrink:0;" title="Hold and drag to move — distance sets speed">
             <span style="position:absolute;top:4px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--dim);pointer-events:none;">N</span>
             <span style="position:absolute;bottom:4px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--dim);pointer-events:none;">S</span>
             <span style="position:absolute;left:5px;top:50%;transform:translateY(-50%);font-size:9px;color:var(--dim);pointer-events:none;">W</span>
@@ -1897,96 +1951,120 @@ async function apiTracking(enabled) {
 // ── Joystick ─────────────────────────────────────────────────────────────────
 
 (function () {
-  const PAD_R   = 60;   // outer radius px
-  const KNOB_R  = 17;   // knob radius px
-  const MAX_R   = PAD_R - KNOB_R;   // max knob travel (43 px)
-  const MIN_ARC = 10;   // arcsec at inner edge
-  const MAX_ARC = 900;  // arcsec at outer edge
+  const PAD_R      = 60;          // outer radius px
+  const KNOB_R     = 17;          // knob radius px
+  const MAX_R      = PAD_R - KNOB_R;  // max knob travel (43 px)
+  const DEAD_ZONE  = 6;           // px — ignore sub-pixel jitter
+  const BASE_RATE  = 60 / 3600;   // deg/s at full deflection with speed=1× (1 arcmin/s)
+  const SEND_MS    = 80;          // rate-update interval while held
 
   let active = false;
   let originX = 0, originY = 0;
+  let curDx = 0, curDy = 0;
+  let sendTimer = null;
+  let pendingSend = false;
 
   function speedMult() {
     const slider = document.getElementById("joySpeed");
     return slider ? Math.pow(10, parseFloat(slider.value)) : 1;
   }
 
-  function stepFromRadius(r) {
-    const t = Math.min(r / MAX_R, 1);
-    // exponential: 10" → 900" over the travel range, then scaled by speed multiplier
-    const raw = MIN_ARC * Math.pow(MAX_ARC / MIN_ARC, t) * speedMult();
-    return Math.round(Math.min(Math.max(raw, 1), 3600));
-  }
-
-  function formatStep(arcsec) {
-    if (arcsec < 60)  return arcsec + "″";
-    if (arcsec < 3600) return (arcsec / 60).toFixed(arcsec % 60 === 0 ? 0 : 1) + "′";
-    return (arcsec / 3600).toFixed(1) + "°";
+  function formatRate(degPerSec) {
+    const arcsec = degPerSec * 3600;
+    if (arcsec < 60)  return arcsec.toFixed(1) + "″/s";
+    if (arcsec < 3600) return (arcsec / 60).toFixed(1) + "′/s";
+    return (arcsec / 3600).toFixed(2) + "°/s";
   }
 
   function resetKnob() {
     const knob = document.getElementById("joyKnob");
     if (knob) knob.style.transform = "translate(-50%, -50%)";
     const readout = document.getElementById("joyReadout");
-    if (readout) readout.textContent = "drag to nudge";
+    if (readout) readout.textContent = "drag to move";
     const dir = document.getElementById("joyDir");
     if (dir) dir.textContent = "";
     const pad = document.getElementById("joyPad");
     if (pad && !_joyBlocked) pad.style.cursor = "grab";
   }
 
+  function computeRates(dx, dy) {
+    const nx = Math.max(-1, Math.min(1, dx / MAX_R));
+    const ny = Math.max(-1, Math.min(1, dy / MAX_R));
+    const speed = BASE_RATE * speedMult();
+    // Axis 1 (Dec): positive = North; dy negative = up = North → negate
+    // Axis 0 (RA): positive = East (RA decreasing); dx positive = right = East
+    return { ra_rate: nx * speed, dec_rate: -ny * speed };
+  }
+
+  function sendMove() {
+    if (!active || !pendingSend) return;
+    pendingSend = false;
+    const dist = Math.sqrt(curDx * curDx + curDy * curDy);
+    if (dist < DEAD_ZONE) {
+      apiMoveAxis(0, 0);
+      return;
+    }
+    const { ra_rate, dec_rate } = computeRates(curDx, curDy);
+    apiMoveAxis(ra_rate, dec_rate);
+  }
+
   function onStart(e) {
     if (_joyBlocked) return;
     e.preventDefault();
     active = true;
+    curDx = 0; curDy = 0; pendingSend = false;
     const pad  = document.getElementById("joyPad");
     const rect = pad.getBoundingClientRect();
     originX = rect.left + rect.width  / 2;
     originY = rect.top  + rect.height / 2;
     pad.style.cursor = "grabbing";
     pad.setPointerCapture(e.pointerId);
+    sendTimer = setInterval(sendMove, SEND_MS);
   }
 
   function onMove(e) {
     if (!active) return;
     e.preventDefault();
-    const dx   = e.clientX - originX;
-    const dy   = e.clientY - originY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
+    curDx = e.clientX - originX;
+    curDy = e.clientY - originY;
+    pendingSend = true;
+
+    const dist  = Math.sqrt(curDx * curDx + curDy * curDy);
     const clamp = Math.min(dist, MAX_R);
     const scale = clamp / (dist || 1);
-    const cx = dx * scale;
-    const cy = dy * scale;
 
     const knob = document.getElementById("joyKnob");
-    if (knob) knob.style.transform = `translate(calc(-50% + ${cx}px), calc(-50% + ${cy}px))`;
+    if (knob) knob.style.transform = `translate(calc(-50% + ${curDx * scale}px), calc(-50% + ${curDy * scale}px))`;
 
-    const step  = stepFromRadius(clamp);
-    const isNS  = Math.abs(dy) >= Math.abs(dx);
-    const label = isNS ? (dy < 0 ? "N" : "S") : (dx > 0 ? "E" : "W");
-
+    const { ra_rate, dec_rate } = computeRates(curDx, curDy);
+    const totalRate = Math.sqrt(ra_rate * ra_rate + dec_rate * dec_rate);
     const readout = document.getElementById("joyReadout");
-    if (readout) readout.textContent = formatStep(step);
+    if (readout) readout.textContent = dist < DEAD_ZONE ? "drag to move" : formatRate(totalRate);
+
     const dirEl = document.getElementById("joyDir");
-    if (dirEl) dirEl.textContent = { N:"↑ North", S:"↓ South", E:"→ East", W:"← West" }[label];
+    if (dirEl && dist >= DEAD_ZONE) {
+      const ns = dec_rate > 0 ? "N" : dec_rate < 0 ? "S" : "";
+      const ew = ra_rate  > 0 ? "E" : ra_rate  < 0 ? "W" : "";
+      const arrows = { N:"↑", S:"↓", E:"→", W:"←" };
+      const labels = { N:"North", S:"South", E:"East", W:"West" };
+      if (ns && ew) dirEl.textContent = `${arrows[ns]}${arrows[ew]} ${labels[ns]}-${labels[ew]}`;
+      else if (ns)  dirEl.textContent = `${arrows[ns]} ${labels[ns]}`;
+      else if (ew)  dirEl.textContent = `${arrows[ew]} ${labels[ew]}`;
+    } else if (dirEl) {
+      dirEl.textContent = "";
+    }
   }
 
-  async function onEnd(e) {
-    if (!active) return;
+  function stopAll() {
+    if (sendTimer) { clearInterval(sendTimer); sendTimer = null; }
     active = false;
-
-    const dx   = e.clientX - originX;
-    const dy   = e.clientY - originY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
+    apiMoveAxis(0, 0);
     resetKnob();
-    if (dist < 6) return;  // dead zone — ignore tiny taps
+  }
 
-    const step  = stepFromRadius(Math.min(dist, MAX_R));
-    const isNS  = Math.abs(dy) >= Math.abs(dx);
-    const dir   = isNS ? (dy < 0 ? "N" : "S") : (dx > 0 ? "E" : "W");
-
-    await apiNudge(dir, step);
+  function onEnd() {
+    if (!active) return;
+    stopAll();
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -1995,7 +2073,7 @@ async function apiTracking(enabled) {
     pad.addEventListener("pointerdown", onStart);
     pad.addEventListener("pointermove", onMove);
     pad.addEventListener("pointerup",   onEnd);
-    pad.addEventListener("pointercancel", () => { active = false; resetKnob(); });
+    pad.addEventListener("pointercancel", stopAll);
 
     const slider = document.getElementById("joySpeed");
     const label  = document.getElementById("joySpeedLabel");
@@ -2022,17 +2100,47 @@ async function apiNudge(direction, step) {
   } catch (e) { alert("Nudge failed: " + e.message); }
 }
 
+function apiMoveAxis(ra_rate, dec_rate) {
+  fetch("/api/telescope/moveaxis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ra_rate, dec_rate }),
+  }).catch(() => {});
+}
+
+let _slewMode = "eq";
+
+function setSlewMode(mode) {
+  _slewMode = mode;
+  const isAltAz = mode === "altaz";
+  document.getElementById("slewInputsEQ").style.display    = isAltAz ? "none" : "";
+  document.getElementById("slewInputsAltAz").style.display = isAltAz ? "" : "none";
+  document.getElementById("slewModeEQ").style.background    = isAltAz ? "var(--panel-bg)" : "var(--blue)";
+  document.getElementById("slewModeEQ").style.color         = isAltAz ? "var(--dim)" : "#fff";
+  document.getElementById("slewModeAltAz").style.background = isAltAz ? "var(--blue)" : "var(--panel-bg)";
+  document.getElementById("slewModeAltAz").style.color      = isAltAz ? "#fff" : "var(--dim)";
+}
+
 async function apiSlew() {
-  const ra  = parseFloat(document.getElementById("slewRA").value);
-  const dec = parseFloat(document.getElementById("slewDec").value);
-  if (isNaN(ra) || isNaN(dec)) { alert("Enter valid RA (h) and Dec (°) values."); return; }
   const btn = document.getElementById("btnModalSlew");
+  let payload;
+  if (_slewMode === "altaz") {
+    const alt = parseFloat(document.getElementById("slewAlt").value);
+    const az  = parseFloat(document.getElementById("slewAz").value);
+    if (isNaN(alt) || isNaN(az)) { alert("Enter valid Altitude (°) and Azimuth (°) values."); return; }
+    payload = { mode: "altaz", alt, az };
+  } else {
+    const ra  = parseFloat(document.getElementById("slewRA").value);
+    const dec = parseFloat(document.getElementById("slewDec").value);
+    if (isNaN(ra) || isNaN(dec)) { alert("Enter valid RA (h) and Dec (°) values."); return; }
+    payload = { mode: "eq", ra, dec };
+  }
   btn.disabled = true; btn.textContent = "Slewing…";
   try {
     const r = await fetch("/api/slew", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ra, dec }),
+      body: JSON.stringify(payload),
     });
     const d = await r.json();
     if (!d.ok) alert(d.error || "Slew failed");

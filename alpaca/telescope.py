@@ -55,6 +55,11 @@ class Telescope:
         self._c._put("slewtocoordinatesasync", timeout=30, RightAscension=ra, Declination=dec)
         logger.info("Slew commanded: RA=%.4f h  Dec=%.4f °", ra, dec)
 
+    def begin_slew_altaz(self, alt: float, az: float) -> None:
+        """Slew to alt-az coordinates asynchronously (alt-az mounts or fixed-point goto)."""
+        self._c._put("slewtoaltazasync", timeout=30, Altitude=alt, Azimuth=az)
+        logger.info("Alt-Az slew commanded: Alt=%.4f °  Az=%.4f °", alt, az)
+
     def slew_to_coordinates(self, ra: float, dec: float) -> None:
         """
         Slew to equatorial coordinates and wait until the mount stops moving.
@@ -123,6 +128,11 @@ class Telescope:
         self.slew_to_coordinates(start_ra, start_dec)
         print("=== Verification complete ===\n")
         return moved
+
+    def move_axis(self, axis: int, rate: float) -> None:
+        """Move the specified axis at rate (deg/s). rate=0 stops movement."""
+        self._c._put("moveaxis", Axis=axis, Rate=rate)
+        logger.debug("MoveAxis axis=%d rate=%.4f deg/s", axis, rate)
 
     def park(self) -> None:
         logger.info("Parking telescope…")
