@@ -626,6 +626,30 @@ def api_connect():
     return jsonify({"ok": True})
 
 
+@app.route("/api/disconnect", methods=["POST"])
+def api_disconnect():
+    global _tel, _cam
+    _poller_stop.set()
+    with _state_lock:
+        _state["connected"] = False
+        _state["telescope"]["connected"] = False
+        _state["camera"]["connected"] = False
+        _state["server"] = None
+    try:
+        if _tel is not None:
+            _tel.disconnect()
+    except Exception:
+        pass
+    try:
+        if _cam is not None:
+            _cam.disconnect()
+    except Exception:
+        pass
+    _tel = None
+    _cam = None
+    return jsonify({"ok": True})
+
+
 @app.route("/api/telescope/unpark", methods=["POST"])
 def api_unpark():
     if _tel is None:
@@ -1010,9 +1034,37 @@ body {
 .hdr-server span { color: var(--blue); }
 .hdr-server.hidden { display: none; }
 
+.conn-pill-wrap {
+  position: relative;
+}
 .conn-pill {
   display: flex; align-items: center; gap: 5px;
   font-size: 11px; letter-spacing: 1px;
+}
+.conn-pill.clickable {
+  cursor: pointer;
+  padding: 3px 8px;
+  border: 1px solid var(--green);
+  border-radius: 2px;
+  color: var(--green);
+  user-select: none;
+}
+.conn-pill.clickable:hover {
+  background: rgba(0,255,128,0.08);
+}
+.conn-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 6px;
+  z-index: 200;
+  min-width: 120px;
+}
+.conn-dropdown.open {
+  display: block;
 }
 
 /* ── Buttons ── */
@@ -1399,9 +1451,14 @@ body {
     <div class="hdr-sub">ALPACA CONTROL</div>
   </div>
 
-  <div class="conn-pill">
-    <span class="dot dot-gray" id="connDot"></span>
-    <span id="connLabel">Disconnected</span>
+  <div class="conn-pill-wrap" id="connPillWrap">
+    <div class="conn-pill" id="connPill">
+      <span class="dot dot-gray" id="connDot"></span>
+      <span id="connLabel">Disconnected</span>
+    </div>
+    <div class="conn-dropdown" id="connDropdown">
+      <button class="btn btn-red" onclick="doDisconnect()">Disconnect</button>
+    </div>
   </div>
 
   <div class="hdr-server hidden" id="hdrServer">
@@ -1704,6 +1761,22 @@ function render(s) {
   renderPierCam(s.pier_cam || {});
 }
 
+// ── Connection dropdown ──────────────────────────────────────────────────────
+
+function toggleConnDropdown(e) {
+  e.stopPropagation();
+  document.getElementById("connDropdown").classList.toggle("open");
+}
+
+document.addEventListener("click", function() {
+  document.getElementById("connDropdown").classList.remove("open");
+});
+
+async function doDisconnect() {
+  document.getElementById("connDropdown").classList.remove("open");
+  await fetch("/api/disconnect", { method: "POST" });
+}
+
 // ── Modal management ────────────────────────────────────────────────────────
 
 function openTelescopeModal() {
@@ -1737,20 +1810,28 @@ document.addEventListener("keydown", (e) => {
 function renderHeader(s) {
   const dot   = document.getElementById("connDot");
   const label = document.getElementById("connLabel");
+  const pill  = document.getElementById("connPill");
 
+  const srv = document.getElementById("hdrServer");
   if (s.server) {
-    const srv = document.getElementById("hdrServer");
     srv.classList.remove("hidden");
     document.getElementById("hdrAddr").textContent =
       `${s.server.address}:${s.server.port}`;
+  } else {
+    srv.classList.add("hidden");
   }
 
   if (s.connected) {
     dot.className    = "dot dot-green";
     label.textContent = "Connected";
+    pill.classList.add("clickable");
+    pill.onclick = toggleConnDropdown;
   } else {
     dot.className    = "dot dot-gray";
     label.textContent = "Disconnected";
+    pill.classList.remove("clickable");
+    pill.onclick = null;
+    document.getElementById("connDropdown").classList.remove("open");
   }
 
   const errBanner = document.getElementById("errBanner");
