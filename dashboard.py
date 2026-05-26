@@ -730,6 +730,18 @@ def api_slew():
             return jsonify({"error": "Altitude must be in range [0, 90]"}), 400
         if not (0.0 <= az < 360.0):
             return jsonify({"error": "Azimuth must be in range [0, 360)"}), 400
+
+        # Horizon-mask check
+        if _safety_mgr is not None and not _safety_mgr.is_pointing_safe(alt, az):
+            min_alt = _safety_mgr.min_safe_altitude(az)
+            msg = (
+                f"Slew rejected by horizon mask: "
+                f"Alt {alt:.1f}° is below the {min_alt:.1f}° limit at Az {az:.1f}°"
+            )
+            logger.warning(msg)
+            return jsonify({"error": msg, "horizon_blocked": True,
+                            "min_safe_alt": round(min_alt, 1)}), 403
+
         try:
             _tel.begin_slew_altaz(alt, az)
         except Exception as exc:
@@ -764,6 +776,35 @@ def api_slew():
             return jsonify({"error": "RA must be in range [0, 24)"}), 400
         if not (-90.0 <= dec <= 90.0):
             return jsonify({"error": "Dec must be in range [-90, 90]"}), 400
+
+        # Horizon-mask check — convert RA/Dec → Alt/Az for this site & time
+        if _safety_mgr is not None and _safety_mgr._horizon_mask:
+            cfg_now = _load_config()
+            obs_now = cfg_now.get("safety", {}).get("observer", {})
+            lat_now = float(obs_now.get("latitude", 0.0))
+            lon_now = float(obs_now.get("longitude", 0.0))
+            if lat_now != 0.0 or lon_now != 0.0:
+                try:
+                    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+                    from astropy.time import Time
+                    import astropy.units as u
+                    loc = EarthLocation(lat=lat_now * u.deg, lon=lon_now * u.deg)
+                    frame = AltAz(obstime=Time.now(), location=loc)
+                    coord = SkyCoord(ra=ra * 15.0 * u.deg, dec=dec * u.deg).transform_to(frame)
+                    t_alt = float(coord.alt.deg)
+                    t_az  = float(coord.az.deg)
+                    if not _safety_mgr.is_pointing_safe(t_alt, t_az):
+                        min_alt = _safety_mgr.min_safe_altitude(t_az)
+                        msg = (
+                            f"Slew rejected by horizon mask: "
+                            f"Alt {t_alt:.1f}° is below the {min_alt:.1f}° limit at Az {t_az:.1f}°"
+                        )
+                        logger.warning(msg)
+                        return jsonify({"error": msg, "horizon_blocked": True,
+                                        "min_safe_alt": round(min_alt, 1)}), 403
+                except Exception as exc_mask:
+                    logger.debug("Horizon-mask RA/Dec check skipped: %s", exc_mask)
+
         try:
             _tel.begin_slew(ra, dec)
         except Exception as exc:
@@ -2915,7 +2956,17 @@ async function apiSlew() {
       body: JSON.stringify(payload),
     });
     const d = await r.json();
-    if (!d.ok) alert(d.error || "Slew failed");
+    if (r.status === 403 && d.horizon_blocked) {
+      alert(
+        "⛔ Horizon mask blocked this slew\n\n" +
+        d.error +
+        (d.min_safe_alt != null
+          ? "\n\nMinimum safe altitude in that direction: " + d.min_safe_alt + "°"
+          : "")
+      );
+    } else if (!d.ok) {
+      alert(d.error || "Slew failed");
+    }
   } catch (e) { alert("Slew failed: " + e.message); }
   btn.textContent = "Slew to Target";
   // disabled state re-evaluated on next poll
@@ -3127,34 +3178,92 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
     // Handles
     for (let i = 0; i < N; i++) {
       const [hx, hy] = coords[i];
-      const active = (i === dragIdx || i === hovIdx);
+      const isDragging = (i === dragIdx);
+      const isHovered  = (i === hovIdx);
+      const active = isDragging || isHovered;
       ctx.save();
       if (active) {
-        ctx.shadowColor = "#58a6ff";
-        ctx.shadowBlur  = 10;
+        ctx.shadowColor = isDragging ? "#f0c040" : "#58a6ff";
+        ctx.shadowBlur  = isDragging ? 18 : 10;
       }
       ctx.beginPath();
-      ctx.arc(hx, hy, active ? 7 : 5, 0, 2 * Math.PI);
-      ctx.fillStyle = active ? "#58a6ff" : "#3fb950";
+      ctx.arc(hx, hy, isDragging ? 9 : (isHovered ? 7 : 5), 0, 2 * Math.PI);
+      ctx.fillStyle = isDragging ? "#f0c040" : (isHovered ? "#58a6ff" : "#3fb950");
       ctx.fill();
       ctx.restore();
 
-      // Direction label near handle when active
-      if (active) {
+      // Spoke label at rim for hovered handle
+      if (active && !isDragging) {
         ctx.save();
         ctx.font = "bold 10px monospace";
         ctx.fillStyle = "#58a6ff";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        const a   = (i * AZ_STEP) * Math.PI / 180;
-        const lx  = CX + (MAX_R + 14) * Math.sin(a);
-        const ly  = CY - (MAX_R + 14) * Math.cos(a);
+        const a  = (i * AZ_STEP) * Math.PI / 180;
+        const lx = CX + (MAX_R + 14) * Math.sin(a);
+        const ly = CY - (MAX_R + 14) * Math.cos(a);
         ctx.fillText(DIR_LABELS[i], lx, ly);
         ctx.restore();
       }
     }
 
-    // Alt readout for active handle
+    // ── Big on-canvas readout while dragging ─────────────────────────────────
+    if (dragIdx >= 0) {
+      const i   = dragIdx;
+      const alt = alts[i];
+      const [hx, hy] = coords[i];
+      const label = DIR_LABELS[i] + "  " + alt.toFixed(1) + "°";
+
+      // Spoke label at rim
+      ctx.save();
+      ctx.font = "bold 11px monospace";
+      ctx.fillStyle = "#f0c040";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const spA = (i * AZ_STEP) * Math.PI / 180;
+      ctx.fillText(DIR_LABELS[i], CX + (MAX_R + 14) * Math.sin(spA), CY - (MAX_R + 14) * Math.cos(spA));
+      ctx.restore();
+
+      // Radial dotted guide line from center to handle
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(240,192,64,0.45)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(CX, CY);
+      ctx.lineTo(hx, hy);
+      ctx.stroke();
+      ctx.restore();
+
+      // Floating pill near the handle showing altitude
+      ctx.save();
+      ctx.font = "bold 18px monospace";
+      const tw = ctx.measureText(label).width;
+      const pw = tw + 18, ph = 28;
+      // Position pill: offset from handle, keep inside canvas
+      let px = hx + 14, py = hy - ph / 2;
+      if (px + pw > W - 4) px = hx - pw - 14;
+      if (py < 4)          py = 4;
+      if (py + ph > H - 4) py = H - ph - 4;
+
+      // Pill background
+      ctx.beginPath();
+      ctx.roundRect(px, py, pw, ph, 6);
+      ctx.fillStyle = "rgba(15,22,30,0.92)";
+      ctx.fill();
+      ctx.strokeStyle = "#f0c040";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Pill text
+      ctx.fillStyle = "#f0c040";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, px + 9, py + ph / 2);
+      ctx.restore();
+    }
+
+    // DOM info strip update
     const activeIdx = dragIdx >= 0 ? dragIdx : hovIdx;
     if (activeIdx >= 0) {
       const infoEl = document.getElementById("skyCoordInfo");

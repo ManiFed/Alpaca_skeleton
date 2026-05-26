@@ -116,6 +116,14 @@ class SafetyManager:
         self._lat                  : float = float(obs.get("latitude", 0.0))
         self._lon                  : float = float(obs.get("longitude", 0.0))
 
+        # Horizon mask — list of (alt_deg, az_deg) knots, one per 30° spoke.
+        # Interpolated linearly between knots to get min_alt(az).
+        # Empty list = no mask (all pointings allowed).
+        raw_mask = cfg.get("horizon_mask", [])
+        self._horizon_mask: list[tuple[float, float]] = [
+            (float(p[0]), float(p[1])) for p in raw_mask
+        ] if raw_mask else []
+
         self._lock           = threading.Lock()
         self._stop_event     = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -180,6 +188,51 @@ class SafetyManager:
         with self._lock:
             return self._safe
 
+    def min_safe_altitude(self, az_deg: float) -> float:
+        """
+        Return the minimum safe altitude (degrees) for the given azimuth.
+
+        Linearly interpolates between the 12 horizon-mask knots.  If no mask
+        is configured, returns 0.0 (horizon everywhere safe).
+
+        Parameters
+        ----------
+        az_deg : float
+            Azimuth in degrees (0–360, North = 0, clockwise positive).
+        """
+        mask = self._horizon_mask
+        if not mask:
+            return 0.0
+
+        # Build a lookup table keyed by azimuth, sorted
+        knots: list[tuple[float, float]] = sorted(mask, key=lambda p: p[1] % 360)
+
+        az = az_deg % 360.0
+
+        # Find the two bracketing knots (wrap-around aware)
+        for j in range(len(knots)):
+            az0, alt0 = knots[j][1] % 360, knots[j][0]
+            az1, alt1 = knots[(j + 1) % len(knots)][1] % 360, knots[(j + 1) % len(knots)][0]
+
+            # Handle wrap from 330° → 0°
+            if az1 < az0:
+                az1 += 360.0
+            if az0 <= az <= az1 or az0 <= az + 360 <= az1:
+                t = ((az if az >= az0 else az + 360) - az0) / (az1 - az0)
+                return alt0 + t * (alt1 - alt0)
+
+        # Fallback — return the single knot's altitude
+        return knots[0][0]
+
+    def is_pointing_safe(self, alt_deg: float, az_deg: float) -> bool:
+        """
+        Return True if the given Alt/Az coordinate is above the horizon mask.
+
+        An empty mask always returns True.  A coordinate exactly on the mask
+        boundary is considered safe.
+        """
+        return alt_deg >= self.min_safe_altitude(az_deg)
+
     def status(self) -> dict:
         """Return a snapshot of the current safety state."""
         with self._lock:
@@ -204,6 +257,7 @@ class SafetyManager:
                 "disconnected_secs": round(elapsed, 1) if elapsed is not None else None,
                 "sun_elevation":     sun_el,
                 "dawn_threshold":    self._dawn_elevation,
+                "horizon_mask_knots": len(self._horizon_mask),
             }
 
     # ── Signal handling ────────────────────────────────────────────────────────
