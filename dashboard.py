@@ -94,6 +94,31 @@ _state: dict[str, Any] = {
 }
 _state_lock = threading.Lock()
 
+# ── Schedule execution state ───────────────────────────────────────────────────
+
+_sched_lock = threading.Lock()
+_sched_state: dict = {
+    "running":         False,
+    "cancelled":       False,
+    "current_idx":    -1,
+    "current_target":  "",
+    "current_phase":   "",   # waiting | slewing | exposing | done | cancelled
+    "current_frame":   0,
+    "total_frames":    0,
+    "completed":       0,
+    "total":           0,
+    "error":           None,
+}
+
+# ── Image history ─────────────────────────────────────────────────────────────
+
+_img_history: list[dict] = []          # metadata + thumbnail b64
+_img_history_lock = threading.Lock()
+_img_full: dict[str, str] = {}         # id → full-res b64
+_img_full_lock = threading.Lock()
+_img_counter = 0
+_img_counter_lock = threading.Lock()
+
 _CAMERA_STATES = {
     0: "Idle", 1: "Waiting", 2: "Exposing",
     3: "Reading", 4: "Downloading", 5: "Error",
@@ -169,10 +194,11 @@ _pier_cam_pause = threading.Event()
 _pier_cam_stop  = threading.Event()
 
 
-def _capture_image() -> None:
+def _capture_image() -> Optional[str]:
+    """Download the last camera image, store it globally, and return its b64. Returns None on failure."""
     global _last_image_b64
     if _cam is None:
-        return
+        return None
     try:
         import numpy as np
         from PIL import Image
@@ -204,8 +230,57 @@ def _capture_image() -> None:
             _state["image_captured"] = True
             _state["image_id"] += 1
         logger.info("Image stored — %.1f KB PNG", len(b64) * 3 / 4 / 1024)
+        return b64
     except Exception as exc:
         logger.error("Image capture failed: %s", exc)
+        return None
+
+
+def _make_thumb(b64_full: str, max_px: int = 220) -> str:
+    """Return a base64 PNG thumbnail, falling back to the original on error."""
+    try:
+        from PIL import Image as _PILImg
+        raw = base64.b64decode(b64_full)
+        img = _PILImg.open(io.BytesIO(raw))
+        img.thumbnail((max_px, max_px))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return b64_full
+
+
+def _store_history_image(
+    target: str, exp_dur: float, binning: int,
+    frame: int, total: int, b64_full: str,
+) -> str:
+    """Persist a captured frame in the in-memory history. Returns the image ID."""
+    global _img_counter
+    with _img_counter_lock:
+        _img_counter += 1
+        img_id = f"img_{_img_counter}"
+
+    thumb = _make_thumb(b64_full)
+    entry = {
+        "id":      img_id,
+        "target":  target,
+        "ts":      time.strftime("%H:%M:%S"),
+        "date":    time.strftime("%Y-%m-%d"),
+        "exp_dur": round(exp_dur, 2),
+        "binning": binning,
+        "frame":   frame,
+        "total":   total,
+        "thumb":   thumb,
+    }
+    with _img_history_lock:
+        _img_history.append(entry)
+        if len(_img_history) > 400:
+            oldest_id = _img_history.pop(0)["id"]
+            with _img_full_lock:
+                _img_full.pop(oldest_id, None)
+    with _img_full_lock:
+        _img_full[img_id] = b64_full
+    return img_id
 
 
 # ── Image watcher ──────────────────────────────────────────────────────────────
@@ -1113,7 +1188,14 @@ def api_expose():
         try:
             _cam.set_binning(binning)
             _cam.expose(duration=duration, light=True)
-            _capture_image()
+            b64 = _capture_image()
+            if b64:
+                # Grab current telescope position as target label
+                with _state_lock:
+                    ra  = _state["telescope"].get("ra")
+                    dec = _state["telescope"].get("dec")
+                target = f"Manual RA {ra:.4f}h" if ra is not None else "Manual"
+                _store_history_image(target, duration, binning, 1, 1, b64)
         except Exception as exc:
             logger.error("Exposure failed: %s", exc)
         finally:
@@ -1433,6 +1515,186 @@ logger.info("DSO catalog built: %d objects", len(_dso_catalog))
 @app.route("/api/catalog")
 def api_catalog():
     return jsonify(_dso_catalog)
+
+
+# ── Schedule execution ─────────────────────────────────────────────────────────
+
+def _run_schedule_bg(items: list) -> None:
+    """Background thread: slew + expose for each scheduled observation."""
+    with _sched_lock:
+        _sched_state.update({
+            "running": True, "cancelled": False,
+            "current_idx": -1, "current_target": "",
+            "current_phase": "starting",
+            "current_frame": 0, "total_frames": 0,
+            "completed": 0, "total": len(items), "error": None,
+        })
+    logger.info("Schedule started: %d observations", len(items))
+
+    try:
+        for idx, item in enumerate(items):
+            with _sched_lock:
+                if _sched_state["cancelled"]:
+                    break
+
+            target    = item.get("target", "Unknown")
+            ra        = float(item.get("ra", 0))      # decimal hours
+            dec       = float(item.get("dec", 0))
+            exp_dur   = float(item.get("expDur", 60))
+            exp_count = int(item.get("expCount", 1))
+            binning   = int(item.get("binning", 1))
+            start_str = item.get("startTime", "")
+
+            with _sched_lock:
+                _sched_state.update({
+                    "current_idx": idx,
+                    "current_target": target,
+                    "current_phase": "waiting",
+                    "current_frame": 0,
+                    "total_frames": exp_count,
+                })
+
+            # Wait until scheduled start time (max 2 h wait; skip if overdue)
+            if start_str:
+                try:
+                    sh, sm = map(int, start_str.split(":"))
+                    now = time.localtime()
+                    target_s = sh * 3600 + sm * 60
+                    now_s    = now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec
+                    wait_s   = target_s - now_s
+                    if wait_s < 0:
+                        wait_s += 86400
+                    if 0 < wait_s <= 7200:
+                        logger.info("Schedule: waiting %.0f s until %s for %s",
+                                    wait_s, start_str, target)
+                        deadline = time.monotonic() + wait_s
+                        while time.monotonic() < deadline:
+                            with _sched_lock:
+                                if _sched_state["cancelled"]:
+                                    break
+                            time.sleep(1)
+                except Exception as exc:
+                    logger.debug("Schedule: start-time parse error: %s", exc)
+
+            with _sched_lock:
+                if _sched_state["cancelled"]:
+                    break
+                _sched_state["current_phase"] = "slewing"
+
+            # ── Slew ────────────────────────────────────────────────────────
+            if _tel is not None:
+                logger.info("Schedule: slewing to %s RA=%.4f h Dec=%.4f°", target, ra, dec)
+                try:
+                    _tel.begin_slew(ra, dec)
+                    _wait_slew_complete(timeout=180.0)
+                    logger.info("Schedule: slew complete → %s", target)
+                except Exception as exc:
+                    logger.error("Schedule: slew failed for %s: %s", target, exc)
+                    with _sched_lock:
+                        _sched_state["error"] = f"Slew to {target} failed: {exc}"
+            else:
+                logger.warning("Schedule: telescope not connected — skipping slew for %s", target)
+                time.sleep(1)
+
+            with _sched_lock:
+                if _sched_state["cancelled"]:
+                    break
+
+            # ── Expose ──────────────────────────────────────────────────────
+            for frame in range(1, exp_count + 1):
+                with _sched_lock:
+                    if _sched_state["cancelled"]:
+                        break
+                    _sched_state["current_phase"]  = "exposing"
+                    _sched_state["current_frame"]  = frame
+
+                logger.info("Schedule: %s frame %d/%d (%.1fs bin%d)",
+                            target, frame, exp_count, exp_dur, binning)
+
+                if _cam is not None:
+                    try:
+                        _pier_cam_pause.set()
+                        time.sleep(0.1)
+                        _cam.set_binning(binning)
+                        _cam.expose(duration=exp_dur, light=True)
+                        b64 = _capture_image()
+                        if b64:
+                            _store_history_image(target, exp_dur, binning, frame, exp_count, b64)
+                    except Exception as exc:
+                        logger.error("Schedule: exposure failed %s frame %d: %s",
+                                     target, frame, exc)
+                    finally:
+                        _pier_cam_pause.clear()
+                else:
+                    logger.warning("Schedule: camera not connected — skipping exposure for %s", target)
+                    time.sleep(min(exp_dur, 3))
+
+            with _sched_lock:
+                _sched_state["completed"] = idx + 1
+            logger.info("Schedule: ✓ %s (%d/%d)", target, idx + 1, len(items))
+
+    except Exception as exc:
+        logger.error("Schedule crashed: %s", exc)
+        with _sched_lock:
+            _sched_state["error"] = str(exc)
+    finally:
+        with _sched_lock:
+            _sched_state["running"] = False
+            _sched_state["current_phase"] = (
+                "cancelled" if _sched_state["cancelled"] else "done"
+            )
+        logger.info("Schedule finished")
+
+
+@app.route("/api/schedule/run", methods=["POST"])
+def api_schedule_run():
+    with _sched_lock:
+        if _sched_state["running"]:
+            return jsonify({"error": "Schedule already running"}), 409
+    data  = request.get_json(force=True) or {}
+    items = data.get("items", [])
+    if not items:
+        return jsonify({"error": "No items provided"}), 400
+    threading.Thread(
+        target=_run_schedule_bg, args=(items,),
+        daemon=True, name="sched-runner",
+    ).start()
+    logger.info("Schedule run requested: %d items", len(items))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/schedule/status", methods=["GET"])
+def api_schedule_status():
+    with _sched_lock:
+        return jsonify(dict(_sched_state))
+
+
+@app.route("/api/schedule/abort", methods=["DELETE"])
+def api_schedule_abort():
+    with _sched_lock:
+        if _sched_state["running"]:
+            _sched_state["cancelled"] = True
+    logger.info("Schedule abort requested")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/history", methods=["GET"])
+def api_history():
+    with _img_history_lock:
+        images = list(reversed(_img_history))
+    return jsonify({"images": images})
+
+
+@app.route("/api/history/<img_id>", methods=["GET"])
+def api_history_image(img_id: str):
+    with _img_full_lock:
+        b64 = _img_full.get(img_id)
+    if not b64:
+        return jsonify({"error": "Image not found"}), 404
+    return Response(
+        base64.b64decode(b64), content_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # ── HTML template ──────────────────────────────────────────────────────────────
@@ -2012,6 +2274,261 @@ body {
 .sky-canvas-ring canvas {
   display: block; cursor: default;
 }
+
+/* ── Schedule Modal ── */
+.sched-modal .modal-content {
+  max-width: 1020px; width: 96%; max-height: 92vh; height: 92vh;
+  gap: 0; padding: 0; overflow: hidden;
+}
+.sched-hdr {
+  padding: 18px 24px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+.sched-title { font-size: 16px; font-weight: bold; letter-spacing: 1px; flex: 1; }
+.sched-night-inp {
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); font-family: var(--mono); font-size: 12px;
+  padding: 3px 8px; width: 74px; text-align: center;
+}
+.sched-night-inp:focus { outline: none; border-color: var(--blue); }
+
+/* Timeline */
+.sched-tl-wrap {
+  padding: 12px 24px 10px; border-bottom: 1px solid var(--border);
+  flex-shrink: 0; background: var(--bg);
+}
+.sched-tl-labels {
+  position: relative; height: 14px; margin-bottom: 4px;
+  font-size: 9px; color: var(--dim); letter-spacing: 1px;
+}
+.sched-tl-track {
+  position: relative; height: 34px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+}
+.sched-tl-block {
+  position: absolute; top: 3px; bottom: 3px; border-radius: 3px;
+  display: flex; align-items: center; padding: 0 6px;
+  font-size: 9px; letter-spacing: 0.5px; overflow: hidden;
+  white-space: nowrap; cursor: pointer; transition: filter 0.15s; min-width: 4px;
+}
+.sched-tl-block:hover { filter: brightness(1.25); }
+.sched-tl-block.conflict { outline: 2px solid var(--red); }
+.sched-tl-now {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: var(--yellow); opacity: 0.75; pointer-events: none;
+}
+
+/* Body */
+.sched-body {
+  flex: 1; overflow-y: auto; padding: 14px 24px;
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 0; position: relative;
+}
+.sched-body::-webkit-scrollbar { width: 6px; }
+.sched-body::-webkit-scrollbar-track { background: var(--bg); }
+.sched-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.sched-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  flex: 1; gap: 10px; color: var(--gray); font-size: 12px;
+  letter-spacing: 2px; padding: 40px; text-align: center;
+}
+
+/* Schedule items */
+.sched-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 11px 14px; border: 1px solid var(--border);
+  background: var(--surface2); border-radius: 4px;
+  transition: border-color 0.12s, opacity 0.12s; cursor: default;
+}
+.sched-item:hover { border-color: var(--gray); }
+.sched-item.conflict { border-color: var(--red); }
+.sched-item.dragging { opacity: 0.4; }
+.sched-item.drag-over { border-color: var(--blue); background: rgba(88,166,255,0.05); }
+
+.sched-drag {
+  color: var(--gray); cursor: grab; font-size: 16px;
+  user-select: none; flex-shrink: 0; line-height: 1; margin-top: 3px;
+}
+.sched-drag:active { cursor: grabbing; }
+.sched-item-num {
+  font-size: 10px; color: var(--dim); width: 18px;
+  text-align: right; flex-shrink: 0; padding-top: 3px;
+}
+.sched-item-main { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sched-item-name {
+  font-size: 13px; color: var(--text); font-weight: bold;
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+}
+.sched-type-badge {
+  font-size: 9px; padding: 1px 5px; border: 1px solid var(--gray);
+  color: var(--gray); letter-spacing: 1px; text-transform: uppercase;
+  border-radius: 2px; flex-shrink: 0;
+}
+.sched-item-coords { font-size: 11px; color: var(--dim); }
+.sched-item-exp { font-size: 11px; color: var(--blue); display: flex; align-items: center; gap: 8px; }
+.sched-item-note { font-size: 10px; color: var(--dim); font-style: italic; }
+.sched-item-time {
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 4px; flex-shrink: 0; min-width: 100px;
+}
+.sched-time-inp {
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--green-hi); font-family: var(--mono); font-size: 14px;
+  padding: 3px 8px; width: 76px; text-align: center; font-weight: bold;
+}
+.sched-time-inp:focus { outline: none; border-color: var(--green); }
+.sched-dur { font-size: 10px; color: var(--dim); letter-spacing: 1px; }
+.sched-dur span { color: var(--text); }
+.sched-item-btns { display: flex; gap: 4px; flex-shrink: 0; align-items: flex-start; }
+
+/* Footer */
+.sched-footer {
+  padding: 11px 24px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  background: var(--surface);
+}
+.sched-stats { font-size: 10px; color: var(--dim); letter-spacing: 1px; flex: 1; }
+.sched-stats span { color: var(--text); }
+
+/* Add / Edit inner window */
+.sched-add-window {
+  position: absolute; inset: 0;
+  background: rgba(7,10,14,0.88);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 10; padding: 16px;
+}
+.sched-add-card {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; width: 100%; max-width: 560px;
+  max-height: 100%; overflow-y: auto;
+  display: flex; flex-direction: column; box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+}
+.sched-add-card::-webkit-scrollbar { width: 5px; }
+.sched-add-card::-webkit-scrollbar-track { background: var(--bg); }
+.sched-add-card::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.sched-add-hdr {
+  padding: 16px 20px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; font-weight: bold; letter-spacing: 1px; flex-shrink: 0;
+}
+.sched-add-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 13px; }
+.sched-add-foot {
+  padding: 14px 20px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0;
+}
+.sched-hint {
+  font-size: 10px; color: var(--dim); padding: 8px 12px;
+  border: 1px solid var(--border); border-left: 3px solid var(--blue);
+  background: rgba(88,166,255,0.04); line-height: 1.7;
+}
+.sched-hint strong { color: var(--text); }
+
+/* Timeline block colours */
+.sc0 { background: rgba(63,185,80,0.75);   color: #fff; }
+.sc1 { background: rgba(88,166,255,0.75);  color: #fff; }
+.sc2 { background: rgba(210,153,34,0.75);  color: #fff; }
+.sc3 { background: rgba(188,129,255,0.75); color: #fff; }
+.sc4 { background: rgba(255,127,80,0.75);  color: #fff; }
+.sc5 { background: rgba(64,220,220,0.75);  color: #333; }
+.sc6 { background: rgba(200,200,80,0.75);  color: #333; }
+.sc7 { background: rgba(255,150,200,0.75); color: #333; }
+
+/* ── Schedule live status bar ── */
+.sched-live {
+  flex-shrink: 0; padding: 10px 24px;
+  background: rgba(63,185,80,0.07);
+  border-bottom: 1px solid var(--green);
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.sched-live-pulse { width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);flex-shrink:0; }
+.sched-live-target { font-size:13px;font-weight:bold;color:var(--green-hi);flex:1; }
+.sched-live-phase {
+  font-size:10px;letter-spacing:1px;color:var(--dim);text-transform:uppercase;
+}
+.sched-live-bar-wrap {
+  width:100%; height:4px; background:rgba(255,255,255,0.06);
+  border-radius:2px; overflow:hidden; margin-top:2px;
+}
+.sched-live-bar {
+  height:100%; background:var(--green);
+  border-radius:2px; transition:width 0.4s ease;
+}
+.sched-item.done-item { opacity: 0.45; }
+.sched-item.done-item .sched-item-name::before {
+  content: "✓ "; color: var(--green);
+}
+.sched-item.active-item { border-color: var(--green); background: rgba(63,185,80,0.06); }
+
+/* ── Camera History Modal ── */
+.hist-modal .modal-content {
+  max-width: 1060px; width: 96%; max-height: 92vh; height: 92vh;
+  gap: 0; padding: 0; overflow: hidden;
+}
+.hist-hdr {
+  padding: 16px 24px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+.hist-title { font-size:16px;font-weight:bold;letter-spacing:1px;flex:1; }
+.hist-search {
+  background:var(--bg);border:1px solid var(--border);
+  color:var(--text);font-family:var(--mono);font-size:12px;
+  padding:5px 12px;width:220px;
+}
+.hist-search:focus { outline:none;border-color:var(--blue); }
+.hist-body {
+  flex:1;overflow-y:auto;padding:16px 20px;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+  gap:14px;align-content:start;min-height:0;
+}
+.hist-body::-webkit-scrollbar { width:6px; }
+.hist-body::-webkit-scrollbar-track { background:var(--bg); }
+.hist-body::-webkit-scrollbar-thumb { background:var(--border);border-radius:3px; }
+.hist-empty {
+  grid-column:1/-1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:10px;
+  color:var(--gray);font-size:12px;letter-spacing:2px;padding:60px;text-align:center;
+}
+.hist-card {
+  background:var(--surface2);border:1px solid var(--border);
+  border-radius:4px;overflow:hidden;cursor:pointer;
+  transition:border-color 0.15s,transform 0.12s;display:flex;flex-direction:column;
+}
+.hist-card:hover { border-color:var(--blue);transform:translateY(-2px); }
+.hist-thumb {
+  width:100%;aspect-ratio:1;background:#000;
+  display:flex;align-items:center;justify-content:center;overflow:hidden;
+}
+.hist-thumb img { width:100%;height:100%;object-fit:cover;image-rendering:pixelated; }
+.hist-card-body { padding:8px 10px;display:flex;flex-direction:column;gap:3px; }
+.hist-card-name { font-size:11px;font-weight:bold;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.hist-card-meta { font-size:9px;color:var(--dim);letter-spacing:0.5px; }
+.hist-card-exp  { font-size:9px;color:var(--blue); }
+.hist-footer {
+  padding:10px 24px;border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--surface);
+}
+.hist-count { font-size:10px;color:var(--dim);letter-spacing:1px;flex:1; }
+.hist-count span { color:var(--text); }
+
+/* Lightbox */
+.hist-lightbox {
+  position:fixed;inset:0;background:rgba(0,0,0,0.92);
+  backdrop-filter:blur(8px);
+  display:flex;align-items:center;justify-content:center;
+  z-index:300;flex-direction:column;gap:14px;padding:24px;
+}
+.hist-lightbox.hidden { display:none; }
+.hist-lb-img {
+  max-width:90vw;max-height:78vh;object-fit:contain;
+  image-rendering:pixelated;border:1px solid var(--border);
+}
+.hist-lb-meta {
+  font-size:12px;color:var(--dim);letter-spacing:1px;text-align:center;line-height:2;
+}
+.hist-lb-meta strong { color:var(--text); }
+.hist-lb-btns { display:flex;gap:10px; }
 </style>
 </head>
 <body>
@@ -2055,6 +2572,10 @@ body {
       <span class="dot dot-gray" id="camDot" style="vertical-align:middle;margin-right:5px;"></span>Camera
     </button>
     <button class="btn btn-dim" id="btnConfig" onclick="openConfigModal()">Config</button>
+    <button class="btn btn-dim" id="btnSchedule" onclick="openScheduleModal()" style="border-color:var(--blue);color:var(--blue);">🗓 Schedule</button>
+    <button class="btn btn-dim" id="btnHistory"  onclick="openHistoryModal()" style="border-color:var(--yellow);color:var(--yellow);position:relative;">
+      📷 History<span id="histBadge" style="display:none;position:absolute;top:-5px;right:-5px;background:var(--yellow);color:#000;border-radius:50%;width:16px;height:16px;font-size:9px;display:none;align-items:center;justify-content:center;font-weight:bold;"></span>
+    </button>
     <button class="btn btn-blue" id="btnDiscover" onclick="showDiscover()">Discover</button>
   </div>
 </div>
@@ -2098,6 +2619,104 @@ body {
   </div>
 
 </div><!-- /main -->
+
+<!-- Camera History Modal -->
+<div class="modal hidden hist-modal" id="histModal" onclick="if(event.target===this)closeHistoryModal()">
+  <div class="modal-content">
+    <div class="hist-hdr">
+      <span style="font-size:22px;flex-shrink:0;">📷</span>
+      <div class="hist-title">Camera History</div>
+      <input class="hist-search" id="histSearch" type="text" placeholder="Filter by target…"
+        oninput="histFilter()" autocomplete="off">
+      <button class="btn btn-dim" onclick="histClearAll()" style="font-size:10px;">Clear All</button>
+      <button class="modal-close" onclick="closeHistoryModal()">×</button>
+    </div>
+    <div class="hist-body" id="histBody">
+      <div class="hist-empty" id="histEmpty">
+        <div style="font-size:32px;opacity:0.2;">🌌</div>
+        <div>No images captured yet</div>
+        <div style="font-size:11px;color:var(--dim);margin-top:4px;">Images appear here after scheduled or manual exposures</div>
+      </div>
+    </div>
+    <div class="hist-footer">
+      <div class="hist-count" id="histCount">No images</div>
+      <button class="btn btn-dim" onclick="histDownloadAll()" id="btnHistDlAll" style="font-size:10px;" disabled>Download All</button>
+    </div>
+  </div>
+</div>
+
+<!-- Image Lightbox -->
+<div class="hist-lightbox hidden" id="histLightbox" onclick="if(event.target===this)closeLightbox()">
+  <img class="hist-lb-img" id="histLbImg" src="" alt="Full image">
+  <div class="hist-lb-meta" id="histLbMeta"></div>
+  <div class="hist-lb-btns">
+    <button class="btn btn-dim" onclick="closeLightbox()">Close</button>
+    <a id="histLbDl" class="btn btn-green" download="image.png">Download</a>
+  </div>
+</div>
+
+<!-- Schedule Modal -->
+<div class="modal hidden sched-modal" id="schedModal" onclick="if(event.target===this)closeScheduleModal()">
+  <div class="modal-content">
+
+    <!-- Header -->
+    <div class="sched-hdr">
+      <span style="font-size:22px;flex-shrink:0;">🗓</span>
+      <div class="sched-title">Night Schedule</div>
+      <div style="display:flex;align-items:center;gap:7px;font-size:10px;color:var(--dim);letter-spacing:1px;flex-shrink:0;">
+        <span>NIGHT</span>
+        <input class="sched-night-inp" id="schedNightStart" type="time" value="20:00" onchange="schedRebuild()">
+        <span style="color:var(--border);">→</span>
+        <input class="sched-night-inp" id="schedNightEnd" type="time" value="05:00" onchange="schedRebuild()">
+      </div>
+      <button class="btn btn-green" onclick="schedOpenAdd(null)" style="flex-shrink:0;font-size:11px;">+ Add Observation</button>
+      <button class="modal-close" onclick="closeScheduleModal()">×</button>
+    </div>
+
+    <!-- Timeline -->
+    <div class="sched-tl-wrap">
+      <div class="sched-tl-labels" id="schedTlLabels"></div>
+      <div class="sched-tl-track" id="schedTlTrack">
+        <div class="sched-tl-now" id="schedTlNow" style="display:none;"></div>
+      </div>
+    </div>
+
+    <!-- Live execution status (hidden when idle) -->
+    <div class="sched-live" id="schedLive" style="display:none;">
+      <div class="sched-live-pulse pulse"></div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span class="sched-live-target" id="schedLiveTarget">—</span>
+          <span class="sched-live-phase" id="schedLivePhase"></span>
+          <span style="font-size:10px;color:var(--dim);" id="schedLiveFrames"></span>
+          <span style="font-size:10px;color:var(--dim);" id="schedLiveProgress"></span>
+        </div>
+        <div class="sched-live-bar-wrap" style="margin-top:6px;">
+          <div class="sched-live-bar" id="schedLiveBar" style="width:0%"></div>
+        </div>
+      </div>
+      <button class="btn btn-red" onclick="schedAbort()" style="font-size:10px;padding:3px 10px;flex-shrink:0;">Abort</button>
+    </div>
+
+    <!-- Schedule list -->
+    <div class="sched-body" id="schedBody">
+      <div class="sched-empty" id="schedEmpty">
+        <div style="font-size:32px;opacity:0.2;">🌙</div>
+        <div>No observations scheduled yet</div>
+        <div style="font-size:11px;color:var(--dim);margin-top:4px;">Click <strong style="color:var(--text);">+ Add Observation</strong> to start planning your night</div>
+        <button class="btn btn-dim" onclick="schedAutoFill()" style="margin-top:12px;font-size:10px;">Auto-Fill Night</button>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="sched-footer">
+      <div class="sched-stats" id="schedStats">No observations planned</div>
+      <button class="btn btn-dim" onclick="schedAutoFill()" style="font-size:10px;">Auto-Fill Night</button>
+      <button class="btn btn-dim" onclick="schedClearAll()" style="font-size:10px;">Clear All</button>
+      <button class="btn btn-blue" onclick="schedRunAll()" id="btnSchedRun">▶ Run Schedule</button>
+    </div>
+  </div>
+</div>
 
 <!-- Telescope Modal -->
 <div class="modal hidden" id="telModal" onclick="if(event.target===this)closeTelescopeModal()">
@@ -2809,9 +3428,14 @@ function closeCameraModal() {
 // Close modals on escape key
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (!document.getElementById("histLightbox").classList.contains("hidden")) { closeLightbox(); return; }
+    const addWin = document.getElementById("schedAddWindow");
+    if (addWin) { schedCloseAdd(); return; }
     closeTelescopeModal();
     closeCameraModal();
     closeConfigModal();
+    closeScheduleModal();
+    closeHistoryModal();
     hideDiscover();
   }
 });
@@ -4542,6 +5166,853 @@ async function saveConfig() {
     saveBtn.textContent = "Save"; saveBtn.disabled = false;
   }
 }
+
+// ── Night Schedule ────────────────────────────────────────────────────────────
+
+let _schedule    = [];
+let _schedEditId = null;
+let _schedColorN = 0;
+let _schedDragId = null;
+let _schedCat    = null;
+let _schedCatIdx = -1;
+
+const _SC = ['sc0','sc1','sc2','sc3','sc4','sc5','sc6','sc7'];
+
+function openScheduleModal() {
+  document.getElementById("schedModal").classList.remove("hidden");
+  schedLoadCat();
+  schedRebuild();
+  setInterval(schedTickNow, 60000);
+  schedTickNow();
+}
+
+function closeScheduleModal() {
+  schedCloseAdd();
+  document.getElementById("schedModal").classList.add("hidden");
+}
+
+// ── Time helpers ─────────────────────────────────────────────────────────────
+
+function schedNight() {
+  const parseT = id => {
+    const v = document.getElementById(id).value;
+    const [h,m] = v.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const s = parseT("schedNightStart");
+  let e   = parseT("schedNightEnd");
+  if (e <= s) e += 1440;
+  return { s, e, len: e - s };
+}
+
+function schedT2M(t) {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function schedM2T(m) {
+  const total = ((m % 1440) + 1440) % 1440;
+  return `${String(Math.floor(total/60)).padStart(2,"0")}:${String(total%60).padStart(2,"0")}`;
+}
+
+function schedDur(item) {
+  // minutes, including 2-min slew/settle overhead
+  return Math.max(1, Math.ceil(item.expDur * item.expCount / 60) + 2);
+}
+
+// ── Conflict detection ───────────────────────────────────────────────────────
+
+function schedConflicts() {
+  const { s } = schedNight();
+  _schedule.forEach(a => { a._conflict = false; });
+  for (let i = 0; i < _schedule.length; i++) {
+    let as = schedT2M(_schedule[i].startTime);
+    if (as < s - 120) as += 1440;
+    const ae = as + schedDur(_schedule[i]);
+    for (let j = i+1; j < _schedule.length; j++) {
+      let bs = schedT2M(_schedule[j].startTime);
+      if (bs < s - 120) bs += 1440;
+      const be = bs + schedDur(_schedule[j]);
+      if (as < be && ae > bs) {
+        _schedule[i]._conflict = true;
+        _schedule[j]._conflict = true;
+      }
+    }
+  }
+}
+
+// ── Main rebuild ─────────────────────────────────────────────────────────────
+
+function schedRebuild() {
+  schedConflicts();
+  const sorted = [..._schedule].sort((a,b) => {
+    const { s } = schedNight();
+    let am = schedT2M(a.startTime); if (am < s - 120) am += 1440;
+    let bm = schedT2M(b.startTime); if (bm < s - 120) bm += 1440;
+    return am - bm;
+  });
+  schedDrawTimeline();
+  schedDrawList(sorted);
+  schedDrawStats();
+}
+
+// ── Timeline ─────────────────────────────────────────────────────────────────
+
+function schedTickNow() {
+  const { s, len } = schedNight();
+  const now = new Date();
+  const nowM = now.getHours()*60 + now.getMinutes();
+  let rel = nowM - s;
+  if (rel < 0) rel += 1440;
+  const el = document.getElementById("schedTlNow");
+  if (el && rel >= 0 && rel <= len) {
+    el.style.display = "block";
+    el.style.left = (rel / len * 100) + "%";
+  } else if (el) {
+    el.style.display = "none";
+  }
+}
+
+function schedDrawTimeline() {
+  const { s, e, len } = schedNight();
+  const labels = document.getElementById("schedTlLabels");
+  const track  = document.getElementById("schedTlTrack");
+
+  // Labels every 2 h
+  labels.innerHTML = "";
+  for (let m = 0; m <= len; m += 120) {
+    const span = document.createElement("span");
+    span.textContent = schedM2T(s + m);
+    span.style.cssText = "position:absolute;";
+    const pct = m / len * 100;
+    span.style.left = pct + "%";
+    if (pct > 90)      span.style.transform = "translateX(-100%)";
+    else if (pct > 5)  span.style.transform = "translateX(-50%)";
+    labels.appendChild(span);
+  }
+
+  // Remove old blocks (keep #schedTlNow)
+  Array.from(track.children).forEach(el => {
+    if (el.id !== "schedTlNow") el.remove();
+  });
+
+  _schedule.forEach(item => {
+    let ms = schedT2M(item.startTime);
+    if (ms < s - 120) ms += 1440;
+    const dur  = schedDur(item);
+    const left = Math.max(0, (ms - s) / len * 100);
+    const w    = Math.min(100 - left, dur / len * 100);
+    if (w <= 0) return;
+    const block = document.createElement("div");
+    block.className = `sched-tl-block ${item.color}${item._conflict ? " conflict" : ""}`;
+    block.style.left  = left + "%";
+    block.style.width = Math.max(w, 0.4) + "%";
+    block.textContent = item.target.split(" –")[0];
+    block.title = `${item.target}  ·  ${item.startTime}  ·  ${dur} min`;
+    block.onclick = () => schedOpenAdd(item.id);
+    track.insertBefore(block, document.getElementById("schedTlNow"));
+  });
+
+  schedTickNow();
+}
+
+// ── List ─────────────────────────────────────────────────────────────────────
+
+function schedDrawList(sorted) {
+  const body  = document.getElementById("schedBody");
+  const empty = document.getElementById("schedEmpty");
+
+  // Remove existing item divs
+  Array.from(body.querySelectorAll(".sched-item")).forEach(el => el.remove());
+
+  empty.style.display = _schedule.length === 0 ? "flex" : "none";
+
+  sorted.forEach((item, idx) => {
+    const dur = schedDur(item);
+    const el  = document.createElement("div");
+    el.className = `sched-item${item._conflict ? " conflict" : ""}`;
+    el.dataset.id = item.id;
+    el.draggable  = true;
+    el.innerHTML  = `
+      <div class="sched-drag" title="Drag to reorder">⠿</div>
+      <div class="sched-item-num">${idx+1}</div>
+      <div class="sched-item-main">
+        <div class="sched-item-name">
+          <span style="color:var(--green-hi);">${item.target}</span>
+          ${item.objType ? `<span class="sched-type-badge">${item.objType}</span>` : ""}
+          ${item._conflict ? `<span class="sched-type-badge" style="border-color:var(--red);color:var(--red);">Overlap</span>` : ""}
+        </div>
+        <div class="sched-item-coords">RA ${fmtRA(item.ra)} · Dec ${fmtDec(item.dec)}</div>
+        <div class="sched-item-exp">
+          <span>${item.expDur}s × ${item.expCount} frames</span>
+          <span style="color:var(--dim);">· bin ${item.binning}×</span>
+          <span style="color:var(--dim);">· ~${dur} min</span>
+        </div>
+        ${item.note ? `<div class="sched-item-note">${escH(item.note)}</div>` : ""}
+      </div>
+      <div class="sched-item-time">
+        <input class="sched-time-inp" type="time" value="${item.startTime}"
+          onchange="schedSetTime('${item.id}',this.value)" title="Start time">
+        <div class="sched-dur">end <span>${schedM2T(schedT2M(item.startTime)+dur)}</span></div>
+      </div>
+      <div class="sched-item-btns">
+        <button class="btn btn-dim" onclick="schedOpenAdd('${item.id}')"
+          style="font-size:10px;padding:3px 8px;">Edit</button>
+        <button class="btn btn-red"  onclick="schedDel('${item.id}')"
+          style="font-size:10px;padding:3px 8px;">✕</button>
+      </div>`;
+
+    el.addEventListener("dragstart", ev => {
+      _schedDragId = item.id;
+      el.classList.add("dragging");
+      ev.dataTransfer.effectAllowed = "move";
+    });
+    el.addEventListener("dragend", () => {
+      _schedDragId = null;
+      el.classList.remove("dragging");
+      document.querySelectorAll(".sched-item.drag-over").forEach(x => x.classList.remove("drag-over"));
+    });
+    el.addEventListener("dragover", ev => {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "move";
+      el.classList.add("drag-over");
+    });
+    el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
+    el.addEventListener("drop", ev => {
+      ev.preventDefault();
+      el.classList.remove("drag-over");
+      if (!_schedDragId || _schedDragId === item.id) return;
+      const src = _schedule.find(x => x.id === _schedDragId);
+      const dst = item;
+      if (!src || !dst) return;
+      // Swap start times to effectively reorder
+      [src.startTime, dst.startTime] = [dst.startTime, src.startTime];
+      schedRebuild();
+    });
+
+    // Insert before the add-window if it exists
+    const addWin = document.getElementById("schedAddWindow");
+    if (addWin) body.insertBefore(el, addWin);
+    else body.appendChild(el);
+  });
+}
+
+function schedDrawStats() {
+  const el = document.getElementById("schedStats");
+  const { len } = schedNight();
+  const used  = _schedule.reduce((a, x) => a + schedDur(x), 0);
+  const pct   = len > 0 ? Math.min(100, Math.round(used / len * 100)) : 0;
+  const cfl   = _schedule.filter(x => x._conflict).length;
+  if (_schedule.length === 0) { el.textContent = "No observations planned"; return; }
+  el.innerHTML = `<span>${_schedule.length}</span> obs · <span>${used}</span> min · <span>${pct}%</span> of night${cfl ? ` · <span style="color:var(--red)">${cfl} conflict${cfl>1?"s":""}</span>` : ""}`;
+}
+
+function escH(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function schedSetTime(id, val) {
+  const item = _schedule.find(x => x.id === id);
+  if (item) { item.startTime = val; schedRebuild(); }
+}
+
+function schedDel(id) {
+  _schedule = _schedule.filter(x => x.id !== id);
+  schedRebuild();
+}
+
+function schedClearAll() {
+  if (_schedule.length === 0) return;
+  if (!confirm("Clear all scheduled observations?")) return;
+  _schedule = [];
+  schedRebuild();
+}
+
+// ── Add / Edit inner window ───────────────────────────────────────────────────
+
+function schedOpenAdd(editId) {
+  _schedEditId = editId;
+  const ex = editId ? _schedule.find(x => x.id === editId) : null;
+
+  // Compute a sensible default start time
+  let defStart = document.getElementById("schedNightStart").value;
+  if (!ex && _schedule.length > 0) {
+    const { s } = schedNight();
+    const sorted = [..._schedule].sort((a,b) => {
+      let am = schedT2M(a.startTime); if (am < s - 120) am += 1440;
+      let bm = schedT2M(b.startTime); if (bm < s - 120) bm += 1440;
+      return am - bm;
+    });
+    const last = sorted[sorted.length-1];
+    let lastM  = schedT2M(last.startTime);
+    if (lastM < s - 120) lastM += 1440;
+    defStart = schedM2T(lastM + schedDur(last));
+  }
+
+  // Remove any existing window
+  const old = document.getElementById("schedAddWindow");
+  if (old) old.remove();
+
+  const win = document.createElement("div");
+  win.className = "sched-add-window";
+  win.id = "schedAddWindow";
+
+  const hintMsg = ex
+    ? "Editing an existing observation. Adjust settings and save."
+    : (_schedule.length > 0
+        ? `${_schedule.length} observation${_schedule.length>1?"s are":" is"} already scheduled. Suggested start time auto-filled.`
+        : "Search the object catalog or enter coordinates directly.");
+
+  win.innerHTML = `
+    <div class="sched-add-card">
+      <div class="sched-add-hdr">
+        <span>${ex ? "✏ Edit Observation" : "➕ Add Observation"}</span>
+        <button class="modal-close" onclick="schedCloseAdd()">×</button>
+      </div>
+      <div class="sched-add-body">
+
+        <div class="sched-hint">
+          <strong>Adaptive scheduler</strong> — ${escH(hintMsg)}
+        </div>
+
+        <!-- Target search -->
+        <div>
+          <div class="inp-label">Target / Object</div>
+          <div style="position:relative;">
+            <input class="inp" id="schedTgtInp" type="text"
+              placeholder="Search M42, Orion Nebula, globular…"
+              autocomplete="off" spellcheck="false"
+              value="${ex ? escH(ex.target) : ""}"
+              oninput="schedCatFilter()" onfocus="schedCatFilter()"
+              onkeydown="schedCatKeyNav(event)">
+            <div id="schedCatDrop" style="display:none;position:fixed;z-index:9999;
+              background:#161b22;border:1px solid var(--border);border-radius:6px;
+              max-height:200px;overflow-y:auto;box-shadow:0 6px 24px rgba(0,0,0,0.75);"></div>
+          </div>
+        </div>
+
+        <!-- Coordinates -->
+        <div class="inp-grid">
+          <div class="inp-group">
+            <div class="inp-label">R.A. (decimal hours)</div>
+            <input class="inp" id="schedRAInp" type="number"
+              min="0" max="23.9999" step="0.0001" placeholder="0.0000"
+              value="${ex ? ex.ra : ""}">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Dec (decimal degrees)</div>
+            <input class="inp" id="schedDecInp" type="number"
+              min="-90" max="90" step="0.0001" placeholder="0.0000"
+              value="${ex ? ex.dec : ""}">
+          </div>
+        </div>
+
+        <!-- Start time -->
+        <div class="inp-group">
+          <div class="inp-label">Start Time</div>
+          <input class="inp" id="schedStartInp" type="time"
+            value="${ex ? ex.startTime : defStart}"
+            style="font-size:16px;padding:6px 12px;width:auto;color:var(--green-hi);font-weight:bold;">
+        </div>
+
+        <!-- Exposures -->
+        <div>
+          <div class="inp-label" style="margin-bottom:8px;">Exposures</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+            <div class="inp-group">
+              <div class="inp-label">Duration (s)</div>
+              <input class="inp" id="schedExpDurInp" type="number"
+                min="0.1" step="0.1" placeholder="60"
+                value="${ex ? ex.expDur : 60}"
+                oninput="schedUpdateEstimate()">
+            </div>
+            <div class="inp-group">
+              <div class="inp-label">Count</div>
+              <input class="inp" id="schedExpCntInp" type="number"
+                min="1" step="1" placeholder="10"
+                value="${ex ? ex.expCount : 10}"
+                oninput="schedUpdateEstimate()">
+            </div>
+            <div class="inp-group">
+              <div class="inp-label">Binning</div>
+              <input class="inp" id="schedBinInp" type="number"
+                min="1" max="8" step="1" placeholder="1"
+                value="${ex ? ex.binning : 1}">
+            </div>
+          </div>
+          <div id="schedEstEl" style="font-size:10px;color:var(--dim);margin-top:6px;padding:6px 0;border-top:1px solid var(--border);"></div>
+        </div>
+
+        <!-- Note -->
+        <div class="inp-group">
+          <div class="inp-label">Note (optional)</div>
+          <input class="inp" id="schedNoteInp" type="text"
+            placeholder="e.g. Use Ha filter, guide on nearby star…"
+            value="${ex ? escH(ex.note || "") : ""}">
+        </div>
+
+      </div>
+      <div class="sched-add-foot">
+        <button class="btn btn-dim" onclick="schedCloseAdd()">Cancel</button>
+        <button class="btn btn-green" onclick="schedSave()">${ex ? "Save Changes" : "Add to Schedule"}</button>
+      </div>
+    </div>`;
+
+  document.getElementById("schedBody").appendChild(win);
+
+  // Focus
+  setTimeout(() => {
+    const inp = document.getElementById("schedTgtInp");
+    if (inp) { inp.focus(); if (!ex) inp.select(); }
+    schedUpdateEstimate();
+  }, 30);
+}
+
+function schedCloseAdd() {
+  const w = document.getElementById("schedAddWindow");
+  if (w) w.remove();
+  const d = document.getElementById("schedCatDrop");
+  if (d) d.style.display = "none";
+  _schedEditId = null;
+}
+
+function schedUpdateEstimate() {
+  const dur = parseFloat(document.getElementById("schedExpDurInp")?.value || 0);
+  const cnt = parseInt(document.getElementById("schedExpCntInp")?.value || 0);
+  const el  = document.getElementById("schedEstEl");
+  if (!el) return;
+  if (!isNaN(dur) && !isNaN(cnt) && dur > 0 && cnt > 0) {
+    const total = Math.ceil(dur * cnt / 60) + 2;
+    el.innerHTML = `Estimated block: <strong style="color:var(--text)">${total} min</strong> (${dur}s × ${cnt} = ${Math.ceil(dur*cnt/60)} min data + 2 min overhead)`;
+  } else {
+    el.textContent = "";
+  }
+}
+
+function schedSave() {
+  const target   = document.getElementById("schedTgtInp")?.value?.trim();
+  const ra       = parseFloat(document.getElementById("schedRAInp")?.value);
+  const dec      = parseFloat(document.getElementById("schedDecInp")?.value);
+  const startTime = document.getElementById("schedStartInp")?.value;
+  const expDur   = parseFloat(document.getElementById("schedExpDurInp")?.value);
+  const expCount = parseInt(document.getElementById("schedExpCntInp")?.value);
+  const binning  = parseInt(document.getElementById("schedBinInp")?.value) || 1;
+  const note     = document.getElementById("schedNoteInp")?.value?.trim();
+
+  if (!target)              { alert("Please enter a target name."); return; }
+  if (isNaN(ra)||isNaN(dec)){ alert("Please enter valid RA / Dec coordinates."); return; }
+  if (!startTime)           { alert("Please set a start time."); return; }
+  if (isNaN(expDur)||expDur<=0) { alert("Exposure duration must be > 0."); return; }
+  if (isNaN(expCount)||expCount<1) { alert("Exposure count must be ≥ 1."); return; }
+
+  if (_schedEditId) {
+    const item = _schedule.find(x => x.id === _schedEditId);
+    if (item) Object.assign(item, { target, ra, dec, startTime, expDur, expCount, binning, note });
+  } else {
+    _schedule.push({
+      id: "sc" + Date.now(),
+      target, ra, dec, startTime, expDur, expCount, binning, note,
+      objType: "",
+      color: _SC[_schedColorN++ % _SC.length],
+      _conflict: false,
+    });
+  }
+
+  schedCloseAdd();
+  schedRebuild();
+}
+
+// ── Catalog search for schedule ───────────────────────────────────────────────
+
+async function schedLoadCat() {
+  if (_schedCat) return;
+  try {
+    const r = await fetch("/api/catalog");
+    _schedCat = await r.json();
+  } catch {}
+}
+
+function schedCatFilter() {
+  const inp  = document.getElementById("schedTgtInp");
+  const drop = document.getElementById("schedCatDrop");
+  if (!inp || !drop || !_schedCat) { if(drop) drop.style.display="none"; return; }
+  const q = inp.value.trim().toLowerCase();
+  if (!q) { drop.style.display = "none"; return; }
+
+  const hits = _schedCat.filter(o =>
+    o.id.toLowerCase().includes(q) ||
+    (o.name && o.name.toLowerCase().includes(q)) ||
+    (o.type && o.type.toLowerCase().includes(q))
+  ).slice(0, 12);
+
+  if (!hits.length) { drop.style.display = "none"; return; }
+
+  const rect = inp.getBoundingClientRect();
+  drop.style.top   = (rect.bottom + 4) + "px";
+  drop.style.left  = rect.left + "px";
+  drop.style.width = rect.width + "px";
+  drop.style.display = "block";
+  _schedCatIdx = -1;
+
+  drop.innerHTML = "";
+  hits.forEach((obj, i) => {
+    const row = document.createElement("div");
+    row.style.cssText = "padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;transition:background 0.1s;";
+    row.innerHTML = `
+      <div>
+        <span style="color:var(--text);font-size:13px;">${escH(obj.id)}</span>
+        ${obj.name ? `<span style="color:var(--dim);font-size:11px;margin-left:7px;">${escH(obj.name)}</span>` : ""}
+      </div>
+      <div style="text-align:right;flex-shrink:0;margin-left:10px;">
+        <div style="font-size:9px;color:var(--gray);padding:1px 5px;border:1px solid var(--border);display:inline-block;">${escH(obj.type)}</div>
+        <div style="font-size:10px;color:var(--dim);margin-top:2px;">${fmtRA(obj.ra)} / ${fmtDec(obj.dec)}</div>
+      </div>`;
+    row.addEventListener("mousedown", ev => { ev.preventDefault(); schedCatPick(obj); });
+    row.addEventListener("mouseover", () => {
+      _schedCatIdx = i;
+      drop.querySelectorAll("div[style]").forEach((d,j) =>
+        d.style.background = j===i ? "rgba(88,166,255,0.12)" : "");
+    });
+    drop.appendChild(row);
+  });
+}
+
+function schedCatPick(obj) {
+  const inp  = document.getElementById("schedTgtInp");
+  const drop = document.getElementById("schedCatDrop");
+  if (inp)  inp.value  = obj.id + (obj.name ? " – " + obj.name : "");
+  if (drop) drop.style.display = "none";
+  const raEl  = document.getElementById("schedRAInp");
+  const decEl = document.getElementById("schedDecInp");
+  if (raEl)  raEl.value  = obj.ra;
+  if (decEl) decEl.value = obj.dec;
+
+  // Store type on the pending item
+  window._schedPendingType = obj.type;
+}
+
+function schedCatKeyNav(e) {
+  const drop = document.getElementById("schedCatDrop");
+  if (!drop || drop.style.display === "none") return;
+  const rows = drop.querySelectorAll("div[style]");
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    _schedCatIdx = Math.min(_schedCatIdx+1, rows.length-1);
+    rows.forEach((d,i) => d.style.background = i===_schedCatIdx ? "rgba(88,166,255,0.12)" : "");
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    _schedCatIdx = Math.max(_schedCatIdx-1, 0);
+    rows.forEach((d,i) => d.style.background = i===_schedCatIdx ? "rgba(88,166,255,0.12)" : "");
+  } else if (e.key === "Enter" && _schedCatIdx >= 0) {
+    e.preventDefault();
+    rows[_schedCatIdx]?.dispatchEvent(new MouseEvent("mousedown"));
+  } else if (e.key === "Escape") {
+    drop.style.display = "none";
+  }
+}
+
+document.addEventListener("click", ev => {
+  const drop = document.getElementById("schedCatDrop");
+  const inp  = document.getElementById("schedTgtInp");
+  if (drop && inp && !inp.contains(ev.target) && !drop.contains(ev.target))
+    drop.style.display = "none";
+});
+
+// ── Auto-fill ─────────────────────────────────────────────────────────────────
+
+function schedAutoFill() {
+  if (!_schedCat || !_schedCat.length) {
+    schedLoadCat().then(schedAutoFill);
+    return;
+  }
+  const { s, e } = schedNight();
+  const GOOD = new Set(["Galaxy","Nebula","Emission Nebula","Reflection Nebula",
+    "Planetary Nebula","Open Cluster","Globular Cluster","Supernova Remnant",
+    "HII Ionized region"]);
+
+  // Find next available slot
+  let next = s;
+  if (_schedule.length > 0) {
+    const sorted = [..._schedule].sort((a,b) => {
+      let am = schedT2M(a.startTime); if (am < s-120) am += 1440;
+      let bm = schedT2M(b.startTime); if (bm < s-120) bm += 1440;
+      return am - bm;
+    });
+    const last = sorted[sorted.length-1];
+    let lastM = schedT2M(last.startTime);
+    if (lastM < s-120) lastM += 1440;
+    next = lastM + schedDur(last);
+  }
+
+  const usedIds = new Set(_schedule.map(x => x.target.split(" –")[0].trim()));
+  let added = 0;
+
+  while (next + 15 <= e && added < 6) {
+    const pool = _schedCat.filter(o => GOOD.has(o.type) && !usedIds.has(o.id));
+    if (!pool.length) break;
+    const obj = pool[Math.floor(Math.random() * Math.min(80, pool.length))];
+    const item = {
+      id:        "sc" + Date.now() + "_" + added,
+      target:    obj.id + (obj.name ? " – " + obj.name : ""),
+      objType:   obj.type,
+      ra:        obj.ra,
+      dec:       obj.dec,
+      startTime: schedM2T(next),
+      expDur:    60,
+      expCount:  10,
+      binning:   1,
+      note:      "Auto-filled",
+      color:     _SC[_schedColorN++ % _SC.length],
+      _conflict: false,
+    };
+    _schedule.push(item);
+    usedIds.add(obj.id);
+    next += schedDur(item);
+    added++;
+  }
+
+  if (!added) alert("Night is fully scheduled or no suitable objects found.");
+  schedRebuild();
+}
+
+// ── Run schedule ──────────────────────────────────────────────────────────────
+
+let _schedStatusTimer = null;
+
+async function schedRunAll() {
+  if (_schedule.length === 0) { alert("No observations scheduled."); return; }
+  const cfl = _schedule.filter(x => x._conflict).length;
+  if (cfl && !confirm(`${cfl} observation${cfl>1?"s have":" has"} overlapping time slots. Run anyway?`)) return;
+
+  const { s } = schedNight();
+  const sorted = [..._schedule].sort((a,b) => {
+    let am = schedT2M(a.startTime); if (am < s-120) am += 1440;
+    let bm = schedT2M(b.startTime); if (bm < s-120) bm += 1440;
+    return am - bm;
+  });
+
+  const r = await fetch("/api/schedule/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items: sorted }),
+  });
+  const data = await r.json();
+  if (!r.ok) { alert("Failed to start schedule: " + (data.error || r.statusText)); return; }
+
+  document.getElementById("btnSchedRun").textContent = "Running…";
+  document.getElementById("btnSchedRun").disabled = true;
+  schedStartStatusPoll();
+}
+
+async function schedAbort() {
+  await fetch("/api/schedule/abort", { method: "DELETE" });
+}
+
+function schedStartStatusPoll() {
+  if (_schedStatusTimer) clearInterval(_schedStatusTimer);
+  _schedStatusTimer = setInterval(schedPollStatus, 1500);
+  schedPollStatus();
+}
+
+async function schedPollStatus() {
+  try {
+    const r = await fetch("/api/schedule/status");
+    const st = await r.json();
+    schedApplyStatus(st);
+  } catch {}
+}
+
+function schedApplyStatus(st) {
+  const liveEl    = document.getElementById("schedLive");
+  const runBtn    = document.getElementById("btnSchedRun");
+  const targetEl  = document.getElementById("schedLiveTarget");
+  const phaseEl   = document.getElementById("schedLivePhase");
+  const framesEl  = document.getElementById("schedLiveFrames");
+  const progressEl= document.getElementById("schedLiveProgress");
+  const barEl     = document.getElementById("schedLiveBar");
+
+  if (st.running) {
+    liveEl.style.display = "flex";
+    targetEl.textContent  = st.current_target || "—";
+    phaseEl.textContent   = st.current_phase  || "";
+
+    if (st.current_phase === "exposing" && st.total_frames > 0) {
+      framesEl.textContent = `Frame ${st.current_frame}/${st.total_frames}`;
+      barEl.style.width = (st.current_frame / st.total_frames * 100) + "%";
+    } else if (st.current_phase === "slewing") {
+      framesEl.textContent = "Slewing…";
+      barEl.style.width = "0%";
+    } else if (st.current_phase === "waiting") {
+      framesEl.textContent = "Waiting for start time…";
+      barEl.style.width = "0%";
+    }
+
+    if (st.total > 0) {
+      progressEl.textContent = `Obs ${st.completed + 1}/${st.total}`;
+    }
+    runBtn.textContent = "Running…";
+    runBtn.disabled = true;
+
+    // Highlight active / done items in the list
+    document.querySelectorAll(".sched-item").forEach(el => {
+      const id = el.dataset.id;
+      const item = _schedule.find(x => x.id === id);
+      if (!item) return;
+      const { s } = schedNight();
+      const sorted = [..._schedule].sort((a,b) => {
+        let am = schedT2M(a.startTime); if (am < s-120) am += 1440;
+        let bm = schedT2M(b.startTime); if (bm < s-120) bm += 1440;
+        return am - bm;
+      });
+      const itemIdx = sorted.findIndex(x => x.id === id);
+      el.classList.toggle("done-item",   itemIdx < st.completed);
+      el.classList.toggle("active-item", itemIdx === st.current_idx);
+    });
+
+  } else {
+    liveEl.style.display = "none";
+    runBtn.textContent = "▶ Run Schedule";
+    runBtn.disabled = false;
+    document.querySelectorAll(".sched-item.done-item").forEach(el => el.classList.remove("done-item","active-item"));
+    if (_schedStatusTimer) { clearInterval(_schedStatusTimer); _schedStatusTimer = null; }
+
+    if (st.current_phase === "done") {
+      histRefresh();
+    }
+    if (st.error) {
+      console.error("Schedule error:", st.error);
+    }
+  }
+}
+
+// ── Camera History Modal ───────────────────────────────────────────────────────
+
+let _histImages  = [];
+let _histTimer   = null;
+let _histPrevCnt = 0;
+
+function openHistoryModal() {
+  document.getElementById("histModal").classList.remove("hidden");
+  histRefresh();
+  _histTimer = setInterval(histRefresh, 4000);
+}
+
+function closeHistoryModal() {
+  document.getElementById("histModal").classList.add("hidden");
+  if (_histTimer) { clearInterval(_histTimer); _histTimer = null; }
+}
+
+async function histRefresh() {
+  try {
+    const r = await fetch("/api/history");
+    const d = await r.json();
+    _histImages = d.images || [];
+    histRender();
+    // Update badge
+    if (_histImages.length > _histPrevCnt) {
+      const badge = document.getElementById("histBadge");
+      if (badge) {
+        badge.style.display = "flex";
+        badge.textContent = _histImages.length;
+      }
+    }
+    _histPrevCnt = _histImages.length;
+  } catch {}
+}
+
+function histFilter() {
+  histRender();
+}
+
+function histRender() {
+  const body    = document.getElementById("histBody");
+  const empty   = document.getElementById("histEmpty");
+  const countEl = document.getElementById("histCount");
+  const dlBtn   = document.getElementById("btnHistDlAll");
+  const q       = (document.getElementById("histSearch")?.value || "").toLowerCase();
+
+  // Remove existing cards
+  Array.from(body.querySelectorAll(".hist-card")).forEach(el => el.remove());
+
+  const filtered = q
+    ? _histImages.filter(img => img.target.toLowerCase().includes(q))
+    : _histImages;
+
+  empty.style.display = filtered.length === 0 ? "flex" : "none";
+  countEl.innerHTML   = `<span>${filtered.length}</span> image${filtered.length!==1?"s":""} captured`;
+  dlBtn.disabled      = filtered.length === 0;
+
+  filtered.forEach(img => {
+    const card = document.createElement("div");
+    card.className = "hist-card";
+    card.title     = img.target;
+    card.innerHTML = `
+      <div class="hist-thumb">
+        <img src="data:image/png;base64,${img.thumb}" alt="${escH(img.target)}" loading="lazy">
+      </div>
+      <div class="hist-card-body">
+        <div class="hist-card-name">${escH(img.target)}</div>
+        <div class="hist-card-meta">${img.date} · ${img.ts}</div>
+        <div class="hist-card-exp">${img.exp_dur}s · bin${img.binning}× · ${img.frame}/${img.total}</div>
+      </div>`;
+    card.addEventListener("click", () => openLightbox(img));
+    body.insertBefore(card, empty);
+  });
+}
+
+function openLightbox(img) {
+  const lb     = document.getElementById("histLightbox");
+  const lbImg  = document.getElementById("histLbImg");
+  const lbMeta = document.getElementById("histLbMeta");
+  const lbDl   = document.getElementById("histLbDl");
+
+  lbImg.src  = `/api/history/${img.id}`;
+  lbImg.alt  = img.target;
+  lbMeta.innerHTML = `<strong>${escH(img.target)}</strong><br>${img.date} · ${img.ts} &nbsp;·&nbsp; ${img.exp_dur}s exposure · binning ${img.binning}× · frame ${img.frame}/${img.total}`;
+  lbDl.href = `/api/history/${img.id}`;
+  lbDl.download = `${img.target.replace(/[^a-z0-9]/gi,"_")}_${img.ts.replace(/:/g,"")}.png`;
+  lb.classList.remove("hidden");
+}
+
+function closeLightbox() {
+  document.getElementById("histLightbox").classList.add("hidden");
+  document.getElementById("histLbImg").src = "";
+}
+
+async function histClearAll() {
+  if (!_histImages.length) return;
+  if (!confirm(`Delete all ${_histImages.length} images from history?`)) return;
+  _histImages = [];
+  histRender();
+}
+
+function histDownloadAll() {
+  // Download each visible image sequentially
+  const q = (document.getElementById("histSearch")?.value || "").toLowerCase();
+  const list = q ? _histImages.filter(x => x.target.toLowerCase().includes(q)) : _histImages;
+  list.forEach((img, i) => {
+    setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = `/api/history/${img.id}`;
+      a.download = `${img.target.replace(/[^a-z0-9]/gi,"_")}_${img.ts.replace(/:/g,"")}.png`;
+      a.click();
+    }, i * 350);
+  });
+}
+
+// Update history badge count periodically even when modal is closed
+setInterval(async () => {
+  try {
+    const r = await fetch("/api/history");
+    const d = await r.json();
+    const cnt = (d.images || []).length;
+    const badge = document.getElementById("histBadge");
+    if (badge && cnt > 0) {
+      badge.style.display = "flex";
+      badge.textContent   = cnt;
+    }
+  } catch {}
+}, 8000);
 </script>
 </body>
 </html>"""
