@@ -8,3 +8,4 @@ astropy>=6.0
 photutils>=1.9
 astroquery>=0.4.6
 zwoasi>=0.0.22
+pyongc>=1.2

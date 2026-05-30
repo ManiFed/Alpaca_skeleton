@@ -21,6 +21,7 @@ from typing import Any, Optional
 import yaml
 from flask import Flask, Response, jsonify, render_template_string, request, send_from_directory, stream_with_context
 
+from pyongc.ongc import listObjects as _ongc_list
 from alpaca.discovery import discover_servers
 from alpaca.safety_manager import SafetyManager
 from alpaca.telescope import Telescope
@@ -1382,6 +1383,56 @@ def pier_cam_snapshot():
         return jsonify({"error": "No frame available"}), 404
     return Response(frame, content_type="image/jpeg",
                     headers={"Cache-Control": "no-store"})
+
+
+# ── Object catalog ─────────────────────────────────────────────────────────────
+
+_CATALOG_SKIP = frozenset([
+    "Nonexistent object", "Duplicated record", "Object of other/unknown type",
+])
+
+def _build_dso_catalog() -> list[dict]:
+    catalog: list[dict] = []
+    for obj in _ongc_list():
+        if obj.type in _CATALOG_SKIP or obj.coords is None:
+            continue
+        try:
+            ra_h  = float(obj.coords[0][0] + obj.coords[0][1]/60 + obj.coords[0][2]/3600)
+            d0    = obj.coords[1][0]
+            sign  = -1 if d0 < 0 else 1
+            dec_d = sign * float(abs(d0) + obj.coords[1][1]/60 + obj.coords[1][2]/3600)
+
+            idents      = obj.identifiers
+            messier_raw = idents[0]                      # "M042" or None
+            names       = idents[3] or []
+
+            if messier_raw:
+                obj_id = "M" + str(int(messier_raw[1:]))
+            elif obj.name.startswith("NGC"):
+                obj_id = "NGC " + str(int(obj.name[3:]))
+            elif obj.name.startswith("IC"):
+                obj_id = "IC "  + str(int(obj.name[2:]))
+            else:
+                obj_id = obj.name
+
+            catalog.append({
+                "id":   obj_id,
+                "name": names[0] if names else "",
+                "type": obj.type,
+                "ra":   round(ra_h,  4),
+                "dec":  round(dec_d, 4),
+            })
+        except Exception:
+            continue
+    return catalog
+
+_dso_catalog: list[dict] = _build_dso_catalog()
+logger.info("DSO catalog built: %d objects", len(_dso_catalog))
+
+
+@app.route("/api/catalog")
+def api_catalog():
+    return jsonify(_dso_catalog)
 
 
 # ── HTML template ──────────────────────────────────────────────────────────────
@@ -3247,117 +3298,70 @@ function apiMoveAxis(ra_rate, dec_rate) {
 
 // ── Object Catalog ───────────────────────────────────────────────────────────
 
-const MESSIER_CATALOG = [
-  {id:"M1",  name:"Crab Nebula",          type:"SNR",               ra:5.5755,  dec:22.015  },
-  {id:"M2",  name:"",                      type:"Globular Cluster",  ra:21.5578, dec:-0.823  },
-  {id:"M3",  name:"",                      type:"Globular Cluster",  ra:13.7028, dec:28.378  },
-  {id:"M4",  name:"",                      type:"Globular Cluster",  ra:16.3928, dec:-26.526 },
-  {id:"M5",  name:"",                      type:"Globular Cluster",  ra:15.3094, dec:2.081   },
-  {id:"M6",  name:"Butterfly Cluster",     type:"Open Cluster",      ra:17.6694, dec:-32.217 },
-  {id:"M7",  name:"Ptolemy Cluster",       type:"Open Cluster",      ra:17.8978, dec:-34.841 },
-  {id:"M8",  name:"Lagoon Nebula",         type:"Emission Nebula",   ra:18.0628, dec:-24.384 },
-  {id:"M9",  name:"",                      type:"Globular Cluster",  ra:17.3194, dec:-18.516 },
-  {id:"M10", name:"",                      type:"Globular Cluster",  ra:16.9528, dec:-4.101  },
-  {id:"M11", name:"Wild Duck Cluster",     type:"Open Cluster",      ra:18.8511, dec:-6.271  },
-  {id:"M12", name:"",                      type:"Globular Cluster",  ra:16.7872, dec:-1.949  },
-  {id:"M13", name:"Hercules Cluster",      type:"Globular Cluster",  ra:16.6944, dec:36.461  },
-  {id:"M14", name:"",                      type:"Globular Cluster",  ra:17.6261, dec:-3.247  },
-  {id:"M15", name:"",                      type:"Globular Cluster",  ra:21.4994, dec:12.167  },
-  {id:"M16", name:"Eagle Nebula",          type:"Emission Nebula",   ra:18.3128, dec:-13.791 },
-  {id:"M17", name:"Omega Nebula",          type:"Emission Nebula",   ra:18.3461, dec:-16.177 },
-  {id:"M18", name:"",                      type:"Open Cluster",      ra:18.3319, dec:-17.100 },
-  {id:"M19", name:"",                      type:"Globular Cluster",  ra:17.0444, dec:-26.269 },
-  {id:"M20", name:"Trifid Nebula",         type:"Emission Nebula",   ra:18.0428, dec:-23.032 },
-  {id:"M21", name:"",                      type:"Open Cluster",      ra:18.0772, dec:-22.493 },
-  {id:"M22", name:"Sagittarius Cluster",   type:"Globular Cluster",  ra:18.6072, dec:-23.905 },
-  {id:"M23", name:"",                      type:"Open Cluster",      ra:17.9478, dec:-18.986 },
-  {id:"M24", name:"Sagittarius Star Cloud",type:"Star Cloud",        ra:18.2836, dec:-18.553 },
-  {id:"M25", name:"",                      type:"Open Cluster",      ra:18.5272, dec:-19.250 },
-  {id:"M26", name:"",                      type:"Open Cluster",      ra:18.7544, dec:-9.384  },
-  {id:"M27", name:"Dumbbell Nebula",       type:"Planetary Nebula",  ra:19.9936, dec:22.721  },
-  {id:"M28", name:"",                      type:"Globular Cluster",  ra:18.4094, dec:-24.870 },
-  {id:"M29", name:"",                      type:"Open Cluster",      ra:20.3986, dec:38.524  },
-  {id:"M30", name:"",                      type:"Globular Cluster",  ra:21.6722, dec:-23.180 },
-  {id:"M31", name:"Andromeda Galaxy",      type:"Galaxy",            ra:0.7122,  dec:41.269  },
-  {id:"M32", name:"",                      type:"Galaxy",            ra:0.7119,  dec:40.866  },
-  {id:"M33", name:"Triangulum Galaxy",     type:"Galaxy",            ra:1.5644,  dec:30.660  },
-  {id:"M34", name:"",                      type:"Open Cluster",      ra:2.7019,  dec:42.748  },
-  {id:"M35", name:"",                      type:"Open Cluster",      ra:6.1486,  dec:24.333  },
-  {id:"M36", name:"",                      type:"Open Cluster",      ra:5.6028,  dec:34.134  },
-  {id:"M37", name:"",                      type:"Open Cluster",      ra:5.8719,  dec:32.551  },
-  {id:"M38", name:"",                      type:"Open Cluster",      ra:5.4786,  dec:35.852  },
-  {id:"M39", name:"",                      type:"Open Cluster",      ra:21.5297, dec:48.427  },
-  {id:"M40", name:"Winnecke 4",            type:"Double Star",       ra:12.3672, dec:58.085  },
-  {id:"M41", name:"",                      type:"Open Cluster",      ra:6.7769,  dec:-20.721 },
-  {id:"M42", name:"Orion Nebula",          type:"Emission Nebula",   ra:5.5881,  dec:-5.391  },
-  {id:"M43", name:"De Mairan's Nebula",    type:"Emission Nebula",   ra:5.5931,  dec:-5.271  },
-  {id:"M44", name:"Beehive Cluster",       type:"Open Cluster",      ra:8.6719,  dec:19.994  },
-  {id:"M45", name:"Pleiades",              type:"Open Cluster",      ra:3.7908,  dec:24.117  },
-  {id:"M46", name:"",                      type:"Open Cluster",      ra:7.6961,  dec:-14.816 },
-  {id:"M47", name:"",                      type:"Open Cluster",      ra:7.6094,  dec:-14.490 },
-  {id:"M48", name:"",                      type:"Open Cluster",      ra:8.2297,  dec:-5.717  },
-  {id:"M49", name:"",                      type:"Galaxy",            ra:12.4961, dec:8.000   },
-  {id:"M50", name:"",                      type:"Open Cluster",      ra:7.0461,  dec:-8.366  },
-  {id:"M51", name:"Whirlpool Galaxy",      type:"Galaxy",            ra:13.4978, dec:47.195  },
-  {id:"M52", name:"",                      type:"Open Cluster",      ra:23.4019, dec:61.593  },
-  {id:"M53", name:"",                      type:"Globular Cluster",  ra:13.2156, dec:18.169  },
-  {id:"M54", name:"",                      type:"Globular Cluster",  ra:18.9178, dec:-30.478 },
-  {id:"M55", name:"Summer Rose Star",      type:"Globular Cluster",  ra:19.6667, dec:-30.964 },
-  {id:"M56", name:"",                      type:"Globular Cluster",  ra:19.2767, dec:30.185  },
-  {id:"M57", name:"Ring Nebula",           type:"Planetary Nebula",  ra:18.8933, dec:33.028  },
-  {id:"M58", name:"",                      type:"Galaxy",            ra:12.6278, dec:11.818  },
-  {id:"M59", name:"",                      type:"Galaxy",            ra:12.7003, dec:11.647  },
-  {id:"M60", name:"",                      type:"Galaxy",            ra:12.7272, dec:11.553  },
-  {id:"M61", name:"",                      type:"Galaxy",            ra:12.3656, dec:4.474   },
-  {id:"M62", name:"",                      type:"Globular Cluster",  ra:17.0194, dec:-30.112 },
-  {id:"M63", name:"Sunflower Galaxy",      type:"Galaxy",            ra:13.2636, dec:42.029  },
-  {id:"M64", name:"Black Eye Galaxy",      type:"Galaxy",            ra:12.9461, dec:21.683  },
-  {id:"M65", name:"",                      type:"Galaxy",            ra:11.3172, dec:13.092  },
-  {id:"M66", name:"",                      type:"Galaxy",            ra:11.3367, dec:12.991  },
-  {id:"M67", name:"",                      type:"Open Cluster",      ra:8.8544,  dec:11.816  },
-  {id:"M68", name:"",                      type:"Globular Cluster",  ra:12.6572, dec:-26.746 },
-  {id:"M69", name:"",                      type:"Globular Cluster",  ra:18.5231, dec:-32.348 },
-  {id:"M70", name:"",                      type:"Globular Cluster",  ra:18.7217, dec:-32.294 },
-  {id:"M71", name:"",                      type:"Globular Cluster",  ra:19.8961, dec:18.779  },
-  {id:"M72", name:"",                      type:"Globular Cluster",  ra:20.8911, dec:-12.537 },
-  {id:"M73", name:"",                      type:"Asterism",          ra:20.9839, dec:-12.633 },
-  {id:"M74", name:"",                      type:"Galaxy",            ra:1.6111,  dec:15.783  },
-  {id:"M75", name:"",                      type:"Globular Cluster",  ra:20.1014, dec:-21.921 },
-  {id:"M76", name:"Little Dumbbell Nebula",type:"Planetary Nebula",  ra:1.7031,  dec:51.575  },
-  {id:"M77", name:"",                      type:"Galaxy",            ra:2.7119,  dec:-0.013  },
-  {id:"M78", name:"",                      type:"Reflection Nebula", ra:5.7786,  dec:0.078   },
-  {id:"M79", name:"",                      type:"Globular Cluster",  ra:5.4047,  dec:-24.523 },
-  {id:"M80", name:"",                      type:"Globular Cluster",  ra:16.2856, dec:-22.976 },
-  {id:"M81", name:"Bode's Galaxy",         type:"Galaxy",            ra:9.9258,  dec:69.065  },
-  {id:"M82", name:"Cigar Galaxy",          type:"Galaxy",            ra:9.9256,  dec:69.680  },
-  {id:"M83", name:"Southern Pinwheel",     type:"Galaxy",            ra:13.6169, dec:-29.866 },
-  {id:"M84", name:"",                      type:"Galaxy",            ra:12.4183, dec:12.887  },
-  {id:"M85", name:"",                      type:"Galaxy",            ra:12.4228, dec:18.191  },
-  {id:"M86", name:"",                      type:"Galaxy",            ra:12.4353, dec:12.946  },
-  {id:"M87", name:"Virgo A",               type:"Galaxy",            ra:12.5136, dec:12.391  },
-  {id:"M88", name:"",                      type:"Galaxy",            ra:12.5319, dec:14.420  },
-  {id:"M89", name:"",                      type:"Galaxy",            ra:12.5944, dec:12.556  },
-  {id:"M90", name:"",                      type:"Galaxy",            ra:12.6136, dec:13.163  },
-  {id:"M91", name:"",                      type:"Galaxy",            ra:12.5931, dec:14.496  },
-  {id:"M92", name:"",                      type:"Globular Cluster",  ra:17.2856, dec:43.136  },
-  {id:"M93", name:"",                      type:"Open Cluster",      ra:7.7428,  dec:-23.856 },
-  {id:"M94", name:"",                      type:"Galaxy",            ra:12.8478, dec:41.120  },
-  {id:"M95", name:"",                      type:"Galaxy",            ra:10.7331, dec:11.704  },
-  {id:"M96", name:"",                      type:"Galaxy",            ra:10.7794, dec:11.820  },
-  {id:"M97", name:"Owl Nebula",            type:"Planetary Nebula",  ra:11.2478, dec:55.019  },
-  {id:"M98", name:"",                      type:"Galaxy",            ra:12.2314, dec:14.901  },
-  {id:"M99", name:"",                      type:"Galaxy",            ra:12.3136, dec:14.416  },
-  {id:"M100",name:"",                      type:"Galaxy",            ra:12.3817, dec:15.823  },
-  {id:"M101",name:"Pinwheel Galaxy",       type:"Galaxy",            ra:14.0536, dec:54.349  },
-  {id:"M102",name:"Spindle Galaxy",        type:"Galaxy",            ra:15.1028, dec:55.763  },
-  {id:"M103",name:"",                      type:"Open Cluster",      ra:1.5572,  dec:60.657  },
-  {id:"M104",name:"Sombrero Galaxy",       type:"Galaxy",            ra:12.6664, dec:-11.623 },
-  {id:"M105",name:"",                      type:"Galaxy",            ra:10.7972, dec:12.581  },
-  {id:"M106",name:"",                      type:"Galaxy",            ra:12.3161, dec:47.304  },
-  {id:"M107",name:"",                      type:"Globular Cluster",  ra:16.5417, dec:-13.054 },
-  {id:"M108",name:"",                      type:"Galaxy",            ra:11.1919, dec:55.674  },
-  {id:"M109",name:"",                      type:"Galaxy",            ra:11.9583, dec:53.374  },
-  {id:"M110",name:"",                      type:"Galaxy",            ra:0.6728,  dec:41.685  },
+const STAR_CATALOG = [
+
+  // Named Stars
+  {id:"Sirius",        name:"α Canis Majoris",   type:"Star", ra:6.7526,  dec:-16.716},
+  {id:"Canopus",       name:"α Carinae",          type:"Star", ra:6.3992,  dec:-52.696},
+  {id:"Arcturus",      name:"α Boötis",           type:"Star", ra:14.2611, dec:19.182 },
+  {id:"Alpha Centauri",name:"α Centauri",         type:"Star", ra:14.6597, dec:-60.834},
+  {id:"Vega",          name:"α Lyrae",            type:"Star", ra:18.6156, dec:38.784 },
+  {id:"Capella",       name:"α Aurigae",          type:"Star", ra:5.2781,  dec:45.998 },
+  {id:"Rigel",         name:"β Orionis",          type:"Star", ra:5.2422,  dec:-8.202 },
+  {id:"Procyon",       name:"α Canis Minoris",    type:"Star", ra:7.6553,  dec:5.225  },
+  {id:"Achernar",      name:"α Eridani",          type:"Star", ra:1.6286,  dec:-57.237},
+  {id:"Betelgeuse",    name:"α Orionis",          type:"Star", ra:5.9194,  dec:7.407  },
+  {id:"Hadar",         name:"β Centauri",         type:"Star", ra:14.0639, dec:-60.373},
+  {id:"Altair",        name:"α Aquilae",          type:"Star", ra:19.8464, dec:8.868  },
+  {id:"Acrux",         name:"α Crucis",           type:"Star", ra:12.4433, dec:-63.099},
+  {id:"Aldebaran",     name:"α Tauri",            type:"Star", ra:4.5986,  dec:16.509 },
+  {id:"Antares",       name:"α Scorpii",          type:"Star", ra:16.4901, dec:-26.432},
+  {id:"Spica",         name:"α Virginis",         type:"Star", ra:13.4199, dec:-11.161},
+  {id:"Pollux",        name:"β Geminorum",        type:"Star", ra:7.7553,  dec:28.026 },
+  {id:"Fomalhaut",     name:"α Piscis Austrini",  type:"Star", ra:22.9608, dec:-29.622},
+  {id:"Deneb",         name:"α Cygni",            type:"Star", ra:20.6906, dec:45.280 },
+  {id:"Mimosa",        name:"β Crucis",           type:"Star", ra:12.7953, dec:-59.689},
+  {id:"Regulus",       name:"α Leonis",           type:"Star", ra:10.1394, dec:11.967 },
+  {id:"Adhara",        name:"ε Canis Majoris",    type:"Star", ra:6.9772,  dec:-28.972},
+  {id:"Castor",        name:"α Geminorum",        type:"Star", ra:7.5767,  dec:31.888 },
+  {id:"Gacrux",        name:"γ Crucis",           type:"Star", ra:12.5194, dec:-57.113},
+  {id:"Bellatrix",     name:"γ Orionis",          type:"Star", ra:5.4186,  dec:6.350  },
+  {id:"Elnath",        name:"β Tauri",            type:"Star", ra:5.4381,  dec:28.608 },
+  {id:"Alnilam",       name:"ε Orionis",          type:"Star", ra:5.6036,  dec:-1.202 },
+  {id:"Alnitak",       name:"ζ Orionis",          type:"Star", ra:5.6797,  dec:-1.943 },
+  {id:"Mintaka",       name:"δ Orionis",          type:"Star", ra:5.5333,  dec:-0.299 },
+  {id:"Saiph",         name:"κ Orionis",          type:"Star", ra:5.7958,  dec:-9.670 },
+  {id:"Alioth",        name:"ε Ursae Majoris",    type:"Star", ra:12.9006, dec:55.960 },
+  {id:"Dubhe",         name:"α Ursae Majoris",    type:"Star", ra:11.0622, dec:61.751 },
+  {id:"Merak",         name:"β Ursae Majoris",    type:"Star", ra:11.0306, dec:56.383 },
+  {id:"Phecda",        name:"γ Ursae Majoris",    type:"Star", ra:11.8972, dec:53.695 },
+  {id:"Megrez",        name:"δ Ursae Majoris",    type:"Star", ra:12.2569, dec:57.033 },
+  {id:"Mizar",         name:"ζ Ursae Majoris",    type:"Star", ra:13.3986, dec:54.925 },
+  {id:"Alkaid",        name:"η Ursae Majoris",    type:"Star", ra:13.7923, dec:49.313 },
+  {id:"Polaris",       name:"α Ursae Minoris",    type:"Star", ra:2.5303,  dec:89.264 },
+  {id:"Mirfak",        name:"α Persei",           type:"Star", ra:3.4053,  dec:49.861 },
+  {id:"Algol",         name:"β Persei",           type:"Star", ra:3.1364,  dec:40.957 },
+  {id:"Alpheratz",     name:"α Andromedae",       type:"Star", ra:0.1397,  dec:29.090 },
+  {id:"Mirach",        name:"β Andromedae",       type:"Star", ra:1.1622,  dec:35.621 },
+  {id:"Almach",        name:"γ Andromedae",       type:"Star", ra:2.0650,  dec:42.330 },
+  {id:"Schedar",       name:"α Cassiopeiae",      type:"Star", ra:0.6753,  dec:56.537 },
+  {id:"Alderamin",     name:"α Cephei",           type:"Star", ra:21.3097, dec:62.585 },
+  {id:"Hamal",         name:"α Arietis",          type:"Star", ra:2.1197,  dec:23.462 },
+  {id:"Denebola",      name:"β Leonis",           type:"Star", ra:11.8178, dec:14.572 },
+  {id:"Algieba",       name:"γ Leonis",           type:"Star", ra:10.3319, dec:19.842 },
+  {id:"Alphard",       name:"α Hydrae",           type:"Star", ra:9.4597,  dec:-8.659 },
+  {id:"Cor Caroli",    name:"α Canum Venaticorum",type:"Star", ra:12.9331, dec:38.318 },
+  {id:"Izar",          name:"ε Boötis",           type:"Star", ra:14.7492, dec:27.074 },
+  {id:"Alphecca",      name:"α Coronae Borealis", type:"Star", ra:15.5783, dec:26.715 },
+  {id:"Rasalhague",    name:"α Ophiuchi",         type:"Star", ra:17.5822, dec:12.560 },
+  {id:"Nunki",         name:"σ Sagittarii",       type:"Star", ra:18.9211, dec:-26.296},
+  {id:"Kaus Australis",name:"ε Sagittarii",       type:"Star", ra:18.4031, dec:-34.385},
+  {id:"Shaula",        name:"λ Scorpii",          type:"Star", ra:17.5603, dec:-37.104},
+  {id:"Sargas",        name:"θ Scorpii",          type:"Star", ra:17.6217, dec:-42.998},
+  {id:"Atria",         name:"α Trianguli Aust.",  type:"Star", ra:16.8111, dec:-69.028},
+  {id:"Peacock",       name:"α Pavonis",          type:"Star", ra:20.4275, dec:-56.735},
+  {id:"Miaplacidus",   name:"β Carinae",          type:"Star", ra:9.2200,  dec:-69.717},
+  {id:"Avior",         name:"ε Carinae",          type:"Star", ra:8.3750,  dec:-59.510},
 ];
 
 let _catalogIdx = -1;
@@ -3368,7 +3372,7 @@ function catalogFilter() {
   const dd    = document.getElementById("catalogDropdown");
   _catalogIdx = -1;
 
-  const matches = q.length === 0 ? [] : MESSIER_CATALOG.filter(o => {
+  const matches = q.length === 0 ? [] : OBJECT_CATALOG.filter(o => {
     const label = (o.id + " " + o.name + " " + o.type).toLowerCase();
     return q.split(/\s+/).every(t => label.includes(t));
   }).slice(0, 30);
