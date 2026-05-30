@@ -1989,12 +1989,13 @@ body > * { position: relative; z-index: 1; }
 
 .badges { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
 .badge {
-  padding: 2px 7px; font-size: 10px; letter-spacing: 1px;
+  padding: 2px 8px; font-size: 10px; letter-spacing: 1px;
   text-transform: uppercase; border: 1px solid var(--gray); color: var(--gray);
+  border-radius: 20px; background: rgba(255,255,255,0.03);
 }
-.badge-on   { border-color: var(--green);  color: var(--green); }
-.badge-warn { border-color: var(--yellow); color: var(--yellow); }
-.badge-err  { border-color: var(--red);    color: var(--red); }
+.badge-on   { border-color: var(--green);  color: var(--green);  background: rgba(0,230,118,0.07);  box-shadow: 0 0 8px rgba(0,230,118,0.2); }
+.badge-warn { border-color: var(--yellow); color: var(--yellow); background: rgba(255,215,64,0.07); }
+.badge-err  { border-color: var(--red);    color: var(--red);    background: rgba(255,82,82,0.07); }
 
 /* ── Coordinates ── */
 .coords { display: grid; grid-template-columns: 40px 1fr; gap: 4px 10px; align-items: center; }
@@ -2130,7 +2131,12 @@ body > * { position: relative; z-index: 1; }
   display: flex;
   flex-direction: column;
   gap: 18px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
 }
+.modal-content::-webkit-scrollbar { width: 5px; }
+.modal-content::-webkit-scrollbar-track { background: transparent; }
+.modal-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
 
 .modal-header {
   display: flex;
@@ -2191,13 +2197,17 @@ body > * { position: relative; z-index: 1; }
 }
 .card-title { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--green-hi); }
 .inp-row { display: flex; gap: 8px; }
-.srv-list { display: flex; flex-direction: column; gap: 5px; max-height: 320px; overflow-y: auto; }
+.srv-list { display: flex; flex-direction: column; gap: 5px; max-height: 320px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; }
+.srv-list::-webkit-scrollbar { width: 5px; }
+.srv-list::-webkit-scrollbar-track { background: transparent; }
+.srv-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
 .srv-item {
-  padding: 7px 12px; border: 1px solid var(--border);
-  cursor: pointer; color: var(--blue); transition: border-color .12s, background .12s;
+  padding: 7px 12px; border: var(--glass-border);
+  border-radius: 8px; background: rgba(255,255,255,0.03);
+  cursor: pointer; color: var(--blue); transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.srv-item:hover { border-color: var(--blue); background: rgba(88,166,255,.06); }
-.sep { border-top: 1px solid var(--border); }
+.srv-item:hover { border-color: rgba(68,138,255,0.4); background: rgba(68,138,255,.08); box-shadow: 0 0 12px rgba(68,138,255,0.15); }
+.sep { border-top: var(--glass-border); }
 
 /* ── Config editor ── */
 .cfg-modal .modal-content {
@@ -2725,8 +2735,8 @@ html[data-night] img, html[data-night] video { filter: none; }
 <div class="main" id="mainGrid">
 
   <!-- Empty state shown when nothing to display -->
-  <div class="main-empty" id="mainEmpty" style="grid-column:1/-1;background:var(--surface);">
-    <div style="font-size:24px;opacity:0.3">✦</div>
+  <div class="main-empty" id="mainEmpty" style="grid-column:1/-1;background:transparent;">
+    <div style="font-size:32px;opacity:0.25">✦</div>
     <div>No active feeds — connect a device to get started</div>
   </div>
 
@@ -3543,6 +3553,7 @@ setInterval(poll, 1000);
 poll();
 
 function render(s) {
+  _ensureObsLoc(s);
   renderHeader(s);
   renderTelescope(s.telescope || {});
   renderCamera(s.camera || {});
@@ -3761,6 +3772,8 @@ function renderTelescope(t) {
     pad.style.opacity = blocked ? "0.35" : "1";
     pad.style.cursor  = blocked ? "not-allowed" : "grab";
   }
+
+  updateSkyOverlay(t);
 }
 
 // ── Camera ───────────────────────────────────────────────────────────────────
@@ -3805,6 +3818,217 @@ function renderCamera(c) {
 
   document.getElementById("btnModalExpose").disabled   = !c.connected || c.exposing;
   document.getElementById("btnModalAbortExp").disabled = !c.connected || !c.exposing;
+
+  // ── Exposure countdown ring ────────────────────────────────────────────────
+  const ring    = document.getElementById("expRing");
+  const arc     = document.getElementById("expRingArc");
+  const ringTxt = document.getElementById("expRingText");
+  if (!ring) return;
+  if (c.exposing && c.exposure_start_ts != null && c.exposure_duration != null) {
+    ring.classList.add("active");
+    const total = c.exposure_duration;
+    const elapsed = (Date.now() / 1000) - c.exposure_start_ts;
+    const frac = Math.min(1, elapsed / total);
+    const remaining = Math.max(0, total - elapsed);
+    const circ = 2 * Math.PI * 30;
+    arc.style.strokeDashoffset = circ * frac;
+    arc.style.stroke = frac > 0.85 ? "var(--green)" : "var(--yellow)";
+    ringTxt.textContent = remaining < 1 ? "↓" : remaining.toFixed(0) + "s";
+  } else {
+    ring.classList.remove("active");
+  }
+}
+
+// ── Night-vision toggle ───────────────────────────────────────────────────────
+
+function toggleNightMode() {
+  const html = document.documentElement;
+  const on = html.hasAttribute("data-night");
+  if (on) {
+    html.removeAttribute("data-night");
+    localStorage.removeItem("nightMode");
+    document.getElementById("btnNightMode").textContent = "👁";
+  } else {
+    html.setAttribute("data-night", "");
+    localStorage.setItem("nightMode", "1");
+    document.getElementById("btnNightMode").textContent = "🔴";
+  }
+}
+(function() {
+  if (localStorage.getItem("nightMode") === "1") {
+    document.documentElement.setAttribute("data-night", "");
+    const b = document.getElementById("btnNightMode");
+    if (b) b.textContent = "🔴";
+  }
+})();
+
+// ── Astronomy math: RA/Dec → Alt/Az ──────────────────────────────────────────
+
+let _obsLat = null, _obsLon = null;
+
+function _ensureObsLoc(s) {
+  const obs = s && s.config && s.config.safety && s.config.safety.observer;
+  if (obs) {
+    _obsLat = parseFloat(obs.latitude)  || 0;
+    _obsLon = parseFloat(obs.longitude) || 0;
+  }
+}
+
+function _raDecToAltAz(raHours, decDeg, latDeg, lonDeg, dateMs) {
+  const D2R = Math.PI / 180;
+  const d = new Date(dateMs || Date.now());
+  const J2000 = 2451545.0;
+  const jd = d / 86400000 + 2440587.5;
+  const T  = (jd - J2000) / 36525;
+  let gmst = 280.46061837 + 360.98564736629 * (jd - J2000)
+           + 0.000387933 * T * T - T * T * T / 38710000;
+  gmst = ((gmst % 360) + 360) % 360;
+  const lst  = ((gmst + lonDeg) % 360 + 360) % 360;
+  const ha   = (lst - raHours * 15 + 360) % 360;
+  const haR  = ha  * D2R;
+  const decR = decDeg * D2R;
+  const latR = latDeg * D2R;
+  const sinAlt = Math.sin(decR) * Math.sin(latR) + Math.cos(decR) * Math.cos(latR) * Math.cos(haR);
+  const alt    = Math.asin(Math.max(-1, Math.min(1, sinAlt))) / D2R;
+  const cosAz  = (Math.sin(decR) - Math.sin(latR) * sinAlt) / (Math.cos(latR) * Math.cos(alt * D2R));
+  let az = Math.acos(Math.max(-1, Math.min(1, cosAz))) / D2R;
+  if (Math.sin(haR) > 0) az = 360 - az;
+  return { alt, az };
+}
+
+// ── Live sky overlay on horizon canvas ───────────────────────────────────────
+
+let _telSkyRA = null, _telSkyDec = null;
+
+function updateSkyOverlay(t) {
+  if (_obsLat === null) return;
+  const canvas = document.getElementById("skyCanvas");
+  if (!canvas) return;
+  if (t.connected && t.ra != null) {
+    _telSkyRA  = t.ra;
+    _telSkyDec = t.dec;
+  } else {
+    _telSkyRA  = null;
+    _telSkyDec = null;
+  }
+}
+
+function drawSkyOverlay(ctx, CX, CY, MAX_R) {
+  if (_obsLat === null) return;
+  const now = Date.now();
+
+  // Draw scheduled targets
+  if (typeof _schedule !== "undefined") {
+    _schedule.forEach(function(item, i) {
+      if (item.ra == null || item.dec == null) return;
+      const aa = _raDecToAltAz(item.ra, item.dec, _obsLat, _obsLon, now);
+      if (aa.alt < 0) return;
+      const r  = MAX_R * (1 - aa.alt / 90);
+      const az = aa.az * Math.PI / 180;
+      const x  = CX + r * Math.sin(az);
+      const y  = CY - r * Math.cos(az);
+      const colors = ["#00e676","#448aff","#ffd740","#bc83ff","#ff7f50","#40dcdc"];
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, 2 * Math.PI);
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.globalAlpha = 0.85;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.font = "9px monospace";
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.textAlign = "left";
+      ctx.fillText(item.target.slice(0, 12), x + 7, y + 3);
+    });
+  }
+
+  // Draw telescope pointing position
+  if (_telSkyRA !== null && _telSkyDec !== null) {
+    const aa = _raDecToAltAz(_telSkyRA, _telSkyDec, _obsLat, _obsLon, now);
+    if (aa.alt >= 0) {
+      const r  = MAX_R * (1 - aa.alt / 90);
+      const az = aa.az * Math.PI / 180;
+      const x  = CX + r * Math.sin(az);
+      const y  = CY - r * Math.cos(az);
+      const sz = 10;
+      ctx.save();
+      ctx.strokeStyle = "#00e676";
+      ctx.lineWidth   = 2;
+      ctx.shadowBlur  = 8;
+      ctx.shadowColor = "#00e676";
+      ctx.beginPath(); ctx.moveTo(x - sz, y); ctx.lineTo(x + sz, y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, y - sz); ctx.lineTo(x, y + sz); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, 2 * Math.PI); ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+// ── Altitude sparklines in schedule items ─────────────────────────────────────
+
+function drawAltSparkline(canvas, raHours, decDeg, nightStartH, nightEndH) {
+  if (_obsLat === null || canvas == null) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const steps = 48;
+  const dur   = nightEndH < nightStartH ? (nightEndH + 24 - nightStartH) : (nightEndH - nightStartH);
+  const pts   = [];
+
+  for (let i = 0; i <= steps; i++) {
+    const frac    = i / steps;
+    const hourOff = nightStartH + frac * dur;
+    const ms      = today.getTime() + hourOff * 3600000;
+    const aa      = _raDecToAltAz(raHours, decDeg, _obsLat, _obsLon, ms);
+    pts.push({ frac, alt: aa.alt });
+  }
+
+  // Background
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillRect(0, 0, W, H);
+
+  // Altitude curve
+  ctx.beginPath();
+  let started = false;
+  pts.forEach(function(p) {
+    const x = p.frac * W;
+    const y = H - Math.max(0, Math.min(H, (p.alt / 90) * H));
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else           { ctx.lineTo(x, y); }
+  });
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Colored fill based on altitude band
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0,    "rgba(0,230,118,0.35)");
+  grad.addColorStop(0.22, "rgba(0,230,118,0.28)");
+  grad.addColorStop(0.5,  "rgba(255,215,64,0.25)");
+  grad.addColorStop(1,    "rgba(255,82,82,0.15)");
+  ctx.beginPath();
+  pts.forEach(function(p, i) {
+    const x = p.frac * W;
+    const y = H - Math.max(0, Math.min(H, (p.alt / 90) * H));
+    if (i === 0) ctx.moveTo(x, H);
+    ctx.lineTo(x, y);
+  });
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // 20° line
+  const y20 = H - (20 / 90) * H;
+  ctx.beginPath();
+  ctx.moveTo(0, y20); ctx.lineTo(W, y20);
+  ctx.strokeStyle = "rgba(255,215,64,0.25)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 // ── Main area visibility ──────────────────────────────────────────────────────
@@ -4729,6 +4953,9 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
           alts[activeIdx].toFixed(1) + "°";
       }
     }
+
+    // Telescope pointing overlay + scheduled targets
+    drawSkyOverlay(ctx, CX, CY, MAX_R);
   }
 
   function updateInfo() {
@@ -5568,12 +5795,25 @@ function schedDrawList(sorted) {
           onchange="schedSetTime('${item.id}',this.value)" title="Start time">
         <div class="sched-dur">end <span>${schedM2T(schedT2M(item.startTime)+dur)}</span></div>
       </div>
-      <div class="sched-item-btns">
-        <button class="btn btn-dim" onclick="schedOpenAdd('${item.id}')"
-          style="font-size:10px;padding:3px 8px;">Edit</button>
-        <button class="btn btn-red"  onclick="schedDel('${item.id}')"
-          style="font-size:10px;padding:3px 8px;">✕</button>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+        <canvas class="sched-sparkline" width="88" height="28"></canvas>
+        <div class="sched-item-btns">
+          <button class="btn btn-dim" onclick="schedOpenAdd('${item.id}')"
+            style="font-size:10px;padding:3px 8px;">Edit</button>
+          <button class="btn btn-red"  onclick="schedDel('${item.id}')"
+            style="font-size:10px;padding:3px 8px;">✕</button>
+        </div>
       </div>`;
+
+    // Draw altitude sparkline
+    const sparkCanvas = el.querySelector(".sched-sparkline");
+    if (sparkCanvas && item.ra != null && item.dec != null) {
+      const ns = document.getElementById("schedNightStart").value || "20:00";
+      const ne = document.getElementById("schedNightEnd").value   || "05:00";
+      const [nsh, nsm] = ns.split(":").map(Number);
+      const [neh, nem] = ne.split(":").map(Number);
+      drawAltSparkline(sparkCanvas, item.ra, item.dec, nsh + nsm/60, neh + nem/60);
+    }
 
     el.addEventListener("dragstart", ev => {
       _schedDragId = item.id;
