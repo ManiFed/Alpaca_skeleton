@@ -52,12 +52,14 @@ _state: dict[str, Any] = {
         "busy":      False,
     },
     "camera": {
-        "enabled":     False,
-        "connected":   False,
-        "state":       None,
-        "state_name":  None,
-        "image_ready": None,
-        "exposing":    False,
+        "enabled":          False,
+        "connected":        False,
+        "state":            None,
+        "state_name":       None,
+        "image_ready":      None,
+        "exposing":         False,
+        "exposure_start_ts": None,
+        "exposure_duration": None,
     },
     "safety": {
         "safe":              True,
@@ -1181,8 +1183,10 @@ def api_expose():
 
     def _do():
         with _state_lock:
-            _state["camera"]["exposing"]  = True
-            _state["image_captured"]      = False
+            _state["camera"]["exposing"]           = True
+            _state["camera"]["exposure_start_ts"]  = time.time()
+            _state["camera"]["exposure_duration"]  = duration
+            _state["image_captured"]               = False
         _pier_cam_pause.set()
         time.sleep(0.15)
         try:
@@ -1200,7 +1204,9 @@ def api_expose():
             logger.error("Exposure failed: %s", exc)
         finally:
             with _state_lock:
-                _state["camera"]["exposing"] = False
+                _state["camera"]["exposing"]          = False
+                _state["camera"]["exposure_start_ts"] = None
+                _state["camera"]["exposure_duration"] = None
             _pier_cam_pause.clear()
 
     threading.Thread(target=_do, daemon=True, name="cam-expose").start()
@@ -1707,19 +1713,24 @@ _HTML = r"""<!DOCTYPE html>
 <title>NODE v1 — ALPACA Control</title>
 <style>
 :root {
-  --bg:       #070a0e;
-  --surface:  #0d1117;
-  --surface2: #161b22;
-  --border:   #21262d;
-  --green:    #3fb950;
-  --green-hi: #56d364;
-  --yellow:   #d29922;
-  --red:      #f85149;
-  --blue:     #58a6ff;
-  --gray:     #484f58;
-  --text:     #c9d1d9;
-  --dim:      #8b949e;
-  --mono:     'Courier New', 'Consolas', monospace;
+  --bg:        #000000;
+  --surface:   rgba(14, 16, 22, 0.60);
+  --surface2:  rgba(20, 22, 32, 0.72);
+  --border:    rgba(255, 255, 255, 0.08);
+  --green:     #00e676;
+  --green-hi:  #69ff9c;
+  --yellow:    #ffd740;
+  --red:       #ff5252;
+  --blue:      #448aff;
+  --gray:      #4a5060;
+  --text:      #e2e8f0;
+  --dim:       #8892a4;
+  --mono:      'Courier New', 'Consolas', monospace;
+  --glass-blur: blur(28px) saturate(160%);
+  --glass-border: 1px solid rgba(255,255,255,0.09);
+  --glass-shine: inset 0 1px 0 rgba(255,255,255,0.06);
+  --glass-shadow: 0 8px 32px rgba(0,0,0,0.7);
+  --panel-bg:  rgba(14, 16, 22, 0.60);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1737,17 +1748,32 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 90% 55% at 50% 35%, rgba(18,28,90,0.38) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 40% at 80% 80%, rgba(10,35,60,0.25) 0%, transparent 65%);
+  pointer-events: none;
+  z-index: 0;
+}
+body > * { position: relative; z-index: 1; }
 
 /* ── Header ── */
 .hdr {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border-bottom: var(--glass-border);
   padding: 10px 20px;
   display: flex;
   align-items: center;
   gap: 14px;
   flex-shrink: 0;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04), 0 4px 16px rgba(0,0,0,0.5);
 }
 .hdr-logo { font-size: 17px; font-weight: bold; color: var(--green-hi); letter-spacing: 3px; }
 .hdr-sub  { color: var(--dim); font-size: 10px; letter-spacing: 2px; margin-top: 2px; }
@@ -1767,20 +1793,26 @@ body {
   cursor: pointer;
   padding: 3px 8px;
   border: 1px solid var(--green);
-  border-radius: 2px;
+  border-radius: 8px;
   color: var(--green);
   user-select: none;
+  background: rgba(0,230,118,0.05);
+  box-shadow: 0 0 10px rgba(0,230,118,0.12);
 }
 .conn-pill.clickable:hover {
-  background: rgba(0,255,128,0.08);
+  background: rgba(0,230,118,0.12);
+  box-shadow: 0 0 16px rgba(0,230,118,0.22);
 }
 .conn-dropdown {
   display: none;
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  background: var(--panel);
-  border: 1px solid var(--border);
+  background: rgba(10,12,20,0.92);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: var(--glass-border);
+  border-radius: 10px;
   padding: 6px;
   z-index: 200;
   min-width: 120px;
@@ -1793,22 +1825,24 @@ body {
 .btn {
   padding: 4px 13px;
   border: 1px solid;
-  background: transparent;
+  background: rgba(255,255,255,0.04);
   font-family: var(--mono);
   font-size: 11px;
   cursor: pointer;
   letter-spacing: 1px;
   text-transform: uppercase;
-  transition: background 0.12s, color 0.12s;
+  border-radius: 8px;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s, transform 0.1s;
 }
+.btn:hover:not(:disabled) { transform: translateY(-1px); }
 .btn-green  { border-color: var(--green);  color: var(--green); }
-.btn-green:hover:not(:disabled)  { background: var(--green);  color: var(--bg); }
+.btn-green:hover:not(:disabled)  { background: var(--green);  color: #000; box-shadow: 0 0 14px rgba(0,230,118,0.45); }
 .btn-red    { border-color: var(--red);    color: var(--red); }
-.btn-red:hover:not(:disabled)    { background: var(--red);    color: var(--bg); }
+.btn-red:hover:not(:disabled)    { background: var(--red);    color: #000; box-shadow: 0 0 14px rgba(255,82,82,0.45); }
 .btn-blue   { border-color: var(--blue);   color: var(--blue); }
-.btn-blue:hover:not(:disabled)   { background: var(--blue);   color: var(--bg); }
+.btn-blue:hover:not(:disabled)   { background: var(--blue);   color: #000; box-shadow: 0 0 14px rgba(68,138,255,0.45); }
 .btn-yellow { border-color: var(--yellow); color: var(--yellow); }
-.btn-yellow:hover:not(:disabled) { background: var(--yellow); color: var(--bg); }
+.btn-yellow:hover:not(:disabled) { background: var(--yellow); color: #000; box-shadow: 0 0 14px rgba(255,215,64,0.45); }
 .btn-dim    { border-color: var(--gray);   color: var(--dim); }
 .btn-dim:hover:not(:disabled)    { background: var(--gray);   color: var(--text); }
 .btn:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -1819,9 +1853,9 @@ body {
   width: 8px; height: 8px; border-radius: 50%;
   display: inline-block; flex-shrink: 0;
 }
-.dot-green  { background: var(--green);  box-shadow: 0 0 6px var(--green); }
-.dot-yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
-.dot-red    { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+.dot-green  { background: var(--green);  box-shadow: 0 0 8px var(--green), 0 0 16px rgba(0,230,118,0.3); }
+.dot-yellow { background: var(--yellow); box-shadow: 0 0 8px var(--yellow), 0 0 16px rgba(255,215,64,0.3); }
+.dot-red    { background: var(--red);    box-shadow: 0 0 8px var(--red), 0 0 16px rgba(255,82,82,0.3); }
 .dot-gray   { background: var(--gray); }
 
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
@@ -1832,8 +1866,9 @@ body {
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  background: var(--border);
+  gap: 10px;
+  padding: 10px;
+  background: transparent;
   overflow: hidden;
   min-height: 0;
 }
@@ -1853,8 +1888,11 @@ body {
 .log-footer {
   flex-shrink: 0;
   height: 180px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border-top: var(--glass-border);
+  box-shadow: var(--glass-shine);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1863,6 +1901,11 @@ body {
 /* ── Panels ── */
 .panel {
   background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: var(--glass-border);
+  border-radius: 14px;
+  box-shadow: var(--glass-shine), var(--glass-shadow);
   padding: 16px 20px;
   display: flex; flex-direction: column; gap: 12px;
   overflow-y: auto; min-height: 0;
@@ -1888,6 +1931,11 @@ body {
 .img-col {
   grid-column: 1 / -1;
   background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: var(--glass-border);
+  border-radius: 14px;
+  box-shadow: var(--glass-shine), var(--glass-shadow);
   display: flex; flex-direction: row;
   overflow: hidden; min-height: 0;
 }
@@ -1895,6 +1943,11 @@ body {
 
 .img-sub {
   background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: var(--glass-border);
+  border-radius: 14px;
+  box-shadow: var(--glass-shine), var(--glass-shadow);
   padding: 14px 20px;
   display: flex; flex-direction: column; gap: 10px;
   overflow: hidden; min-height: 0;
@@ -1966,11 +2019,12 @@ body {
 
 /* ── Input fields ── */
 .inp {
-  background: var(--bg); border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
   color: var(--text); font-family: var(--mono); font-size: 13px;
-  padding: 6px 10px; width: 100%;
+  padding: 6px 10px; width: 100%; border-radius: 8px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.inp:focus { outline: none; border-color: var(--blue); }
+.inp:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px rgba(68,138,255,0.2); }
 .inp-label { font-size: 10px; color: var(--dim); letter-spacing: 1px; margin-bottom: 3px; }
 .inp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .inp-group { display: flex; flex-direction: column; }
@@ -2052,17 +2106,21 @@ body {
 /* ── Modal overlay ── */
 .modal {
   position: fixed; inset: 0;
-  background: rgba(7,10,14,.92);
-  backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
   display: flex; align-items: center; justify-content: center;
   z-index: 100;
 }
 .modal.hidden { display: none; }
 
 .modal-content {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  background: rgba(12,14,22,0.82);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border: var(--glass-border);
+  border-radius: 18px;
+  box-shadow: var(--glass-shine), 0 24px 80px rgba(0,0,0,0.85);
   padding: 28px;
   max-height: 90vh;
   overflow-y: auto;
@@ -2113,14 +2171,20 @@ body {
 /* ── Discovery overlay ── */
 .overlay {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.72);
-  backdrop-filter: blur(4px) brightness(0.45);
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
   display: flex; align-items: center; justify-content: center;
   z-index: 50;
 }
 .overlay.hidden { display: none; }
 .card {
-  background: var(--surface2); border: 1px solid var(--border);
+  background: rgba(10,12,22,0.85);
+  backdrop-filter: blur(40px) saturate(170%);
+  -webkit-backdrop-filter: blur(40px) saturate(170%);
+  border: var(--glass-border);
+  border-radius: 18px;
+  box-shadow: var(--glass-shine), 0 24px 80px rgba(0,0,0,0.85);
   padding: 24px 28px; width: 420px;
   display: flex; flex-direction: column; gap: 14px;
   max-height: 90vh; overflow: hidden;
@@ -2337,11 +2401,12 @@ body {
 /* Schedule items */
 .sched-item {
   display: flex; align-items: flex-start; gap: 10px;
-  padding: 11px 14px; border: 1px solid var(--border);
-  background: var(--surface2); border-radius: 4px;
-  transition: border-color 0.12s, opacity 0.12s; cursor: default;
+  padding: 11px 14px; border: var(--glass-border);
+  background: rgba(255,255,255,0.03); border-radius: 10px;
+  box-shadow: var(--glass-shine);
+  transition: border-color 0.15s, opacity 0.12s, box-shadow 0.15s; cursor: default;
 }
-.sched-item:hover { border-color: var(--gray); }
+.sched-item:hover { border-color: rgba(255,255,255,0.18); box-shadow: var(--glass-shine), 0 4px 16px rgba(0,0,0,0.4); }
 .sched-item.conflict { border-color: var(--red); }
 .sched-item.dragging { opacity: 0.4; }
 .sched-item.drag-over { border-color: var(--blue); background: rgba(88,166,255,0.05); }
@@ -2391,39 +2456,75 @@ body {
 .sched-stats { font-size: 10px; color: var(--dim); letter-spacing: 1px; flex: 1; }
 .sched-stats span { color: var(--text); }
 
-/* Add / Edit inner window */
+/* Sky conditions bar */
+.sched-sky-bar {
+  display: none; padding: 7px 24px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.015);
+  flex-shrink: 0; align-items: center; gap: 20px; flex-wrap: wrap;
+  font-size: 10px; letter-spacing: 1px; color: var(--dim);
+}
+.sched-sky-bar strong { color: var(--text); }
+.sched-sky-attr { display: flex; align-items: center; gap: 5px; }
+
+/* Add / Edit window — fixed viewport overlay, above modal stack */
 .sched-add-window {
-  position: absolute; inset: 0;
-  background: rgba(7,10,14,0.88);
-  backdrop-filter: blur(6px);
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.78);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
   display: flex; align-items: center; justify-content: center;
-  z-index: 10; padding: 16px;
+  z-index: 210; padding: 20px;
 }
 .sched-add-card {
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: 8px; width: 100%; max-width: 560px;
-  max-height: 100%; overflow-y: auto;
-  display: flex; flex-direction: column; box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  background: rgba(10,12,22,0.88);
+  backdrop-filter: blur(40px) saturate(170%);
+  -webkit-backdrop-filter: blur(40px) saturate(170%);
+  border: var(--glass-border);
+  border-radius: 18px; width: 100%; max-width: 580px;
+  max-height: 90vh; overflow-y: auto;
+  display: flex; flex-direction: column;
+  box-shadow: var(--glass-shine), 0 24px 80px rgba(0,0,0,0.9);
 }
 .sched-add-card::-webkit-scrollbar { width: 5px; }
-.sched-add-card::-webkit-scrollbar-track { background: var(--bg); }
-.sched-add-card::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.sched-add-card::-webkit-scrollbar-track { background: transparent; }
+.sched-add-card::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
 .sched-add-hdr {
-  padding: 16px 20px 14px; border-bottom: 1px solid var(--border);
+  padding: 16px 22px 14px; border-bottom: var(--glass-border);
   display: flex; align-items: center; justify-content: space-between;
   font-size: 13px; font-weight: bold; letter-spacing: 1px; flex-shrink: 0;
+  background: rgba(255,255,255,0.03); border-radius: 18px 18px 0 0;
+  position: sticky; top: 0; z-index: 1;
 }
-.sched-add-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 13px; }
+.sched-add-section {
+  padding: 16px 22px; border-bottom: var(--glass-border);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sched-add-section-lbl {
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 2px;
+}
 .sched-add-foot {
-  padding: 14px 20px; border-top: 1px solid var(--border);
+  padding: 14px 22px; border-top: var(--glass-border);
   display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0;
+  background: rgba(255,255,255,0.02); border-radius: 0 0 18px 18px;
+  position: sticky; bottom: 0; z-index: 1;
 }
 .sched-hint {
   font-size: 10px; color: var(--dim); padding: 8px 12px;
   border: 1px solid var(--border); border-left: 3px solid var(--blue);
-  background: rgba(88,166,255,0.04); line-height: 1.7;
+  background: rgba(88,166,255,0.04); line-height: 1.75; border-radius: 0 3px 3px 0;
 }
 .sched-hint strong { color: var(--text); }
+.sched-alt-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; padding: 3px 10px; border-radius: 3px;
+  border: 1px solid var(--border); color: var(--dim); letter-spacing: 0.5px;
+}
+.sched-alt-pill.good   { border-color: var(--green);  color: var(--green);  background: rgba(63,185,80,0.07); }
+.sched-alt-pill.ok     { border-color: var(--yellow); color: var(--yellow); background: rgba(210,153,34,0.07); }
+.sched-alt-pill.bad    { border-color: var(--red);    color: var(--red);    background: rgba(248,81,73,0.07); }
+.sched-alt-pill.none   { border-color: var(--gray);   color: var(--gray); }
 
 /* Timeline block colours */
 .sc0 { background: rgba(63,185,80,0.75);   color: #fff; }
@@ -2491,11 +2592,12 @@ body {
   color:var(--gray);font-size:12px;letter-spacing:2px;padding:60px;text-align:center;
 }
 .hist-card {
-  background:var(--surface2);border:1px solid var(--border);
-  border-radius:4px;overflow:hidden;cursor:pointer;
-  transition:border-color 0.15s,transform 0.12s;display:flex;flex-direction:column;
+  background:rgba(255,255,255,0.03);border:var(--glass-border);
+  border-radius:12px;overflow:hidden;cursor:pointer;
+  box-shadow:var(--glass-shine);
+  transition:border-color 0.15s,transform 0.15s,box-shadow 0.15s;display:flex;flex-direction:column;
 }
-.hist-card:hover { border-color:var(--blue);transform:translateY(-2px); }
+.hist-card:hover { border-color:rgba(68,138,255,0.4);transform:translateY(-3px);box-shadow:var(--glass-shine),0 8px 24px rgba(68,138,255,0.2); }
 .hist-thumb {
   width:100%;aspect-ratio:1;background:#000;
   display:flex;align-items:center;justify-content:center;overflow:hidden;
@@ -2529,6 +2631,44 @@ body {
 }
 .hist-lb-meta strong { color:var(--text); }
 .hist-lb-btns { display:flex;gap:10px; }
+
+/* ── Night-vision mode (red monochrome) ── */
+html[data-night] {
+  --bg:        #050000;
+  --surface:   rgba(30, 4, 4, 0.65);
+  --surface2:  rgba(40, 6, 6, 0.75);
+  --border:    rgba(200, 0, 0, 0.15);
+  --glass-border: 1px solid rgba(200,0,0,0.12);
+  --green:     #cc1100;
+  --green-hi:  #ff3300;
+  --yellow:    #991100;
+  --red:       #ff2200;
+  --blue:      #aa1100;
+  --gray:      #4a2020;
+  --text:      #ff8080;
+  --dim:       #882020;
+}
+html[data-night] body::before {
+  background: radial-gradient(ellipse 90% 55% at 50% 35%, rgba(80,8,8,0.35) 0%, transparent 70%);
+}
+html[data-night] .hdr-logo { color: var(--green-hi); }
+html[data-night] img, html[data-night] video { filter: none; }
+
+/* ── Alt sparkline canvas ── */
+.sched-sparkline {
+  flex-shrink: 0; border-radius: 4px; display: block;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.3);
+}
+
+/* ── Exposure ring ── */
+.exp-ring-wrap {
+  display: flex; align-items: center; gap: 14px;
+}
+.exp-ring {
+  flex-shrink: 0; display: none;
+}
+.exp-ring.active { display: block; }
 </style>
 </head>
 <body>
@@ -2565,6 +2705,7 @@ body {
   <div id="errBanner" style="display:none;color:var(--red);font-size:11px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title=""></div>
 
   <div class="hdr-right">
+    <button class="btn btn-dim" id="btnNightMode" onclick="toggleNightMode()" title="Toggle night-vision mode" style="font-size:13px;padding:4px 10px;letter-spacing:0;">👁</button>
     <button class="btn btn-dim" id="btnHdrTel" onclick="openTelescopeModal()">
       <span class="dot dot-gray" id="telDot" style="vertical-align:middle;margin-right:5px;"></span>Telescope
     </button>
@@ -2572,7 +2713,7 @@ body {
       <span class="dot dot-gray" id="camDot" style="vertical-align:middle;margin-right:5px;"></span>Camera
     </button>
     <button class="btn btn-dim" id="btnConfig" onclick="openConfigModal()">Config</button>
-    <button class="btn btn-dim" id="btnSchedule" onclick="openScheduleModal()" style="border-color:var(--blue);color:var(--blue);">🗓 Schedule</button>
+    <button class="btn btn-dim" id="btnSchedule" onclick="openScheduleModal()" style="border-color:var(--blue);color:var(--blue);display:none;">🗓 Schedule</button>
     <button class="btn btn-dim" id="btnHistory"  onclick="openHistoryModal()" style="border-color:var(--yellow);color:var(--yellow);position:relative;">
       📷 History<span id="histBadge" style="display:none;position:absolute;top:-5px;right:-5px;background:var(--yellow);color:#000;border-radius:50%;width:16px;height:16px;font-size:9px;display:none;align-items:center;justify-content:center;font-weight:bold;"></span>
     </button>
@@ -2672,6 +2813,9 @@ body {
       <button class="btn btn-green" onclick="schedOpenAdd(null)" style="flex-shrink:0;font-size:11px;">+ Add Observation</button>
       <button class="modal-close" onclick="closeScheduleModal()">×</button>
     </div>
+
+    <!-- Sky conditions bar (shown when location is configured) -->
+    <div class="sched-sky-bar" id="schedSkyBar"></div>
 
     <!-- Timeline -->
     <div class="sched-tl-wrap">
@@ -2858,10 +3002,23 @@ body {
     </div>
 
     <!-- State display -->
-    <div style="display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 12px;">
-      <div class="cam-state cs-idle" id="camModalState">—</div>
-      <div class="cam-sub" id="camModalSub"></div>
-      <div id="camModalReady" style="font-size:11px;color:var(--gray)"></div>
+    <div style="border-bottom: 1px solid var(--border); padding-bottom: 12px;">
+      <div class="exp-ring-wrap">
+        <div>
+          <div class="cam-state cs-idle" id="camModalState">—</div>
+          <div class="cam-sub" id="camModalSub"></div>
+          <div id="camModalReady" style="font-size:11px;color:var(--gray)"></div>
+        </div>
+        <svg id="expRing" class="exp-ring" width="72" height="72" viewBox="0 0 72 72">
+          <circle cx="36" cy="36" r="30" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="5"/>
+          <circle id="expRingArc" cx="36" cy="36" r="30" fill="none"
+            stroke="var(--yellow)" stroke-width="5" stroke-linecap="round"
+            stroke-dasharray="188.5" stroke-dashoffset="0"
+            transform="rotate(-90 36 36)" style="transition:stroke 0.3s;"/>
+          <text id="expRingText" x="36" y="40" text-anchor="middle"
+            fill="var(--text)" font-size="11" font-family="monospace" letter-spacing="0">—</text>
+        </svg>
+      </div>
     </div>
 
     <!-- Exposure controls -->
@@ -3346,7 +3503,7 @@ body {
 </div>
 
 <!-- Discovery overlay -->
-<div class="overlay hidden" id="overlay" onclick="if(event.target===this)hideDiscover()">
+<div class="overlay hidden" id="overlay">
   <div class="card">
     <div class="card-title">Connect to ALPACA Server</div>
     <button class="btn btn-blue" id="scanBtn" onclick="doScan()" style="width:100%">
@@ -3359,9 +3516,13 @@ body {
       <input class="inp" id="mHost" placeholder="192.168.1.x" style="flex:1">
       <input class="inp" id="mPort" placeholder="11111" style="width:80px">
     </div>
+    <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-top:2px;">
+      <input type="checkbox" id="permCheckbox" onchange="onPermCheckChange()" style="margin-top:2px;accent-color:var(--green);width:15px;height:15px;flex-shrink:0;cursor:pointer;">
+      <label for="permCheckbox" style="color:var(--dim);font-size:11px;cursor:pointer;line-height:1.5;">I certify that I have permission to connect to this telescope server with the consent of the telescope owner.</label>
+    </div>
     <div style="display:flex;gap:8px;">
-      <button class="btn btn-green" onclick="doManualConnect()" style="flex:1">Connect</button>
-      <button class="btn btn-dim"   onclick="hideDiscover()">Cancel</button>
+      <button class="btn btn-green" id="btnManualConnect" onclick="doManualConnect()" style="flex:1" disabled>Connect</button>
+      <button class="btn btn-dim" id="btnOverlayCancel" onclick="hideDiscover()" style="display:none">Cancel</button>
     </div>
   </div>
 </div>
@@ -3436,11 +3597,14 @@ document.addEventListener("keydown", (e) => {
     closeConfigModal();
     closeScheduleModal();
     closeHistoryModal();
-    hideDiscover();
+    if (_lastConnected) hideDiscover(); // only dismissable when connected
   }
 });
 
 // ── Header ──────────────────────────────────────────────────────────────────
+
+let _overlayAutoShown = false;
+let _lastConnected    = false;
 
 function renderHeader(s) {
   const dot   = document.getElementById("connDot");
@@ -3456,18 +3620,40 @@ function renderHeader(s) {
     srv.classList.add("hidden");
   }
 
+  const discoverBtn = document.getElementById("btnDiscover");
+
   if (s.connected) {
     dot.className    = "dot dot-green";
     label.textContent = "Connected";
     pill.classList.add("clickable");
     pill.onclick = toggleConnDropdown;
+    // Change Discover → Connection
+    discoverBtn.textContent = "Connection";
+    discoverBtn.className   = "btn btn-green";
+    discoverBtn.onclick     = showDiscover;
+    // Close blocking overlay now that we're connected
+    document.getElementById("overlay").classList.add("hidden");
   } else {
     dot.className    = "dot dot-gray";
     label.textContent = "Disconnected";
     pill.classList.remove("clickable");
     pill.onclick = null;
     document.getElementById("connDropdown").classList.remove("open");
+    // Restore Discover button
+    discoverBtn.textContent = "Discover";
+    discoverBtn.className   = "btn btn-blue";
+    discoverBtn.onclick     = showDiscover;
+    // Auto-show blocking overlay the first time we detect disconnected state
+    if (!_overlayAutoShown) {
+      _overlayAutoShown = true;
+      showDiscover();
+    }
   }
+
+  _lastConnected = Boolean(s.connected);
+  // Keep cancel button in sync with connection state
+  const cancelBtn = document.getElementById("btnOverlayCancel");
+  if (cancelBtn) cancelBtn.style.display = _lastConnected ? "" : "none";
 
   const errBanner = document.getElementById("errBanner");
   if (s.error) {
@@ -3477,6 +3663,10 @@ function renderHeader(s) {
   } else {
     errBanner.style.display = "none";
   }
+
+  // Schedule button only visible when connected to an ALPACA server
+  const schedBtn = document.getElementById("btnSchedule");
+  if (schedBtn) schedBtn.style.display = s.connected ? "" : "none";
 }
 
 // ── Safety ──────────────────────────────────────────────────────────────────
@@ -4825,20 +5015,36 @@ es.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
 
 // ── Discovery overlay ────────────────────────────────────────────────────────
 
+function onPermCheckChange() {
+  const checked = document.getElementById("permCheckbox").checked;
+  document.getElementById("btnManualConnect").disabled = !checked;
+  document.querySelectorAll(".srv-item").forEach(item => {
+    item.style.pointerEvents = checked ? "auto" : "none";
+    item.style.opacity       = checked ? "1"    : "0.4";
+  });
+}
+
 function showDiscover() {
-  document.getElementById("overlay").classList.remove("hidden");
-  document.getElementById("btnDiscover").textContent = "● Scanning";
+  const overlay = document.getElementById("overlay");
+  overlay.classList.remove("hidden");
+  // Reset permission checkbox each time overlay opens
+  document.getElementById("permCheckbox").checked = false;
+  onPermCheckChange();
+  // Show cancel button only when already connected
+  document.getElementById("btnOverlayCancel").style.display = _lastConnected ? "" : "none";
   doScan();
 }
+
 function hideDiscover() {
+  if (!_lastConnected) return; // cannot dismiss before connecting
   document.getElementById("overlay").classList.add("hidden");
-  document.getElementById("btnDiscover").textContent = "Discover";
 }
 
 async function doScan() {
   const btn = document.getElementById("scanBtn");
   btn.textContent = "Scanning…"; btn.disabled = true;
   document.getElementById("srvList").innerHTML = "";
+  const permOk = document.getElementById("permCheckbox").checked;
   try {
     const r    = await fetch("/api/discover", { method: "POST" });
     const data = await r.json();
@@ -4846,9 +5052,11 @@ async function doScan() {
     if (data.servers?.length) {
       data.servers.forEach(srv => {
         const item = document.createElement("div");
-        item.className   = "srv-item";
-        item.textContent = `${srv.address}:${srv.port}`;
-        item.onclick     = () => connectTo(srv.address, srv.port);
+        item.className        = "srv-item";
+        item.textContent      = `${srv.address}:${srv.port}`;
+        item.style.opacity        = permOk ? "1"    : "0.4";
+        item.style.pointerEvents  = permOk ? "auto" : "none";
+        item.onclick = () => connectTo(srv.address, srv.port);
         list.appendChild(item);
       });
     } else {
@@ -4859,13 +5067,10 @@ async function doScan() {
       '<div style="color:var(--red);font-size:12px;">Discovery request failed.</div>';
   }
   btn.textContent = "Scan LAN for servers"; btn.disabled = false;
-  const discoverBtn = document.getElementById("btnDiscover");
-  if (discoverBtn && document.getElementById("overlay").classList.contains("hidden")) {
-    discoverBtn.textContent = "Discover";
-  }
 }
 
 async function doManualConnect() {
+  if (!document.getElementById("permCheckbox").checked) return;
   const host = document.getElementById("mHost").value.trim();
   const port = parseInt(document.getElementById("mPort").value.trim() || "11111");
   if (!host) return;
@@ -4873,7 +5078,8 @@ async function doManualConnect() {
 }
 
 async function connectTo(host, port) {
-  hideDiscover();
+  if (!document.getElementById("permCheckbox").checked) return;
+  document.getElementById("overlay").classList.add("hidden");
   try {
     const r = await fetch("/api/connect", {
       method: "POST",
@@ -4884,6 +5090,8 @@ async function connectTo(host, port) {
     if (!d.ok) throw new Error(d.error || "failed");
   } catch (e) {
     alert("Connection failed: " + e.message);
+    // If connect failed and not connected, re-show blocking overlay
+    if (!_lastConnected) showDiscover();
   }
 }
 
@@ -5178,12 +5386,17 @@ let _schedCatIdx = -1;
 
 const _SC = ['sc0','sc1','sc2','sc3','sc4','sc5','sc6','sc7'];
 
+let _schedTickInterval = null;
+
 function openScheduleModal() {
   document.getElementById("schedModal").classList.remove("hidden");
   schedLoadCat();
   schedRebuild();
-  setInterval(schedTickNow, 60000);
+  if (!_schedTickInterval) {
+    _schedTickInterval = setInterval(schedTickNow, 60000);
+  }
   schedTickNow();
+  schedFetchSiteAndSky();
 }
 
 function closeScheduleModal() {
@@ -5434,22 +5647,20 @@ function schedOpenAdd(editId) {
   _schedEditId = editId;
   const ex = editId ? _schedule.find(x => x.id === editId) : null;
 
-  // Compute a sensible default start time
+  // Compute default start time (end of last scheduled item)
   let defStart = document.getElementById("schedNightStart").value;
   if (!ex && _schedule.length > 0) {
     const { s } = schedNight();
-    const sorted = [..._schedule].sort((a,b) => {
-      let am = schedT2M(a.startTime); if (am < s - 120) am += 1440;
-      let bm = schedT2M(b.startTime); if (bm < s - 120) bm += 1440;
+    const srt = [..._schedule].sort((a,b) => {
+      let am = schedT2M(a.startTime); if (am < s-120) am += 1440;
+      let bm = schedT2M(b.startTime); if (bm < s-120) bm += 1440;
       return am - bm;
     });
-    const last = sorted[sorted.length-1];
-    let lastM  = schedT2M(last.startTime);
-    if (lastM < s - 120) lastM += 1440;
-    defStart = schedM2T(lastM + schedDur(last));
+    const last = srt[srt.length-1];
+    let lm = schedT2M(last.startTime); if (lm < s-120) lm += 1440;
+    defStart = schedM2T(lm + schedDur(last));
   }
 
-  // Remove any existing window
   const old = document.getElementById("schedAddWindow");
   if (old) old.remove();
 
@@ -5458,113 +5669,132 @@ function schedOpenAdd(editId) {
   win.id = "schedAddWindow";
 
   const hintMsg = ex
-    ? "Editing an existing observation. Adjust settings and save."
+    ? "Edit target, timing, or exposure settings, then save."
     : (_schedule.length > 0
-        ? `${_schedule.length} observation${_schedule.length>1?"s are":" is"} already scheduled. Suggested start time auto-filled.`
-        : "Search the object catalog or enter coordinates directly.");
+        ? `${_schedule.length} observation${_schedule.length>1?"s":"" } already planned — suggested start time auto-filled.`
+        : "Search the object catalog, or type RA/Dec directly.");
+
+  // Compute altitude pill for edit mode
+  let altPill = "";
+  if (ex && _schedSiteLat !== null) {
+    const obsDate = schedMinToDate(schedT2M(ex.startTime));
+    const alt = computeAltitude(ex.ra, ex.dec, _schedSiteLat, _schedSiteLon, obsDate);
+    const cls = alt >= 40 ? "good" : alt >= 20 ? "ok" : "bad";
+    altPill = `<span class="sched-alt-pill ${cls}">▲ ${alt.toFixed(1)}° at start</span>`;
+  }
 
   win.innerHTML = `
     <div class="sched-add-card">
       <div class="sched-add-hdr">
-        <span>${ex ? "✏ Edit Observation" : "➕ Add Observation"}</span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span>${ex ? "✏ Edit Observation" : "➕ Add Observation"}</span>
+          ${altPill}
+        </div>
         <button class="modal-close" onclick="schedCloseAdd()">×</button>
       </div>
-      <div class="sched-add-body">
 
-        <div class="sched-hint">
-          <strong>Adaptive scheduler</strong> — ${escH(hintMsg)}
+      <!-- Hint -->
+      <div class="sched-add-section" style="padding-top:12px;padding-bottom:12px;">
+        <div class="sched-hint"><strong>Adaptive scheduler</strong> — ${escH(hintMsg)}</div>
+      </div>
+
+      <!-- Target -->
+      <div class="sched-add-section">
+        <div class="sched-add-section-lbl">Target</div>
+        <div style="position:relative;">
+          <input class="inp" id="schedTgtInp" type="text"
+            placeholder="Search M42, Andromeda, nebula, globular…"
+            autocomplete="off" spellcheck="false"
+            value="${ex ? escH(ex.target) : ""}"
+            oninput="schedCatFilter();schedUpdateAltPill()"
+            onfocus="schedCatFilter()"
+            onkeydown="schedCatKeyNav(event)">
+          <div id="schedCatDrop"
+            style="display:none;position:fixed;z-index:9999;background:#161b22;
+              border:1px solid var(--border);border-radius:6px;
+              max-height:220px;overflow-y:auto;box-shadow:0 8px 28px rgba(0,0,0,0.8);"></div>
         </div>
-
-        <!-- Target search -->
-        <div>
-          <div class="inp-label">Target / Object</div>
-          <div style="position:relative;">
-            <input class="inp" id="schedTgtInp" type="text"
-              placeholder="Search M42, Orion Nebula, globular…"
-              autocomplete="off" spellcheck="false"
-              value="${ex ? escH(ex.target) : ""}"
-              oninput="schedCatFilter()" onfocus="schedCatFilter()"
-              onkeydown="schedCatKeyNav(event)">
-            <div id="schedCatDrop" style="display:none;position:fixed;z-index:9999;
-              background:#161b22;border:1px solid var(--border);border-radius:6px;
-              max-height:200px;overflow-y:auto;box-shadow:0 6px 24px rgba(0,0,0,0.75);"></div>
-          </div>
-        </div>
-
-        <!-- Coordinates -->
         <div class="inp-grid">
           <div class="inp-group">
-            <div class="inp-label">R.A. (decimal hours)</div>
+            <div class="inp-label">R.A. (decimal hours, 0–24)</div>
             <input class="inp" id="schedRAInp" type="number"
               min="0" max="23.9999" step="0.0001" placeholder="0.0000"
-              value="${ex ? ex.ra : ""}">
+              value="${ex ? ex.ra : ""}" oninput="schedUpdateAltPill()">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Dec (decimal degrees)</div>
+            <div class="inp-label">Dec (decimal degrees, ±90)</div>
             <input class="inp" id="schedDecInp" type="number"
               min="-90" max="90" step="0.0001" placeholder="0.0000"
-              value="${ex ? ex.dec : ""}">
+              value="${ex ? ex.dec : ""}" oninput="schedUpdateAltPill()">
           </div>
         </div>
-
-        <!-- Start time -->
-        <div class="inp-group">
-          <div class="inp-label">Start Time</div>
-          <input class="inp" id="schedStartInp" type="time"
-            value="${ex ? ex.startTime : defStart}"
-            style="font-size:16px;padding:6px 12px;width:auto;color:var(--green-hi);font-weight:bold;">
-        </div>
-
-        <!-- Exposures -->
-        <div>
-          <div class="inp-label" style="margin-bottom:8px;">Exposures</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
-            <div class="inp-group">
-              <div class="inp-label">Duration (s)</div>
-              <input class="inp" id="schedExpDurInp" type="number"
-                min="0.1" step="0.1" placeholder="60"
-                value="${ex ? ex.expDur : 60}"
-                oninput="schedUpdateEstimate()">
-            </div>
-            <div class="inp-group">
-              <div class="inp-label">Count</div>
-              <input class="inp" id="schedExpCntInp" type="number"
-                min="1" step="1" placeholder="10"
-                value="${ex ? ex.expCount : 10}"
-                oninput="schedUpdateEstimate()">
-            </div>
-            <div class="inp-group">
-              <div class="inp-label">Binning</div>
-              <input class="inp" id="schedBinInp" type="number"
-                min="1" max="8" step="1" placeholder="1"
-                value="${ex ? ex.binning : 1}">
-            </div>
-          </div>
-          <div id="schedEstEl" style="font-size:10px;color:var(--dim);margin-top:6px;padding:6px 0;border-top:1px solid var(--border);"></div>
-        </div>
-
-        <!-- Note -->
-        <div class="inp-group">
-          <div class="inp-label">Note (optional)</div>
-          <input class="inp" id="schedNoteInp" type="text"
-            placeholder="e.g. Use Ha filter, guide on nearby star…"
-            value="${ex ? escH(ex.note || "") : ""}">
-        </div>
-
+        <div id="schedAltRow" style="display:flex;align-items:center;gap:10px;min-height:22px;"></div>
       </div>
+
+      <!-- Timing -->
+      <div class="sched-add-section">
+        <div class="sched-add-section-lbl">Timing</div>
+        <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+          <div class="inp-group" style="flex:0 0 auto;">
+            <div class="inp-label">Start Time</div>
+            <input class="inp" id="schedStartInp" type="time"
+              value="${ex ? ex.startTime : defStart}"
+              style="font-size:15px;padding:6px 12px;color:var(--green-hi);font-weight:bold;width:auto;"
+              oninput="schedUpdateAltPill()">
+          </div>
+          <div id="schedEstEl" style="font-size:11px;color:var(--dim);padding-bottom:8px;line-height:1.7;"></div>
+        </div>
+      </div>
+
+      <!-- Exposures -->
+      <div class="sched-add-section">
+        <div class="sched-add-section-lbl">Exposure Settings</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+          <div class="inp-group">
+            <div class="inp-label">Duration (s)</div>
+            <input class="inp" id="schedExpDurInp" type="number"
+              min="0.1" step="0.1" placeholder="60"
+              value="${ex ? ex.expDur : (_schedSkyData && _schedSkyData.cloudCover > 60 ? 120 : 60)}"
+              oninput="schedUpdateEstimate()">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Frame Count</div>
+            <input class="inp" id="schedExpCntInp" type="number"
+              min="1" step="1" placeholder="10"
+              value="${ex ? ex.expCount : 10}"
+              oninput="schedUpdateEstimate()">
+          </div>
+          <div class="inp-group">
+            <div class="inp-label">Binning</div>
+            <input class="inp" id="schedBinInp" type="number"
+              min="1" max="8" step="1" placeholder="1"
+              value="${ex ? ex.binning : 1}">
+          </div>
+        </div>
+      </div>
+
+      <!-- Note -->
+      <div class="sched-add-section" style="border-bottom:none;">
+        <div class="sched-add-section-lbl">Note (optional)</div>
+        <input class="inp" id="schedNoteInp" type="text"
+          placeholder="e.g. Use Hα filter, guide on HD 1234…"
+          value="${ex ? escH(ex.note || "") : ""}">
+      </div>
+
       <div class="sched-add-foot">
         <button class="btn btn-dim" onclick="schedCloseAdd()">Cancel</button>
         <button class="btn btn-green" onclick="schedSave()">${ex ? "Save Changes" : "Add to Schedule"}</button>
       </div>
     </div>`;
 
-  document.getElementById("schedBody").appendChild(win);
+  // Attach to body so it's not clipped by any scrolling parent
+  document.body.appendChild(win);
 
-  // Focus
   setTimeout(() => {
     const inp = document.getElementById("schedTgtInp");
     if (inp) { inp.focus(); if (!ex) inp.select(); }
     schedUpdateEstimate();
+    schedUpdateAltPill();
   }, 30);
 }
 
@@ -5720,59 +5950,233 @@ document.addEventListener("click", ev => {
 
 // ── Auto-fill ─────────────────────────────────────────────────────────────────
 
-function schedAutoFill() {
-  if (!_schedCat || !_schedCat.length) {
-    schedLoadCat().then(schedAutoFill);
-    return;
+// ── Astronomy helpers ─────────────────────────────────────────────────────────
+
+function dateToJD(date) {
+  return date.getTime() / 86400000 + 2440587.5;
+}
+
+function computeAltitude(ra_h, dec_deg, lat_deg, lon_deg, date) {
+  if (lat_deg == null || lon_deg == null) return 45;
+  const toRad = d => d * Math.PI / 180;
+  const JD = dateToJD(date);
+  const T  = (JD - 2451545.0) / 36525;
+  let GMST = 280.46061837 + 360.98564736629 * (JD - 2451545.0) + 0.000387933 * T * T;
+  GMST = ((GMST % 360) + 360) % 360;
+  const LST = (GMST + lon_deg + 360) % 360;       // degrees
+  const HA  = (LST - ra_h * 15 + 360) % 360;      // degrees
+  const lat = toRad(lat_deg), dec = toRad(dec_deg), ha = toRad(HA);
+  const sinAlt = Math.sin(lat)*Math.sin(dec) + Math.cos(lat)*Math.cos(dec)*Math.cos(ha);
+  return Math.asin(Math.max(-1, Math.min(1, sinAlt))) * 180 / Math.PI;
+}
+
+function schedMinToDate(absMin) {
+  const d = new Date(); d.setHours(0,0,0,0);
+  return new Date(d.getTime() + absMin * 60000);
+}
+
+// ── Site + sky data ───────────────────────────────────────────────────────────
+
+let _schedSiteLat = null;
+let _schedSiteLon = null;
+let _schedSkyData = null;
+
+async function schedFetchSiteAndSky() {
+  try {
+    const r = await fetch("/api/config/parsed");
+    if (!r.ok) return;
+    const cfg = await r.json();
+    const obs = cfg?.safety?.observer || {};
+    const lat = parseFloat(obs.latitude  || obs.lat || 0);
+    const lon = parseFloat(obs.longitude || obs.lon || 0);
+    if (isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) return;
+    _schedSiteLat = lat;
+    _schedSiteLon = lon;
+    await Promise.all([
+      schedFetchTwilight(lat, lon),
+      schedFetchSky(lat, lon),
+    ]);
+  } catch (err) { console.warn("schedFetchSiteAndSky:", err); }
+}
+
+async function schedFetchTwilight(lat, lon) {
+  try {
+    const fmtDate = d => d.toISOString().split("T")[0];
+    const today    = new Date();
+    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+    const [r1, r2] = await Promise.all([
+      fetch(`https://api.sunrise-sunset.org/json?lat=${lat}&lng=${lon}&date=${fmtDate(today)}&formatted=0`),
+      fetch(`https://api.sunrise-sunset.org/json?lat=${lat}&lng=${lon}&date=${fmtDate(tomorrow)}&formatted=0`),
+    ]);
+    if (!r1.ok || !r2.ok) return;
+    const [d1, d2] = await Promise.all([r1.json(), r2.json()]);
+    const fmtHM = dt => `${String(dt.getHours()).padStart(2,"0")}:${String(dt.getMinutes()).padStart(2,"0")}`;
+    // Evening: when sun drops below -18° (astronomical twilight ends) → observing begins
+    const nightStart = fmtHM(new Date(d1.results.astronomical_twilight_end));
+    // Morning: tomorrow's astronomical twilight begin → observing ends
+    const nightEnd   = fmtHM(new Date(d2.results.astronomical_twilight_begin));
+    document.getElementById("schedNightStart").value = nightStart;
+    document.getElementById("schedNightEnd").value   = nightEnd;
+    schedRebuild();
+    schedUpdateSkyBar({ twilight: true, nightStart, nightEnd });
+  } catch (err) { console.warn("schedFetchTwilight:", err); }
+}
+
+async function schedFetchSky(lat, lon) {
+  try {
+    const r = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&hourly=cloudcover,visibility&timezone=auto&forecast_days=1`
+    );
+    if (!r.ok) return;
+    const d = await r.json();
+    const hr = new Date().getHours();
+    // Average cloud cover over the next 10 hours (the observing window)
+    const slice = d.hourly.cloudcover.slice(hr, hr + 10);
+    const avg   = slice.length ? Math.round(slice.reduce((a,b)=>a+b,0)/slice.length) : null;
+    const vis   = d.hourly.visibility ? d.hourly.visibility[hr] : null;
+    _schedSkyData = { cloudCover: avg, visibility: vis };
+    schedUpdateSkyBar(_schedSkyData);
+  } catch (err) { console.warn("schedFetchSky:", err); }
+}
+
+function schedUpdateSkyBar(data) {
+  const bar = document.getElementById("schedSkyBar");
+  if (!bar) return;
+  bar.style.display = "flex";
+  bar.innerHTML = "";
+
+  const add = (icon, label, val, color) => {
+    const el = document.createElement("div");
+    el.className = "sched-sky-attr";
+    el.innerHTML = `<span>${icon}</span><span>${label}: </span><strong style="color:${color||"var(--text)"}">${val}</strong>`;
+    bar.appendChild(el);
+  };
+
+  const cc = data.cloudCover;
+  if (cc != null) {
+    const color = cc < 20 ? "var(--green)" : cc < 50 ? "var(--yellow)" : "var(--red)";
+    const label = cc < 20 ? "Clear" : cc < 50 ? "Partly cloudy" : cc < 80 ? "Cloudy" : "Overcast";
+    add("☁", "Sky", `${label} (${cc}%)`, color);
   }
+  if (data.visibility != null) {
+    add("👁", "Vis", `${(data.visibility/1000).toFixed(0)} km`, "var(--text)");
+  }
+  if (data.nightStart) {
+    add("🌙", "Astro night", `${data.nightStart} → ${data.nightEnd}`, "var(--blue)");
+  }
+  if (_schedSiteLat !== null) {
+    add("📍", "Site", `${_schedSiteLat.toFixed(2)}°, ${_schedSiteLon.toFixed(2)}°`, "var(--dim)");
+  }
+  const src = document.createElement("span");
+  src.style.cssText = "margin-left:auto;font-size:9px;color:var(--gray);";
+  src.textContent = "open-meteo.com · sunrise-sunset.org";
+  bar.appendChild(src);
+}
+
+// ── Altitude pill in add/edit form ────────────────────────────────────────────
+
+function schedUpdateAltPill() {
+  const ra  = parseFloat(document.getElementById("schedRAInp")?.value);
+  const dec = parseFloat(document.getElementById("schedDecInp")?.value);
+  const t   = document.getElementById("schedStartInp")?.value;
+  const row = document.getElementById("schedAltRow");
+  if (!row) return;
+  row.innerHTML = "";
+  if (isNaN(ra) || isNaN(dec) || !t || _schedSiteLat == null) return;
+  const absMin = schedT2M(t);
+  const date   = schedMinToDate(absMin);
+  const alt    = computeAltitude(ra, dec, _schedSiteLat, _schedSiteLon, date);
+  const cls    = alt >= 40 ? "good" : alt >= 20 ? "ok" : "bad";
+  const label  = alt >= 40 ? "Good altitude" : alt >= 20 ? "Low but visible" : "Below recommended horizon";
+  row.innerHTML = `<span class="sched-alt-pill ${cls}">▲ ${alt.toFixed(1)}° — ${label}</span>`;
+}
+
+// ── Adaptive auto-fill (entire night, altitude-scored) ────────────────────────
+
+async function schedAutoFill() {
+  if (!_schedCat || !_schedCat.length) {
+    await schedLoadCat();
+    if (!_schedCat || !_schedCat.length) { alert("Catalog not loaded yet."); return; }
+  }
+
   const { s, e } = schedNight();
   const GOOD = new Set(["Galaxy","Nebula","Emission Nebula","Reflection Nebula",
     "Planetary Nebula","Open Cluster","Globular Cluster","Supernova Remnant",
-    "HII Ionized region"]);
+    "HII Ionized region","Double star","Association of stars"]);
 
-  // Find next available slot
+  // Adapt exposure defaults to sky conditions
+  const cc = _schedSkyData?.cloudCover ?? 0;
+  const expDur   = cc > 60 ? 120 : cc > 30 ? 90 : 60;
+  const expCount = cc > 60 ? 5   : cc > 30 ? 7  : 10;
+
+  // Find first free slot
   let next = s;
   if (_schedule.length > 0) {
-    const sorted = [..._schedule].sort((a,b) => {
+    const srt = [..._schedule].sort((a,b) => {
       let am = schedT2M(a.startTime); if (am < s-120) am += 1440;
       let bm = schedT2M(b.startTime); if (bm < s-120) bm += 1440;
       return am - bm;
     });
-    const last = sorted[sorted.length-1];
-    let lastM = schedT2M(last.startTime);
-    if (lastM < s-120) lastM += 1440;
-    next = lastM + schedDur(last);
+    const last = srt[srt.length-1];
+    let lm = schedT2M(last.startTime); if (lm < s-120) lm += 1440;
+    next = lm + schedDur(last);
   }
 
   const usedIds = new Set(_schedule.map(x => x.target.split(" –")[0].trim()));
+  const minSlot = Math.ceil(expDur * expCount / 60) + 2;
   let added = 0;
 
-  while (next + 15 <= e && added < 6) {
+  while (next + minSlot <= e) {
     const pool = _schedCat.filter(o => GOOD.has(o.type) && !usedIds.has(o.id));
     if (!pool.length) break;
-    const obj = pool[Math.floor(Math.random() * Math.min(80, pool.length))];
-    const item = {
-      id:        "sc" + Date.now() + "_" + added,
-      target:    obj.id + (obj.name ? " – " + obj.name : ""),
-      objType:   obj.type,
-      ra:        obj.ra,
-      dec:       obj.dec,
+
+    const obsDate = schedMinToDate(next);
+
+    // Score candidates by altitude at observation time
+    // Sample ≤300 objects for performance; the catalog is sorted by Messier then NGC order
+    // so earlier entries tend to be well-known / brighter objects
+    const sample = pool.length > 300
+      ? pool.slice(0, 150).concat(pool.slice(150).sort(() => Math.random()-0.5).slice(0, 150))
+      : pool;
+
+    let best = null, bestScore = -999;
+    for (const obj of sample) {
+      const alt = computeAltitude(obj.ra, obj.dec, _schedSiteLat, _schedSiteLon, obsDate);
+      if (alt < 20) continue;                  // must clear horizon
+      // Prefer altitudes 40–70° (avoids extreme airmass and polar-region issues)
+      const altScore = alt > 75 ? 150 - alt : alt;
+      if (altScore > bestScore) { bestScore = altScore; best = obj; }
+    }
+
+    if (!best) {
+      // Nothing above 20° — try best available (may be low but schedulable)
+      for (const obj of sample) {
+        const alt = computeAltitude(obj.ra, obj.dec, _schedSiteLat, _schedSiteLon, obsDate);
+        if (alt > bestScore) { bestScore = alt; best = obj; }
+      }
+    }
+    if (!best) break;
+
+    const noteCC = cc > 30 ? ` (${cc}% cloud)` : "";
+    _schedule.push({
+      id:        `sc${Date.now()}_${added}`,
+      target:    best.id + (best.name ? " – " + best.name : ""),
+      objType:   best.type,
+      ra:        best.ra, dec: best.dec,
       startTime: schedM2T(next),
-      expDur:    60,
-      expCount:  10,
-      binning:   1,
-      note:      "Auto-filled",
+      expDur, expCount, binning: 1,
+      note:      `Auto-filled${noteCC}`,
       color:     _SC[_schedColorN++ % _SC.length],
       _conflict: false,
-    };
-    _schedule.push(item);
-    usedIds.add(obj.id);
-    next += schedDur(item);
+    });
+    usedIds.add(best.id);
+    next += schedDur(_schedule[_schedule.length-1]);
     added++;
   }
 
-  if (!added) alert("Night is fully scheduled or no suitable objects found.");
-  schedRebuild();
+  if (!added) alert("Night is already fully scheduled or no suitable objects found.");
+  else schedRebuild();
 }
 
 // ── Run schedule ──────────────────────────────────────────────────────────────
