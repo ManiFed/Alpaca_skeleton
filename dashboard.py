@@ -25,7 +25,7 @@ from pyongc.ongc import listObjects as _ongc_list
 from alpaca.discovery import discover_servers
 from alpaca.safety_manager import SafetyManager
 from alpaca.telescope import Telescope
-from alpaca.camera import Camera
+from alpaca.camera import Camera, ExposureCancelled
 from image_watcher import ImageWatcher
 from photometry import run_pipeline as _run_photometry
 from aavso_submission import submit as _aavso_submit
@@ -189,6 +189,16 @@ _tel: Optional[Telescope] = None
 _cam: Optional[Camera] = None
 _last_image_b64: Optional[str] = None
 _last_image_lock = threading.Lock()
+
+# Serializes all state-changing device commands (slew/park/expose/etc.) so the
+# scheduler, manual UI routes, and horizon scan can't drive the mount/camera
+# concurrently.  Read-only polling (the poller loop) and abort/emergency-park
+# intentionally do NOT take this lock — they must be able to interrupt.
+_device_lock = threading.RLock()
+
+# Set to request cancellation of an in-flight manual exposure.  Cleared at the
+# start of each manual exposure.
+_expose_cancel = threading.Event()
 
 _pier_cam_frame: Optional[bytes] = None
 _pier_cam_frame_lock = threading.Lock()
@@ -410,6 +420,12 @@ _safety_mgr: Optional[SafetyManager] = None
 
 def _on_safety_unsafe() -> None:
     reason = _safety_mgr.status()["reason"] if _safety_mgr else "unknown"
+    # Wind down any in-flight work so the emergency park (which runs lock-free)
+    # isn't fighting a scheduled slew/exposure for the device.
+    _expose_cancel.set()
+    with _sched_lock:
+        if _sched_state["running"]:
+            _sched_state["cancelled"] = True
     with _state_lock:
         _state["error"] = f"Safety stop: {reason}"
     logger.critical("Safety manager triggered: %s", reason)
@@ -457,8 +473,12 @@ def _count_stars_in_array(image_array) -> int:
             return 0
 
 
-def _wait_slew_complete(timeout: float = 120.0) -> None:
-    """Block until the telescope stops slewing (or times out)."""
+def _wait_slew_complete(timeout: float = 120.0) -> bool:
+    """Block until the telescope stops slewing.
+
+    Returns True if the mount reported Slewing=False before the timeout,
+    False if it timed out (caller should treat the pointing as unreliable).
+    """
     # Brief window for the async command to be accepted and slewing to begin
     start = time.monotonic()
     while time.monotonic() - start < 6:
@@ -473,10 +493,46 @@ def _wait_slew_complete(timeout: float = 120.0) -> None:
     while time.monotonic() < deadline:
         try:
             if _tel and not _tel.is_slewing():
-                return
+                return True
         except Exception:
             pass
         time.sleep(0.5)
+    logger.warning("Slew did not complete within %.0f s", timeout)
+    return False
+
+
+def _slew_rejection(ra_h: float, dec_d: float) -> Optional[str]:
+    """Return a human-readable reason a RA/Dec slew should be refused, or None.
+
+    Gates on the SafetyManager's overall safe state and on the configured
+    horizon mask.  Used by both the manual slew route and the scheduler so the
+    two paths enforce identical safety rules.
+    """
+    if _safety_mgr is not None and not _safety_mgr.is_safe():
+        reason = _safety_mgr.status().get("reason") or "unknown"
+        return f"system is in an unsafe state ({reason})"
+
+    if _safety_mgr is not None and _safety_mgr._horizon_mask:
+        cfg = _load_config()
+        obs = cfg.get("safety", {}).get("observer", {})
+        lat = float(obs.get("latitude", 0.0))
+        lon = float(obs.get("longitude", 0.0))
+        if lat != 0.0 or lon != 0.0:
+            try:
+                from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+                from astropy.time import Time
+                import astropy.units as u
+                loc = EarthLocation(lat=lat * u.deg, lon=lon * u.deg)
+                frame = AltAz(obstime=Time.now(), location=loc)
+                coord = SkyCoord(ra=ra_h * 15.0 * u.deg, dec=dec_d * u.deg).transform_to(frame)
+                alt, az = float(coord.alt.deg), float(coord.az.deg)
+                if not _safety_mgr.is_pointing_safe(alt, az):
+                    min_alt = _safety_mgr.min_safe_altitude(az)
+                    return (f"horizon mask: Alt {alt:.1f}° is below the "
+                            f"{min_alt:.1f}° limit at Az {az:.1f}°")
+            except Exception as exc:
+                logger.debug("Horizon-mask RA/Dec check skipped: %s", exc)
+    return None
 
 
 def _scan_slew_to(alt: float, az: float) -> None:
@@ -486,7 +542,8 @@ def _scan_slew_to(alt: float, az: float) -> None:
     Blocks until the slew completes.
     """
     try:
-        _tel.begin_slew_altaz(alt, az)
+        with _device_lock:
+            _tel.begin_slew_altaz(alt, az)
         _wait_slew_complete()
         return
     except Exception as exc:
@@ -504,7 +561,8 @@ def _scan_slew_to(alt: float, az: float) -> None:
     frame = AltAz(obstime=Time.now(), location=loc)
     coord = SkyCoord(alt=alt * u.deg, az=az * u.deg, frame=frame)
     eq    = coord.icrs
-    _tel.slew_to_coordinates(float(eq.ra.deg) / 15.0, float(eq.dec.deg))
+    with _device_lock:
+        _tel.slew_to_coordinates(float(eq.ra.deg) / 15.0, float(eq.dec.deg))
 
 
 def _run_horizon_scan(
@@ -574,8 +632,9 @@ def _run_horizon_scan(
                 # ── expose + count ────────────────────────────────────────────
                 stars: Optional[int] = None
                 try:
-                    _cam.expose(exposure_s, readout_timeout=60.0)
-                    img = _cam.image_array()
+                    with _device_lock:
+                        _cam.expose(exposure_s, readout_timeout=60.0)
+                        img = _cam.image_array()
                     stars = _count_stars_in_array(img)
                     logger.info("Scan: Alt=%.1f Az=%.1f → %d stars", alt, az, stars)
                 except Exception as exc:
@@ -887,33 +946,48 @@ def api_connect():
         _state["server"]    = {"address": host, "port": port}
         _state["connected"] = False
 
+    tel_ok = cam_ok = False
+    errors: list[str] = []
+
     if devices.get("telescope", {}).get("enabled", False):
         num = devices["telescope"].get("device_number", 0)
         try:
             _tel = Telescope(host, port, num, api_ver)
             _tel.connect()
+            tel_ok = True
             with _state_lock:
                 _state["telescope"].update(enabled=True, connected=True)
             if _safety_mgr is not None:
                 _safety_mgr.attach_telescope(_tel)
         except Exception as exc:
             logger.error("Telescope connect failed: %s", exc)
+            errors.append(f"telescope: {exc}")
+            _tel = None
 
     if devices.get("camera", {}).get("enabled", False):
         num = devices["camera"].get("device_number", 0)
         try:
             _cam = Camera(host, port, num, api_ver)
             _cam.connect()
+            cam_ok = True
             with _state_lock:
                 _state["camera"].update(enabled=True, connected=True)
         except Exception as exc:
             logger.error("Camera connect failed: %s", exc)
+            errors.append(f"camera: {exc}")
+            _cam = None
+
+    if not (tel_ok or cam_ok):
+        with _state_lock:
+            _state["connected"] = False
+            _state["server"] = None
+        return jsonify({"error": "No devices connected — " + "; ".join(errors)}), 502
 
     with _state_lock:
         _state["connected"] = True
 
     _start_poller()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "telescope": tel_ok, "camera": cam_ok, "errors": errors})
 
 
 @app.route("/api/disconnect", methods=["POST"])
@@ -949,7 +1023,8 @@ def api_unpark():
         with _state_lock:
             _state["telescope"]["busy"] = True
         try:
-            _tel.unpark()
+            with _device_lock:
+                _tel.unpark()
         except Exception as exc:
             logger.error("Unpark failed: %s", exc)
         finally:
@@ -970,7 +1045,8 @@ def api_park():
         with _state_lock:
             _state["telescope"]["busy"] = True
         try:
-            _tel.park()
+            with _device_lock:
+                _tel.park()
         except Exception as exc:
             logger.error("Park failed: %s", exc)
         finally:
@@ -989,7 +1065,8 @@ def api_tracking():
     data    = request.get_json(force=True) or {}
     enabled = bool(data.get("enabled", True))
     try:
-        _tel.set_tracking(enabled)
+        with _device_lock:
+            _tel.set_tracking(enabled)
     except Exception as exc:
         logger.error("Set tracking failed: %s", exc)
         return jsonify({"error": str(exc)}), 500
@@ -1014,6 +1091,13 @@ def api_slew():
         if not (0.0 <= az < 360.0):
             return jsonify({"error": "Azimuth must be in range [0, 360)"}), 400
 
+        # Safety gate — refuse to move while the system is unsafe
+        if _safety_mgr is not None and not _safety_mgr.is_safe():
+            reason = _safety_mgr.status().get("reason") or "unknown"
+            msg = f"Slew rejected — system is in an unsafe state ({reason})"
+            logger.warning(msg)
+            return jsonify({"error": msg, "unsafe": True}), 403
+
         # Horizon-mask check
         if _safety_mgr is not None and not _safety_mgr.is_pointing_safe(alt, az):
             min_alt = _safety_mgr.min_safe_altitude(az)
@@ -1026,7 +1110,8 @@ def api_slew():
                             "min_safe_alt": round(min_alt, 1)}), 403
 
         try:
-            _tel.begin_slew_altaz(alt, az)
+            with _device_lock:
+                _tel.begin_slew_altaz(alt, az)
         except Exception as exc:
             logger.warning("Alt-Az slew not supported by driver (%s) — converting to RA/Dec", exc)
             cfg = _load_config()
@@ -1044,7 +1129,8 @@ def api_slew():
                 eq = coord.icrs
                 ra_h = float(eq.ra.deg) / 15.0
                 dec_d = float(eq.dec.deg)
-                _tel.begin_slew(ra_h, dec_d)
+                with _device_lock:
+                    _tel.begin_slew(ra_h, dec_d)
                 logger.info("Alt-Az fallback slew: RA=%.4f h  Dec=%.4f °", ra_h, dec_d)
             except Exception as exc2:
                 logger.error("Alt-Az fallback slew failed: %s", exc2)
@@ -1060,36 +1146,16 @@ def api_slew():
         if not (-90.0 <= dec <= 90.0):
             return jsonify({"error": "Dec must be in range [-90, 90]"}), 400
 
-        # Horizon-mask check — convert RA/Dec → Alt/Az for this site & time
-        if _safety_mgr is not None and _safety_mgr._horizon_mask:
-            cfg_now = _load_config()
-            obs_now = cfg_now.get("safety", {}).get("observer", {})
-            lat_now = float(obs_now.get("latitude", 0.0))
-            lon_now = float(obs_now.get("longitude", 0.0))
-            if lat_now != 0.0 or lon_now != 0.0:
-                try:
-                    from astropy.coordinates import AltAz, EarthLocation, SkyCoord
-                    from astropy.time import Time
-                    import astropy.units as u
-                    loc = EarthLocation(lat=lat_now * u.deg, lon=lon_now * u.deg)
-                    frame = AltAz(obstime=Time.now(), location=loc)
-                    coord = SkyCoord(ra=ra * 15.0 * u.deg, dec=dec * u.deg).transform_to(frame)
-                    t_alt = float(coord.alt.deg)
-                    t_az  = float(coord.az.deg)
-                    if not _safety_mgr.is_pointing_safe(t_alt, t_az):
-                        min_alt = _safety_mgr.min_safe_altitude(t_az)
-                        msg = (
-                            f"Slew rejected by horizon mask: "
-                            f"Alt {t_alt:.1f}° is below the {min_alt:.1f}° limit at Az {t_az:.1f}°"
-                        )
-                        logger.warning(msg)
-                        return jsonify({"error": msg, "horizon_blocked": True,
-                                        "min_safe_alt": round(min_alt, 1)}), 403
-                except Exception as exc_mask:
-                    logger.debug("Horizon-mask RA/Dec check skipped: %s", exc_mask)
+        # Safety + horizon-mask gate (shared with the scheduler)
+        rejection = _slew_rejection(ra, dec)
+        if rejection is not None:
+            msg = f"Slew rejected — {rejection}"
+            logger.warning(msg)
+            return jsonify({"error": msg, "blocked": True}), 403
 
         try:
-            _tel.begin_slew(ra, dec)
+            with _device_lock:
+                _tel.begin_slew(ra, dec)
         except Exception as exc:
             logger.error("Slew failed: %s", exc)
             return jsonify({"error": str(exc)}), 500
@@ -1135,8 +1201,15 @@ def api_nudge():
         new_ra   = (cur_ra + ra_delta) % 24.0
         new_dec  = cur_dec
 
+    rejection = _slew_rejection(new_ra, new_dec)
+    if rejection is not None:
+        msg = f"Nudge rejected — {rejection}"
+        logger.warning(msg)
+        return jsonify({"error": msg, "blocked": True}), 403
+
     try:
-        _tel.begin_slew(new_ra, new_dec)
+        with _device_lock:
+            _tel.begin_slew(new_ra, new_dec)
     except Exception as exc:
         logger.error("Nudge slew failed: %s", exc)
         return jsonify({"error": str(exc)}), 500
@@ -1156,8 +1229,9 @@ def api_move_axis():
     except (TypeError, ValueError):
         return jsonify({"error": "Invalid parameters"}), 400
     try:
-        _tel.move_axis(0, ra_rate)
-        _tel.move_axis(1, dec_rate)
+        with _device_lock:
+            _tel.move_axis(0, ra_rate)
+            _tel.move_axis(1, dec_rate)
         return jsonify({"ok": True})
     except Exception as exc:
         logger.error("MoveAxis failed: %s", exc)
@@ -1188,11 +1262,14 @@ def api_expose():
             _state["camera"]["exposure_duration"]  = duration
             _state["image_captured"]               = False
         _pier_cam_pause.set()
+        _expose_cancel.clear()
         time.sleep(0.15)
         try:
-            _cam.set_binning(binning)
-            _cam.expose(duration=duration, light=True)
-            b64 = _capture_image()
+            with _device_lock:
+                _cam.set_binning(binning)
+                _cam.expose(duration=duration, light=True,
+                            cancel_check=_expose_cancel.is_set)
+                b64 = _capture_image()
             if b64:
                 # Grab current telescope position as target label
                 with _state_lock:
@@ -1200,6 +1277,8 @@ def api_expose():
                     dec = _state["telescope"].get("dec")
                 target = f"Manual RA {ra:.4f}h" if ra is not None else "Manual"
                 _store_history_image(target, duration, binning, 1, 1, b64)
+        except ExposureCancelled:
+            logger.warning("Manual exposure aborted")
         except Exception as exc:
             logger.error("Exposure failed: %s", exc)
         finally:
@@ -1218,6 +1297,12 @@ def api_expose():
 def api_abort_exposure():
     if _cam is None:
         return jsonify({"error": "Camera not connected"}), 400
+    # Signal the in-flight exposure (manual or the current scheduled frame) to
+    # stop polling, and send abort directly so a long exposure is interrupted
+    # immediately.  The abort PUT intentionally bypasses _device_lock — it must
+    # preempt.  This stops only the current frame; use /api/schedule/abort to
+    # stop a whole run.
+    _expose_cancel.set()
     try:
         _cam.abort_exposure()
         with _state_lock:
@@ -1525,6 +1610,147 @@ def api_catalog():
 
 # ── Schedule execution ─────────────────────────────────────────────────────────
 
+def _sched_cancelled() -> bool:
+    with _sched_lock:
+        return _sched_state["cancelled"]
+
+
+def _sched_prepare_mount() -> None:
+    """Best-effort unpark + tracking-on before a run, gated on safety."""
+    if _tel is None:
+        return
+    if _safety_mgr is not None and not _safety_mgr.is_safe():
+        logger.warning("Schedule: system unsafe at startup — not unparking")
+        return
+    try:
+        with _device_lock:
+            if _tel.is_parked():
+                logger.info("Schedule: unparking mount")
+                _tel.unpark()
+            if not _tel.is_tracking():
+                logger.info("Schedule: enabling tracking")
+                _tel.set_tracking(True)
+    except Exception as exc:
+        logger.warning("Schedule: mount preparation failed: %s", exc)
+
+
+def _run_schedule_observation(idx: int, item: dict) -> None:
+    """Run a single scheduled observation. Exceptions here skip only this item."""
+    target    = str(item.get("target", "Unknown"))
+    ra        = float(item.get("ra", 0))      # decimal hours
+    dec       = float(item.get("dec", 0))
+    exp_dur   = float(item.get("expDur", 60))
+    exp_count = int(item.get("expCount", 1))
+    binning   = max(1, int(item.get("binning", 1)))
+    start_str = item.get("startTime", "")
+
+    with _sched_lock:
+        _sched_state.update({
+            "current_idx": idx,
+            "current_target": target,
+            "current_phase": "waiting",
+            "current_frame": 0,
+            "total_frames": exp_count,
+        })
+
+    # Wait until scheduled start time (max 2 h wait; skip if overdue)
+    if start_str:
+        try:
+            sh, sm = map(int, start_str.split(":"))
+            now = time.localtime()
+            target_s = sh * 3600 + sm * 60
+            now_s    = now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec
+            wait_s   = target_s - now_s
+            if wait_s < 0:
+                wait_s += 86400
+            if 0 < wait_s <= 7200:
+                logger.info("Schedule: waiting %.0f s until %s for %s",
+                            wait_s, start_str, target)
+                deadline = time.monotonic() + wait_s
+                while time.monotonic() < deadline and not _sched_cancelled():
+                    time.sleep(1)
+        except (ValueError, AttributeError) as exc:
+            logger.debug("Schedule: start-time parse error: %s", exc)
+
+    if _sched_cancelled():
+        return
+
+    # ── Slew ────────────────────────────────────────────────────────────────
+    with _sched_lock:
+        _sched_state["current_phase"] = "slewing"
+
+    slew_ok = False
+    if _tel is not None:
+        rejection = _slew_rejection(ra, dec)
+        if rejection is not None:
+            logger.warning("Schedule: skipping %s — slew rejected: %s", target, rejection)
+            with _sched_lock:
+                _sched_state["error"] = f"{target}: {rejection}"
+            return
+        logger.info("Schedule: slewing to %s RA=%.4f h Dec=%.4f°", target, ra, dec)
+        try:
+            with _device_lock:
+                _tel.begin_slew(ra, dec)
+            slew_ok = _wait_slew_complete(timeout=180.0)
+            if slew_ok:
+                logger.info("Schedule: slew complete → %s", target)
+            else:
+                logger.error("Schedule: slew to %s timed out — skipping exposures", target)
+                with _sched_lock:
+                    _sched_state["error"] = f"Slew to {target} timed out"
+        except Exception as exc:
+            logger.error("Schedule: slew failed for %s: %s", target, exc)
+            with _sched_lock:
+                _sched_state["error"] = f"Slew to {target} failed: {exc}"
+    else:
+        logger.warning("Schedule: telescope not connected — skipping slew for %s", target)
+
+    if _sched_cancelled():
+        return
+
+    # Don't expose if the slew didn't confirm a settled, on-target mount.
+    if _tel is not None and not slew_ok:
+        return
+
+    # ── Expose ────────────────────────────────────────────────────────────────
+    for frame in range(1, exp_count + 1):
+        if _sched_cancelled():
+            return
+        with _sched_lock:
+            _sched_state["current_phase"] = "exposing"
+            _sched_state["current_frame"] = frame
+
+        logger.info("Schedule: %s frame %d/%d (%.1fs bin%d)",
+                    target, frame, exp_count, exp_dur, binning)
+
+        if _cam is None:
+            logger.warning("Schedule: camera not connected — skipping exposure for %s", target)
+            return
+
+        try:
+            _pier_cam_pause.set()
+            _expose_cancel.clear()
+            time.sleep(0.1)
+            with _device_lock:
+                _cam.set_binning(binning)
+                _cam.expose(
+                    duration=exp_dur, light=True,
+                    cancel_check=lambda: _sched_cancelled() or _expose_cancel.is_set(),
+                )
+                b64 = _capture_image()
+            if b64:
+                _store_history_image(target, exp_dur, binning, frame, exp_count, b64)
+        except ExposureCancelled:
+            logger.warning("Schedule: frame %d of %s aborted", frame, target)
+            if _sched_cancelled():
+                return
+            # Single-frame abort — move on to the next frame.
+        except Exception as exc:
+            logger.error("Schedule: exposure failed %s frame %d: %s", target, frame, exc)
+        finally:
+            _pier_cam_pause.clear()
+
+
 def _run_schedule_bg(items: list) -> None:
     """Background thread: slew + expose for each scheduled observation."""
     with _sched_lock:
@@ -1537,108 +1763,24 @@ def _run_schedule_bg(items: list) -> None:
         })
     logger.info("Schedule started: %d observations", len(items))
 
+    _sched_prepare_mount()
+
     try:
         for idx, item in enumerate(items):
-            with _sched_lock:
-                if _sched_state["cancelled"]:
-                    break
-
-            target    = item.get("target", "Unknown")
-            ra        = float(item.get("ra", 0))      # decimal hours
-            dec       = float(item.get("dec", 0))
-            exp_dur   = float(item.get("expDur", 60))
-            exp_count = int(item.get("expCount", 1))
-            binning   = int(item.get("binning", 1))
-            start_str = item.get("startTime", "")
-
-            with _sched_lock:
-                _sched_state.update({
-                    "current_idx": idx,
-                    "current_target": target,
-                    "current_phase": "waiting",
-                    "current_frame": 0,
-                    "total_frames": exp_count,
-                })
-
-            # Wait until scheduled start time (max 2 h wait; skip if overdue)
-            if start_str:
-                try:
-                    sh, sm = map(int, start_str.split(":"))
-                    now = time.localtime()
-                    target_s = sh * 3600 + sm * 60
-                    now_s    = now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec
-                    wait_s   = target_s - now_s
-                    if wait_s < 0:
-                        wait_s += 86400
-                    if 0 < wait_s <= 7200:
-                        logger.info("Schedule: waiting %.0f s until %s for %s",
-                                    wait_s, start_str, target)
-                        deadline = time.monotonic() + wait_s
-                        while time.monotonic() < deadline:
-                            with _sched_lock:
-                                if _sched_state["cancelled"]:
-                                    break
-                            time.sleep(1)
-                except Exception as exc:
-                    logger.debug("Schedule: start-time parse error: %s", exc)
-
-            with _sched_lock:
-                if _sched_state["cancelled"]:
-                    break
-                _sched_state["current_phase"] = "slewing"
-
-            # ── Slew ────────────────────────────────────────────────────────
-            if _tel is not None:
-                logger.info("Schedule: slewing to %s RA=%.4f h Dec=%.4f°", target, ra, dec)
-                try:
-                    _tel.begin_slew(ra, dec)
-                    _wait_slew_complete(timeout=180.0)
-                    logger.info("Schedule: slew complete → %s", target)
-                except Exception as exc:
-                    logger.error("Schedule: slew failed for %s: %s", target, exc)
-                    with _sched_lock:
-                        _sched_state["error"] = f"Slew to {target} failed: {exc}"
-            else:
-                logger.warning("Schedule: telescope not connected — skipping slew for %s", target)
-                time.sleep(1)
-
-            with _sched_lock:
-                if _sched_state["cancelled"]:
-                    break
-
-            # ── Expose ──────────────────────────────────────────────────────
-            for frame in range(1, exp_count + 1):
+            if _sched_cancelled():
+                break
+            try:
+                _run_schedule_observation(idx, item)
+            except Exception as exc:
+                # A single bad observation must not abort the whole night.
+                logger.error("Schedule: observation %d (%s) failed: %s",
+                             idx, item.get("target", "?"), exc)
                 with _sched_lock:
-                    if _sched_state["cancelled"]:
-                        break
-                    _sched_state["current_phase"]  = "exposing"
-                    _sched_state["current_frame"]  = frame
-
-                logger.info("Schedule: %s frame %d/%d (%.1fs bin%d)",
-                            target, frame, exp_count, exp_dur, binning)
-
-                if _cam is not None:
-                    try:
-                        _pier_cam_pause.set()
-                        time.sleep(0.1)
-                        _cam.set_binning(binning)
-                        _cam.expose(duration=exp_dur, light=True)
-                        b64 = _capture_image()
-                        if b64:
-                            _store_history_image(target, exp_dur, binning, frame, exp_count, b64)
-                    except Exception as exc:
-                        logger.error("Schedule: exposure failed %s frame %d: %s",
-                                     target, frame, exc)
-                    finally:
-                        _pier_cam_pause.clear()
-                else:
-                    logger.warning("Schedule: camera not connected — skipping exposure for %s", target)
-                    time.sleep(min(exp_dur, 3))
-
+                    _sched_state["error"] = str(exc)
             with _sched_lock:
                 _sched_state["completed"] = idx + 1
-            logger.info("Schedule: ✓ %s (%d/%d)", target, idx + 1, len(items))
-
+            logger.info("Schedule: ✓ %s (%d/%d)",
+                        item.get("target", "?"), idx + 1, len(items))
     except Exception as exc:
         logger.error("Schedule crashed: %s", exc)
         with _sched_lock:
@@ -1661,12 +1803,58 @@ def api_schedule_run():
     items = data.get("items", [])
     if not items:
         return jsonify({"error": "No items provided"}), 400
+
+    valid, err = _validate_schedule_items(items)
+    if err is not None:
+        return jsonify({"error": err}), 400
+
     threading.Thread(
-        target=_run_schedule_bg, args=(items,),
+        target=_run_schedule_bg, args=(valid,),
         daemon=True, name="sched-runner",
     ).start()
-    logger.info("Schedule run requested: %d items", len(items))
+    logger.info("Schedule run requested: %d items", len(valid))
     return jsonify({"ok": True})
+
+
+def _validate_schedule_items(items: list) -> tuple[list, Optional[str]]:
+    """Validate + normalize schedule items at the API boundary.
+
+    Returns (normalized_items, None) on success, or ([], error_message) on the
+    first invalid item.  Mirrors the bounds enforced by /api/slew so a buggy or
+    crafted client can't drive the mount to garbage coordinates.
+    """
+    if not isinstance(items, list):
+        return [], "items must be a list"
+    out: list[dict] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            return [], f"item {i + 1} is not an object"
+        label = item.get("target", f"#{i + 1}")
+        try:
+            ra        = float(item.get("ra", 0))
+            dec       = float(item.get("dec", 0))
+            exp_dur   = float(item.get("expDur", 60))
+            exp_count = int(item.get("expCount", 1))
+            binning   = int(item.get("binning", 1))
+        except (TypeError, ValueError):
+            return [], f"item '{label}' has non-numeric ra/dec/exposure fields"
+        if not (0.0 <= ra < 24.0):
+            return [], f"item '{label}': RA must be in [0, 24) hours"
+        if not (-90.0 <= dec <= 90.0):
+            return [], f"item '{label}': Dec must be in [-90, 90]°"
+        if exp_dur <= 0:
+            return [], f"item '{label}': exposure duration must be > 0"
+        if exp_count < 1:
+            return [], f"item '{label}': exposure count must be ≥ 1"
+        if binning < 1:
+            return [], f"item '{label}': binning must be ≥ 1"
+        out.append({
+            "target": str(item.get("target", "Unknown")),
+            "ra": ra, "dec": dec, "expDur": exp_dur,
+            "expCount": exp_count, "binning": binning,
+            "startTime": str(item.get("startTime", "")),
+        })
+    return out, None
 
 
 @app.route("/api/schedule/status", methods=["GET"])

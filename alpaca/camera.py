@@ -7,10 +7,15 @@ a single exposure.
 
 import logging
 import time
+from typing import Callable, Optional
 
 from .client import AlpacaClient
 
 logger = logging.getLogger(__name__)
+
+
+class ExposureCancelled(Exception):
+    """Raised when an exposure is aborted via its cancel_check callback."""
 
 # CameraState enum values from the ALPACA spec
 _STATE_IDLE = 0
@@ -63,7 +68,13 @@ class Camera:
         self._c._put("binx", BinX=bin_x)
         self._c._put("biny", BinY=bin_y)
 
-    def expose(self, duration: float, light: bool = True, readout_timeout: float = 120.0) -> None:
+    def expose(
+        self,
+        duration: float,
+        light: bool = True,
+        readout_timeout: float = 120.0,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """
         Start an exposure and wait until the image is ready in the download buffer.
 
@@ -72,6 +83,9 @@ class Camera:
         readout_timeout – extra seconds beyond *duration* to allow for sensor
                           readout and ALPACA transfer (default 120 s; raise for
                           large/slow sensors or a slow network link)
+        cancel_check    – optional zero-arg callable polled during the wait; if
+                          it returns True the exposure is aborted on the camera
+                          and ExposureCancelled is raised.
         """
         logger.info("Starting %.2f s %s exposure", duration, "light" if light else "dark")
         self._c._put("startexposure", Duration=duration, Light=light)
@@ -82,6 +96,9 @@ class Camera:
         # requiring IDLE would miss that window entirely.
         deadline = time.monotonic() + duration + readout_timeout
         while time.monotonic() < deadline:
+            if cancel_check is not None and cancel_check():
+                self.abort_exposure()
+                raise ExposureCancelled("Exposure cancelled")
             state = self.camera_state()
             if state == _STATE_ERROR:
                 raise RuntimeError("Camera entered error state during exposure")
