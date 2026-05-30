@@ -2791,6 +2791,7 @@ async function doDisconnect() {
 
 function openTelescopeModal() {
   document.getElementById("telModal").classList.remove("hidden");
+  loadCatalog();
 }
 
 function closeTelescopeModal() {
@@ -3364,7 +3365,43 @@ const STAR_CATALOG = [
   {id:"Avior",         name:"ε Carinae",          type:"Star", ra:8.3750,  dec:-59.510},
 ];
 
+// Combined catalog: stars (hardcoded) + DSOs (fetched from /api/catalog)
+let _catalog    = null;   // null = not loaded yet
 let _catalogIdx = -1;
+
+async function loadCatalog() {
+  if (_catalog !== null) return;
+  try {
+    const r    = await fetch("/api/catalog");
+    const dsos = await r.json();
+    _catalog = STAR_CATALOG.concat(dsos);
+  } catch (e) {
+    console.warn("Catalog fetch failed, using stars only:", e);
+    _catalog = STAR_CATALOG.slice();
+  }
+}
+
+function _catalogScore(o, tokens, q) {
+  const id   = o.id.toLowerCase();
+  const name = (o.name || "").toLowerCase();
+  const type = o.type.toLowerCase();
+  const full = id + " " + name + " " + type;
+
+  if (!tokens.every(t => full.includes(t))) return -1;
+
+  let score = 0;
+  if (id === q)                                         score += 100;  // exact id
+  else if (id.startsWith(q))                            score += 70;   // id prefix
+  if (name && name.startsWith(q))                       score += 60;   // name prefix
+  if (name && !name.startsWith(q) && name.includes(q)) score += 20;   // name contains
+
+  // Catalog tier bonus so Messier > stars > NGC > IC within the same query score
+  if (/^m\d+$/.test(id))   score += 8;
+  else if (o.type === "Star") score += 5;
+  else if (id.startsWith("ngc")) score += 2;
+
+  return score;
+}
 
 function catalogFilter() {
   const input = document.getElementById("catalogSearch");
@@ -3372,10 +3409,17 @@ function catalogFilter() {
   const dd    = document.getElementById("catalogDropdown");
   _catalogIdx = -1;
 
-  const matches = q.length === 0 ? [] : OBJECT_CATALOG.filter(o => {
-    const label = (o.id + " " + o.name + " " + o.type).toLowerCase();
-    return q.split(/\s+/).every(t => label.includes(t));
-  }).slice(0, 30);
+  if (q.length < 2) { dd.style.display = "none"; return; }
+
+  const src    = _catalog || STAR_CATALOG;
+  const tokens = q.split(/\s+/).filter(Boolean);
+
+  const matches = src
+    .map(o => ({ o, s: _catalogScore(o, tokens, q) }))
+    .filter(x => x.s >= 0)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 30)
+    .map(x => x.o);
 
   if (matches.length === 0) { dd.style.display = "none"; return; }
 
@@ -3384,7 +3428,11 @@ function catalogFilter() {
   dd.style.left  = r.left + "px";
   dd.style.width = r.width + "px";
 
-  dd.innerHTML = matches.map((o, i) => {
+  const loading = _catalog === null
+    ? `<div style="padding:6px 10px;font-size:10px;color:var(--dim);letter-spacing:1px;">LOADING CATALOG…</div>`
+    : "";
+
+  dd.innerHTML = loading + matches.map((o, i) => {
     const label = o.name ? `${o.id} — ${o.name}` : o.id;
     return `<div class="cat-item" data-idx="${i}"
       onmousedown="catalogSelect(${i})" onmouseover="catalogHover(${i})"
