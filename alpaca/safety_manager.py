@@ -107,6 +107,7 @@ class SafetyManager:
         self._enabled              : bool  = cfg.get("enabled", True)
         self._disconnect_timeout   : float = float(cfg.get("disconnect_timeout", 600))
         self._heartbeat_interval   : float = float(cfg.get("heartbeat_interval", 30))
+        self._heartbeat_timeout    : float = float(cfg.get("heartbeat_timeout", 5))
         self._reconnect_attempts   : int   = int(cfg.get("reconnect_attempts", 3))
         self._reconnect_delay      : float = float(cfg.get("reconnect_delay", 10))
         self._park_at_dawn         : bool  = cfg.get("park_at_dawn", True)
@@ -144,13 +145,26 @@ class SafetyManager:
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def attach_telescope(self, telescope) -> None:
-        """Swap in a (re)connected telescope object and reset the disconnect timer."""
+        """Swap in a (re)connected telescope object and reset the disconnect timer.
+
+        Attaching a live telescope also clears any latched unsafe/parked state
+        from a previous emergency park.  Without this the manager stays unsafe
+        forever after the first trip (e.g. a transient disconnect or Ctrl+C),
+        and every subsequent slew is rejected even on a healthy scope.  Any
+        condition that is still genuinely unsafe (dawn, real disconnect) is
+        re-detected by the monitor loop within a few seconds.
+        """
         with self._lock:
             self._tel              = telescope
             self._disconnect_since = None
             self._telescope_attached_at = time.monotonic() if telescope is not None else None
+            if telescope is not None:
+                self._safe         = True
+                self._parked       = False
+                self._reason       = ""
+                self._heartbeat_ok = True
         if telescope is not None:
-            logger.info("SafetyManager: telescope attached")
+            logger.info("SafetyManager: telescope attached — safety state reset")
 
     def start(self) -> None:
         """Install OS signal handlers and start the background monitor thread.
@@ -187,6 +201,24 @@ class SafetyManager:
         """Return True if it is safe to continue operations."""
         with self._lock:
             return self._safe
+
+    def reset(self) -> str:
+        """Manually clear a latched unsafe/parked state.
+
+        Returns the reason that was cleared (empty string if already safe).
+        Any condition that is still genuinely unsafe (dawn, real disconnect)
+        is re-detected by the monitor loop within a few seconds, so this is a
+        recovery override rather than a way to defeat the watchdog.
+        """
+        with self._lock:
+            prev = self._reason if not self._safe else ""
+            self._safe             = True
+            self._parked           = False
+            self._reason           = ""
+            self._heartbeat_ok     = True
+            self._disconnect_since = None
+        logger.warning("SafetyManager: safety state manually reset (was: %s)", prev or "safe")
+        return prev
 
     def min_safe_altitude(self, az_deg: float) -> float:
         """
@@ -385,17 +417,27 @@ class SafetyManager:
     # ── Heartbeat & reconnect ──────────────────────────────────────────────────
 
     def _heartbeat(self) -> bool:
-        """Ping the telescope with a lightweight GET /connected call."""
+        """Ping the telescope with a lightweight GET /connected call.
+
+        Uses the client's dedicated heartbeat session and retries once so a
+        single dropped packet — or a momentary collision with in-flight device
+        traffic — doesn't register as a connection failure.
+        """
         with self._lock:
             tel = self._tel
         if tel is None:
             return False
-        try:
-            tel._c.connected()
-            return True
-        except Exception as exc:
-            logger.debug("SafetyManager: heartbeat exception: %s", exc)
-            return False
+        for attempt in (1, 2):
+            try:
+                tel._c.ping(timeout=self._heartbeat_timeout)
+                return True
+            except Exception as exc:
+                logger.debug(
+                    "SafetyManager: heartbeat attempt %d failed: %s", attempt, exc
+                )
+                if attempt < 2:
+                    self._stop_event.wait(timeout=0.5)
+        return False
 
     def _try_reconnect(self) -> bool:
         """

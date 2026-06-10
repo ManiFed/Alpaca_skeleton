@@ -43,7 +43,7 @@
 | **Move to Position** | ✅ | `focuser.py:move(position)` — blocking call. Ready. |
 | **Check Focusing Status** | ✅ | `focuser.py:is_moving()` — ready to poll. |
 | **Halt Focus** | ✅ | `focuser.py:halt()` — ready. |
-| **Autofocus Routine** | ❌ | **NEW**: `autofocus.py` — algorithm: step focuser → expose short frame → measure FWHM → step → repeat → find peak position. |
+| **Autofocus Routine** | ✅ | `alpaca/autofocus.py` — V-curve sweep: step focuser → expose short frame → measure FWHM (reuses `photometry._estimate_fwhm`) → parabolic minimum fit. Dashboard: `POST/DELETE /api/focus/auto`, `GET /api/focus/auto/status`. Config: `autofocus:` block. Requires `devices.focuser.enabled: true`. |
 
 ---
 
@@ -108,7 +108,8 @@
 
 | Feature | Priority | Implementation |
 |---------|----------|-----------------|
-| **Autofocus** | HIGH | `alpaca/autofocus.py` — step focuser, measure FWHM, find peak |
+| **Plate-solve & auto-center** | ✅ | `alpaca/platesolve.py` — closed loop: slew → capture → ASTAP solve frame centre → correct → repeat until within tolerance. Dashboard: `POST/DELETE /api/center/run`, `GET /api/center/status`. Config: `centering:` block. Reuses `photometry._run_astap`. |
+| **Live stacking** | ✅ | `stacking.py` — `LiveStacker`: per-frame star detection, RANSAC asterism alignment (translation), sub-pixel shift-and-add, asinh-stretched preview. Dashboard: `POST/DELETE /api/stack/start`, `GET /api/stack/status`, `GET /api/stack/preview`. Config: `stacking:` block. Limitation: no field-rotation correction yet (keep alt-az runs short). |
 | **Safety Checks** | MEDIUM | Validate coordinates (altitude limits, etc.) before slew |
 | **Better Timeouts** | MEDIUM | Tune ALPACA call timeouts in `client.py` based on network reliability |
 | **Retry Logic** | MEDIUM | Handle transient connection errors with exponential backoff |

@@ -292,6 +292,8 @@ def _parse_webobs_response(text: str, http_status: int) -> tuple:
 
     AAVSO success text: "Thanks! N observation(s) were uploaded successfully."
     Rejection indicators: words like 'error', 'reject', 'invalid', 'fail'.
+    Falls back to accepted=1 on HTTP 200 with no recognisable error, so that
+    changes to AAVSO's response wording don't silently misclassify successes.
     """
     accepted = 0
     rejected = 0
@@ -301,9 +303,13 @@ def _parse_webobs_response(text: str, http_status: int) -> tuple:
         if m:
             accepted = int(m.group(1))
 
-    if re.search(r"\b(error|reject|invalid|fail)\b", text, re.IGNORECASE):
-        if accepted == 0:
-            rejected = 1
+    has_error = bool(re.search(r"\b(error|reject|invalid|fail)\b", text, re.IGNORECASE))
+
+    if has_error and accepted == 0:
+        rejected = 1
+    elif http_status == 200 and accepted == 0 and not has_error:
+        # HTTP 200, no count parsed, no error keywords — treat as accepted
+        accepted = 1
 
     return accepted, rejected
 

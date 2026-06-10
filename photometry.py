@@ -86,6 +86,22 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
         logger.error("Unexpected data shape %s in %s", data.shape, fits_path)
         return None
 
+    # ── Reject non-science frames ──────────────────────────────────────────────
+    image_type = str(header.get("IMAGETYP", "LIGHT")).strip().upper()
+    if image_type not in ("LIGHT", "LIGHT FRAME", ""):
+        logger.info("Skipping non-LIGHT frame (IMAGETYP=%s): %s",
+                    image_type, os.path.basename(fits_path))
+        return None
+
+    # ── Detector gain ──────────────────────────────────────────────────────────
+    # Priority: FITS header EGAIN/CCDGAIN (camera-reported) > config > default
+    hdr_gain = header.get("EGAIN") or header.get("CCDGAIN")
+    if hdr_gain is not None:
+        gain = float(hdr_gain)
+        logger.debug("Gain from FITS header: %.3f e⁻/ADU", gain)
+    else:
+        gain = float(phot_cfg.get("gain", 1.0))
+
     # ── Extract target identity ────────────────────────────────────────────────
     target_name = str(header.get("OBJECT", "")).strip()
     header_ra   = header.get("RA")    # degrees (FITS standard)
@@ -169,9 +185,10 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
         # Merge: AAVSO preferred, Gaia fills in
         existing_coords = [(c["ra_deg"], c["dec_deg"]) for c in comp_stars]
         for gs in gaia_stars:
-            # Avoid duplicates (within 5 arcsec)
+            # Avoid duplicates within 5 arcsec; scale RA threshold by cos(dec)
+            cos_dec = math.cos(math.radians(gs["dec_deg"]))
             duplicate = any(
-                abs(gs["ra_deg"] - er) < 0.0014 and abs(gs["dec_deg"] - ed) < 0.0014
+                abs((gs["ra_deg"] - er) * cos_dec) < 0.0014 and abs(gs["dec_deg"] - ed) < 0.0014
                 for er, ed in existing_coords
             )
             if not duplicate:
@@ -205,7 +222,7 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
     # ── Step 5: Aperture photometry ───────────────────────────────────────────
     positions = [(tx, ty)] + [(cs["x_px"], cs["y_px"]) for cs in comp_in_field]
     read_noise = float(phot_cfg.get("read_noise", header.get("RDNOISE", 5.0)))
-    fluxes, flux_errors = _aperture_photometry(data, positions, ap_r, ann_in, ann_out, read_noise)
+    fluxes, flux_errors = _aperture_photometry(data, positions, ap_r, ann_in, ann_out, read_noise, gain)
     if fluxes is None:
         logger.error("Aperture photometry failed")
         return None
@@ -558,12 +575,30 @@ def _get_comparison_stars_gaia(
     comp_stars = []
     for row in results[:n_max]:
         try:
+            g_mag = float(row["phot_g_mean_mag"])
+
+            # Evans et al. 2018 (A&A 616, A4) G→V transformation using BP-RP color.
+            # V = G - (c0 + c1*(BP-RP) + c2*(BP-RP)^2)
+            # Valid range: -0.5 < BP-RP < 2.75
+            try:
+                bp_rp = float(row["bp_rp"])
+                if -0.5 <= bp_rp <= 2.75:
+                    v_mag   = g_mag - (-0.01760 - 0.006860 * bp_rp - 0.1732 * bp_rp ** 2)
+                    mag_err = 0.05   # residual scatter on the Evans relation (~0.03–0.05 mag)
+                else:
+                    # Out of calibration range — use G as-is with larger uncertainty
+                    v_mag   = g_mag
+                    mag_err = 0.20
+            except (TypeError, ValueError, KeyError):
+                v_mag   = g_mag
+                mag_err = 0.15   # no color info; G→V offset unknown
+
             comp_stars.append({
                 "auid":    str(row["source_id"]),
                 "ra_deg":  float(row["ra"]),
                 "dec_deg": float(row["dec"]),
-                "mag_v":   float(row["phot_g_mean_mag"]),
-                "mag_err": 0.05,   # conservative; G→V transform uncertainty dominates
+                "mag_v":   v_mag,
+                "mag_err": mag_err,
                 "source":  "gaia_dr3",
             })
         except Exception:
@@ -581,7 +616,8 @@ def _aperture_photometry(
     ap_radius: float,
     ann_inner: float,
     ann_outer: float,
-    read_noise: float = 5.0,
+    read_noise: float = 5.0,  # in electrons
+    gain: float = 1.0,        # e⁻/ADU
 ) -> tuple:
     """
     Measure background-subtracted flux at each position.
@@ -615,12 +651,13 @@ def _aperture_photometry(
         raw_sum    = np.array(phot_table["aperture_sum"], dtype=float)
         net_flux   = raw_sum - bkg_per_px * ap_area
 
-        # Noise model: shot noise (net signal + sky) + read noise per pixel
-        read_noise_adu = read_noise
+        # CCD noise model in ADU²:
+        #   sigma² = (source_ADU + sky_ADU) / gain   [Poisson, converted to ADU]
+        #          + N_pix * (read_noise_e / gain)²   [read noise per pixel]
+        # read_noise is in electrons; gain is e⁻/ADU.
         flux_var = (
-            np.maximum(net_flux, 0)               # shot noise from source
-            + ap_area * bkg_per_px                # shot noise from sky
-            + ap_area * read_noise_adu ** 2       # read noise
+            (np.maximum(net_flux, 0) + ap_area * bkg_per_px) / gain
+            + ap_area * (read_noise / gain) ** 2
         )
         flux_errors = np.sqrt(np.maximum(flux_var, 1.0))
 

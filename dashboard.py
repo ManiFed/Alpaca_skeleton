@@ -27,11 +27,15 @@ from alpaca.discovery import discover_servers
 from alpaca.safety_manager import SafetyManager
 from alpaca.telescope import Telescope
 from alpaca.camera import Camera, ExposureCancelled
+from alpaca.focuser import Focuser
+from alpaca.autofocus import autofocus_device, AutofocusCancelled, AutofocusError
 from alpaca.covercalibrator import CoverCalibrator, COVER_STATE_NAMES, COVER_NOT_PRESENT, COVER_MOVING, COVER_OPEN, COVER_CLOSED
 from image_watcher import ImageWatcher
 from photometry import run_pipeline as _run_photometry
 from aavso_submission import submit as _aavso_submit
 from fits_export import export_enhanced_fits as _export_fits
+from geolocation import enrich_config_with_location
+from stacking import LiveStacker
 
 
 app = Flask(__name__)
@@ -64,6 +68,13 @@ _state: dict[str, Any] = {
         "exposing":         False,
         "exposure_start_ts": None,
         "exposure_duration": None,
+    },
+    "focuser": {
+        "enabled":   False,
+        "connected": False,
+        "position":  None,
+        "moving":    False,
+        "autofocus_running": False,
     },
     "safety": {
         "safe":              True,
@@ -254,6 +265,7 @@ sys.stdout = _StdoutCapture()  # type: ignore[assignment]
 _tel:   Optional[Telescope]        = None
 _cam:   Optional[Camera]           = None
 _cover: Optional[CoverCalibrator]  = None
+_foc:   Optional[Focuser]          = None
 _last_image_b64: Optional[str] = None
 _last_image_lock = threading.Lock()
 
@@ -513,6 +525,273 @@ _scan_state: dict = {
     "result":     None, # [[alt, az], …] on completion
     "error":      None,
 }
+
+
+# ── Autofocus state ───────────────────────────────────────────────────────────
+
+_focus_lock  = threading.Lock()
+_focus_state: dict = {
+    "running":    False,
+    "cancelled":  False,
+    "samples":    [],    # list of {position, fwhm} measured so far
+    "current":    0,     # 1-based index of position being measured
+    "total":      0,     # total positions in the sweep
+    "result":     None,  # AutofocusResult.as_dict() on success
+    "error":      None,
+}
+
+
+def _run_autofocus_bg(
+    exposure_s: float,
+    step_size: int,
+    steps_per_side: int,
+    settle_s: float,
+    samples_per_point: int,
+    min_position: Optional[int],
+    max_position: Optional[int],
+) -> None:
+    """Background thread: sweep the focuser and drive it to best focus."""
+    with _focus_lock:
+        _focus_state.update({
+            "running": True, "cancelled": False, "samples": [],
+            "current": 0, "total": 0, "result": None, "error": None,
+        })
+    with _state_lock:
+        _state["focuser"]["autofocus_running"] = True
+
+    def _cancelled() -> bool:
+        with _focus_lock:
+            return _focus_state["cancelled"]
+
+    def _progress(sample, index, total) -> None:
+        with _focus_lock:
+            _focus_state["current"] = index
+            _focus_state["total"]   = total
+            _focus_state["samples"].append({
+                "position": sample.position,
+                "fwhm": round(sample.fwhm, 2) if sample.fwhm is not None else None,
+            })
+
+    try:
+        with _device_lock:
+            result = autofocus_device(
+                _foc, _cam,
+                exposure_s=exposure_s,
+                step_size=step_size,
+                steps_per_side=steps_per_side,
+                settle_s=settle_s,
+                samples_per_point=samples_per_point,
+                min_position=min_position,
+                max_position=max_position,
+                cancel_check=_cancelled,
+                progress_cb=_progress,
+            )
+        with _focus_lock:
+            _focus_state["result"]  = result.as_dict()
+            _focus_state["running"] = False
+        with _state_lock:
+            _state["focuser"]["position"] = result.best_position
+        logger.info("Autofocus finished — best position %d", result.best_position)
+    except AutofocusCancelled:
+        with _focus_lock:
+            _focus_state["error"]   = "cancelled"
+            _focus_state["running"] = False
+        logger.warning("Autofocus cancelled by user")
+    except (AutofocusError, Exception) as exc:
+        with _focus_lock:
+            _focus_state["error"]   = str(exc)
+            _focus_state["running"] = False
+        logger.error("Autofocus failed: %s", exc)
+    finally:
+        with _state_lock:
+            _state["focuser"]["autofocus_running"] = False
+
+
+# ── Auto-centering (plate-solve goto refinement) state ────────────────────────
+
+_center_lock  = threading.Lock()
+_center_state: dict = {
+    "running":    False,
+    "cancelled":  False,
+    "target_ra":  None,   # degrees
+    "target_dec": None,   # degrees
+    "iterations": [],     # list of CenterIteration dicts
+    "result":     None,   # CenterResult.as_dict() on completion
+    "error":      None,
+}
+
+
+def _run_centering_bg(
+    target_ra_deg: float,
+    target_dec_deg: float,
+    exposure_s: float,
+    tolerance_arcmin: float,
+    max_iterations: int,
+    settle_s: float,
+) -> None:
+    """Background thread: slew → plate-solve → correct until target is centered."""
+    from alpaca.platesolve import center_on_target_device, CenteringCancelled, CenteringError
+
+    cfg      = _load_config()
+    phot     = cfg.get("photometry", {}) or {}
+    astap    = phot.get("astap_path", "astap")
+    radius   = float(phot.get("astap_search_radius", 10))
+
+    with _center_lock:
+        _center_state.update({
+            "running": True, "cancelled": False,
+            "target_ra": target_ra_deg, "target_dec": target_dec_deg,
+            "iterations": [], "result": None, "error": None,
+        })
+
+    def _cancelled() -> bool:
+        with _center_lock:
+            return _center_state["cancelled"]
+
+    def _progress(it) -> None:
+        with _center_lock:
+            _center_state["iterations"].append({
+                "iteration": it.iteration,
+                "commanded_ra": round(it.commanded_ra, 5),
+                "commanded_dec": round(it.commanded_dec, 5),
+                "solved_ra": round(it.solved_ra, 5) if it.solved_ra is not None else None,
+                "solved_dec": round(it.solved_dec, 5) if it.solved_dec is not None else None,
+                "error_arcmin": round(it.error_arcmin, 3) if it.error_arcmin is not None else None,
+            })
+
+    try:
+        with _device_lock:
+            result = center_on_target_device(
+                _tel, _cam, target_ra_deg, target_dec_deg,
+                exposure_s=exposure_s,
+                tolerance_arcmin=tolerance_arcmin,
+                max_iterations=max_iterations,
+                settle_s=settle_s,
+                astap_path=astap,
+                search_radius=radius,
+                cancel_check=_cancelled,
+                progress_cb=_progress,
+            )
+        with _center_lock:
+            _center_state["result"]  = result.as_dict()
+            _center_state["running"] = False
+        if result.success:
+            logger.info("Auto-centering succeeded — target centered within %.2f′",
+                        result.error_arcmin)
+        else:
+            logger.warning("Auto-centering finished without reaching tolerance")
+    except CenteringCancelled:
+        with _center_lock:
+            _center_state["error"]   = "cancelled"
+            _center_state["running"] = False
+        logger.warning("Auto-centering cancelled by user")
+    except (CenteringError, Exception) as exc:
+        with _center_lock:
+            _center_state["error"]   = str(exc)
+            _center_state["running"] = False
+        logger.error("Auto-centering failed: %s", exc)
+
+
+# ── Live stacking state ───────────────────────────────────────────────────────
+
+_stack_lock  = threading.Lock()
+_stacker: Optional[LiveStacker] = None
+_stack_preview_b64: Optional[str] = None
+_stack_state: dict = {
+    "running":         False,
+    "cancelled":       False,
+    "frames_target":   0,
+    "frames_stacked":  0,
+    "frames_total":    0,
+    "frames_rejected": 0,
+    "last_offset":     [0.0, 0.0],
+    "snr_gain":        0.0,
+    "error":           None,
+    "finished":        False,
+}
+
+
+def _run_stacking_bg(n_frames: int, exposure_s: float, preview_every: int) -> None:
+    """Background thread: capture N sub-frames and live-stack them into a preview."""
+    global _stacker, _stack_preview_b64
+
+    stacker = LiveStacker()
+    with _stack_lock:
+        _stacker = stacker
+        _stack_preview_b64 = None
+        _stack_state.update({
+            "running": True, "cancelled": False, "frames_target": n_frames,
+            "frames_stacked": 0, "frames_total": 0, "frames_rejected": 0,
+            "last_offset": [0.0, 0.0], "snr_gain": 0.0,
+            "error": None, "finished": False,
+        })
+
+    def _cancelled() -> bool:
+        with _stack_lock:
+            return _stack_state["cancelled"]
+
+    try:
+        for i in range(n_frames):
+            if _cancelled():
+                logger.info("Live stacking cancelled after %d frames", stacker.frames_stacked)
+                break
+            try:
+                with _device_lock:
+                    _cam.expose(exposure_s, readout_timeout=60.0, cancel_check=_cancelled)
+                    img = _cam.image_array()
+            except ExposureCancelled:
+                logger.info("Live stacking: exposure cancelled")
+                break
+            except Exception as exc:
+                logger.error("Live stacking: frame %d capture failed: %s", i + 1, exc)
+                continue
+
+            info = stacker.add_frame(img)
+            logger.info("Live stacking: frame %d/%d — %s (stacked=%d offset=%s)",
+                        i + 1, n_frames, info["reason"], info["frames_stacked"],
+                        info["offset"])
+
+            # Refresh the preview periodically (and on the final frame).
+            if stacker.frames_stacked and (
+                stacker.frames_stacked % max(1, preview_every) == 0 or i == n_frames - 1
+            ):
+                try:
+                    png = stacker.preview_png_b64()
+                except Exception as exc:
+                    png = None
+                    logger.warning("Live stacking: preview render failed: %s", exc)
+                with _stack_lock:
+                    if png:
+                        _stack_preview_b64 = png
+
+            with _stack_lock:
+                _stack_state.update({
+                    "frames_stacked":  stacker.frames_stacked,
+                    "frames_total":    stacker.frames_total,
+                    "frames_rejected": stacker.frames_rejected,
+                    "last_offset":     list(info["offset"]),
+                    "snr_gain":        round(stacker.snr_gain(), 2),
+                })
+
+        # Final preview render so the UI always ends on the best image.
+        if stacker.frames_stacked:
+            try:
+                png = stacker.preview_png_b64()
+                if png:
+                    with _stack_lock:
+                        _stack_preview_b64 = png
+            except Exception:
+                pass
+        with _stack_lock:
+            _stack_state["running"]  = False
+            _stack_state["finished"] = True
+        logger.info("Live stacking complete — %d frames stacked (SNR gain ~%.1f×)",
+                    stacker.frames_stacked, stacker.snr_gain())
+    except Exception as exc:
+        with _stack_lock:
+            _stack_state["error"]   = str(exc)
+            _stack_state["running"] = False
+        logger.error("Live stacking crashed: %s", exc)
 
 
 def _count_stars_in_array(image_array) -> int:
@@ -875,6 +1154,22 @@ def _poll_loop() -> None:
                     logger.warning("Camera connection lost")
                 _cam_connected_prev = False
 
+        # Poll focuser position only when it isn't mid-autofocus (the sweep holds
+        # _device_lock and drives the focuser itself; concurrent reads are skipped
+        # to avoid contending with in-progress moves on stricter drivers).
+        with _state_lock:
+            foc_enabled = _state["focuser"]["enabled"]
+            af_running  = _state["focuser"]["autofocus_running"]
+        if foc_enabled and _foc is not None and not af_running:
+            try:
+                pos    = _foc.position()
+                moving = _foc.is_moving()
+                with _state_lock:
+                    _state["focuser"].update(connected=True, position=pos, moving=moving)
+            except Exception:
+                with _state_lock:
+                    _state["focuser"]["connected"] = False
+
         if _safety_mgr is not None:
             try:
                 safety_snap = _safety_mgr.status()
@@ -902,9 +1197,10 @@ def _start_poller() -> None:
 def _load_config() -> dict:
     try:
         with open("config.yaml") as fh:
-            return yaml.safe_load(fh)
+            cfg = yaml.safe_load(fh)
     except FileNotFoundError:
-        return {}
+        cfg = {}
+    return enrich_config_with_location(cfg)
 
 
 # ── Pier cam (ZWO SDK live preview) ───────────────────────────────────────────
@@ -1084,7 +1380,7 @@ _SEESTAR_AP_IP = "192.168.4.1"
 
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
-    global _tel, _cam, _cover
+    global _tel, _cam, _cover, _foc
     data    = request.get_json(force=True) or {}
     host    = data.get("host", "")
     port    = int(data.get("port", 11111))
@@ -1138,6 +1434,18 @@ def api_connect():
             errors.append(f"camera: {exc}")
             _cam = None
 
+    if devices.get("focuser", {}).get("enabled", False):
+        num = devices["focuser"].get("device_number", 0)
+        try:
+            _foc = Focuser(host, port, num, api_ver)
+            _foc.connect()
+            with _state_lock:
+                _state["focuser"].update(enabled=True, connected=True,
+                                         position=_foc.position())
+        except Exception as exc:
+            logger.warning("Focuser connect failed (autofocus unavailable): %s", exc)
+            _foc = None
+
     if devices.get("covercalibrator", {}).get("enabled", False):
         num = devices["covercalibrator"].get("device_number", 0)
         try:
@@ -1180,7 +1488,7 @@ def api_connect():
 
 @app.route("/api/disconnect", methods=["POST"])
 def api_disconnect():
-    global _tel, _cam, _cover
+    global _tel, _cam, _cover, _foc
     with _state_lock:
         _server = _state.get("server") or {}
     _disc_host = _server.get("address", "")
@@ -1190,6 +1498,7 @@ def api_disconnect():
         _state["connected"] = False
         _state["telescope"]["connected"] = False
         _state["camera"]["connected"] = False
+        _state["focuser"]["connected"] = False
         _state["server"] = None
     try:
         if _tel is not None:
@@ -1202,6 +1511,11 @@ def api_disconnect():
     except Exception:
         pass
     try:
+        if _foc is not None:
+            _foc.disconnect()
+    except Exception:
+        pass
+    try:
         if _cover is not None:
             _cover.disconnect()
     except Exception:
@@ -1209,6 +1523,7 @@ def api_disconnect():
     _tel   = None
     _cam   = None
     _cover = None
+    _foc   = None
     with _state_lock:
         _state["telescope"]["arm_state"] = None
         _state["telescope"]["arm_busy"]  = False
@@ -1583,6 +1898,16 @@ def api_safety():
     return jsonify({"enabled": True, **_safety_mgr.status()})
 
 
+@app.route("/api/safety/reset", methods=["POST"])
+def api_safety_reset():
+    """Manually clear a latched unsafe/parked state so operations can resume."""
+    if _safety_mgr is None:
+        return jsonify({"error": "Safety manager not enabled"}), 400
+    cleared = _safety_mgr.reset()
+    logger.info("Safety state reset via API (was: %s)", cleared or "safe")
+    return jsonify({"ok": True, "cleared": cleared, **_safety_mgr.status()})
+
+
 @app.route("/api/image")
 def api_image():
     with _last_image_lock:
@@ -1809,6 +2134,228 @@ def api_horizon_scan_cancel():
 def api_horizon_scan_status():
     with _scan_lock:
         return jsonify(dict(_scan_state))
+
+
+# ── Autofocus ─────────────────────────────────────────────────────────────────
+
+@app.route("/api/focus/auto", methods=["POST"])
+def api_autofocus_start():
+    if _foc is None:
+        return jsonify({"error": "Focuser not connected — enable devices.focuser "
+                                 "in config.yaml and reconnect"}), 400
+    if _cam is None:
+        return jsonify({"error": "Camera not connected — autofocus needs it to "
+                                 "measure star sharpness"}), 400
+    with _focus_lock:
+        if _focus_state["running"]:
+            return jsonify({"error": "Autofocus already running"}), 409
+    with _scan_lock:
+        if _scan_state["running"]:
+            return jsonify({"error": "Horizon scan in progress — wait for it to finish"}), 409
+    with _sched_lock:
+        if _sched_state.get("running"):
+            return jsonify({"error": "Schedule running — abort it before autofocus"}), 409
+
+    data = request.get_json(force=True) or {}
+    cfg  = _load_config().get("autofocus", {}) or {}
+
+    def _num(key, default, cast):
+        val = data.get(key, cfg.get(key, default))
+        try:
+            return cast(val)
+        except (TypeError, ValueError):
+            return cast(default)
+
+    exposure_s     = _num("exposure_s", 2.0, float)
+    step_size      = _num("step_size", 50, int)
+    steps_per_side = _num("steps_per_side", 5, int)
+    settle_s       = _num("settle_s", 1.0, float)
+    samples        = _num("samples_per_point", 1, int)
+    min_pos = cfg.get("min_position", data.get("min_position"))
+    max_pos = cfg.get("max_position", data.get("max_position"))
+    min_pos = int(min_pos) if min_pos is not None else None
+    max_pos = int(max_pos) if max_pos is not None else None
+
+    t = threading.Thread(
+        target=_run_autofocus_bg,
+        args=(exposure_s, step_size, steps_per_side, settle_s, samples, min_pos, max_pos),
+        daemon=True,
+        name="autofocus",
+    )
+    t.start()
+    logger.info(
+        "Autofocus started (exp=%.1fs step=%d ±%d settle=%.1fs samples=%d)",
+        exposure_s, step_size, steps_per_side, settle_s, samples,
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/focus/auto", methods=["DELETE"])
+def api_autofocus_cancel():
+    with _focus_lock:
+        if not _focus_state["running"]:
+            return jsonify({"ok": True, "message": "No autofocus running"})
+        _focus_state["cancelled"] = True
+    logger.info("Autofocus cancellation requested")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/focus/auto/status", methods=["GET"])
+def api_autofocus_status():
+    with _focus_lock:
+        return jsonify(dict(_focus_state))
+
+
+# ── Auto-centering (plate-solve goto refinement) ──────────────────────────────
+
+@app.route("/api/center/run", methods=["POST"])
+def api_center_start():
+    if _tel is None:
+        return jsonify({"error": "Telescope not connected"}), 400
+    if _cam is None:
+        return jsonify({"error": "Camera not connected — needed to plate-solve"}), 400
+    with _center_lock:
+        if _center_state["running"]:
+            return jsonify({"error": "Auto-centering already running"}), 409
+    with _scan_lock:
+        if _scan_state["running"]:
+            return jsonify({"error": "Horizon scan in progress"}), 409
+    with _focus_lock:
+        if _focus_state["running"]:
+            return jsonify({"error": "Autofocus in progress"}), 409
+    with _sched_lock:
+        if _sched_state.get("running"):
+            return jsonify({"error": "Schedule running — abort it first"}), 409
+
+    data = request.get_json(force=True) or {}
+    # RA accepted in hours (UI/catalog convention); Dec in degrees.
+    try:
+        ra_h    = float(data["ra"])
+        dec_deg = float(data["dec"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "Provide target 'ra' (hours) and 'dec' (degrees)"}), 400
+    if not (0.0 <= ra_h < 24.0):
+        return jsonify({"error": "RA must be in range [0, 24)"}), 400
+    if not (-90.0 <= dec_deg <= 90.0):
+        return jsonify({"error": "Dec must be in range [-90, 90]"}), 400
+
+    # Reuse the shared safety + horizon-mask gate before commanding any motion.
+    force = bool(data.get("force", False))
+    rejection = _slew_rejection(ra_h, dec_deg)
+    if rejection is not None and not force:
+        logger.warning("Auto-centering rejected — %s", rejection)
+        return jsonify({"error": f"Auto-centering rejected — {rejection}",
+                        "blocked": True}), 403
+
+    cfg = _load_config().get("centering", {}) or {}
+
+    def _num(key, default, cast):
+        try:
+            return cast(data.get(key, cfg.get(key, default)))
+        except (TypeError, ValueError):
+            return cast(default)
+
+    exposure_s = _num("exposure_s", 3.0, float)
+    tolerance  = _num("tolerance_arcmin", 3.0, float)
+    max_iter   = _num("max_iterations", 4, int)
+    settle_s   = _num("settle_s", 2.0, float)
+
+    t = threading.Thread(
+        target=_run_centering_bg,
+        args=(ra_h * 15.0, dec_deg, exposure_s, tolerance, max_iter, settle_s),
+        daemon=True,
+        name="auto-center",
+    )
+    t.start()
+    logger.info(
+        "Auto-centering started → RA=%.4f h Dec=%.4f° (tol=%.1f′ max_iter=%d exp=%.1fs)",
+        ra_h, dec_deg, tolerance, max_iter, exposure_s,
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/center/run", methods=["DELETE"])
+def api_center_cancel():
+    with _center_lock:
+        if not _center_state["running"]:
+            return jsonify({"ok": True, "message": "No auto-centering running"})
+        _center_state["cancelled"] = True
+    logger.info("Auto-centering cancellation requested")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/center/status", methods=["GET"])
+def api_center_status():
+    with _center_lock:
+        return jsonify(dict(_center_state))
+
+
+# ── Live stacking ─────────────────────────────────────────────────────────────
+
+@app.route("/api/stack/start", methods=["POST"])
+def api_stack_start():
+    if _cam is None:
+        return jsonify({"error": "Camera not connected"}), 400
+    with _stack_lock:
+        if _stack_state["running"]:
+            return jsonify({"error": "Live stacking already running"}), 409
+    with _focus_lock:
+        if _focus_state["running"]:
+            return jsonify({"error": "Autofocus in progress"}), 409
+    with _center_lock:
+        if _center_state["running"]:
+            return jsonify({"error": "Auto-centering in progress"}), 409
+    with _sched_lock:
+        if _sched_state.get("running"):
+            return jsonify({"error": "Schedule running — abort it first"}), 409
+
+    data = request.get_json(force=True) or {}
+    cfg  = _load_config().get("stacking", {}) or {}
+
+    def _num(key, default, cast):
+        try:
+            return cast(data.get(key, cfg.get(key, default)))
+        except (TypeError, ValueError):
+            return cast(default)
+
+    n_frames      = max(1, _num("frames", 20, int))
+    exposure_s    = _num("exposure_s", 10.0, float)
+    preview_every = max(1, _num("preview_every", 1, int))
+
+    t = threading.Thread(
+        target=_run_stacking_bg,
+        args=(n_frames, exposure_s, preview_every),
+        daemon=True,
+        name="live-stack",
+    )
+    t.start()
+    logger.info("Live stacking started — %d × %.1fs frames", n_frames, exposure_s)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/stack/start", methods=["DELETE"])
+def api_stack_stop():
+    with _stack_lock:
+        if not _stack_state["running"]:
+            return jsonify({"ok": True, "message": "No live stacking running"})
+        _stack_state["cancelled"] = True
+    logger.info("Live stacking stop requested")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/stack/status", methods=["GET"])
+def api_stack_status():
+    with _stack_lock:
+        return jsonify(dict(_stack_state))
+
+
+@app.route("/api/stack/preview", methods=["GET"])
+def api_stack_preview():
+    with _stack_lock:
+        png = _stack_preview_b64
+    if not png:
+        return jsonify({"error": "No stacked preview available yet"}), 404
+    return Response(base64.b64decode(png), content_type="image/png")
 
 
 @app.route("/api/pier-cam/snapshot")
@@ -3270,6 +3817,8 @@ html[data-night] img, html[data-night] video { filter: none; }
     <span class="dot dot-green" id="safetyDot"></span>
     <span id="safetyLabel" style="letter-spacing:1px;font-size:11px;">SAFE</span>
     <span id="safetyReason" style="color:var(--dim);font-size:10px;margin-left:4px;"></span>
+    <button id="safetyResetBtn" onclick="resetSafety()" title="Clear the latched unsafe state and resume operations"
+            style="display:none;margin-left:6px;font-size:10px;padding:1px 6px;cursor:pointer;">Reset</button>
   </div>
 
   <div style="color:var(--dim);font-size:11px;" id="sunEl"></div>
@@ -3277,12 +3826,6 @@ html[data-night] img, html[data-night] video { filter: none; }
   <div id="errBanner" style="display:none;color:var(--red);font-size:11px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title=""></div>
   <div class="hdr-right">
     <button class="btn btn-dim" id="btnNightMode" onclick="toggleNightMode()" title="Toggle night-vision mode" style="font-size:13px;padding:4px 10px;letter-spacing:0;">👁</button>
-    <button class="btn btn-dim" id="btnHdrTel" onclick="openTelescopeModal()">
-      <span class="dot dot-gray" id="telDot" style="vertical-align:middle;margin-right:5px;"></span>Telescope
-    </button>
-    <button class="btn btn-dim" id="btnHdrCam" onclick="openCameraModal()">
-      <span class="dot dot-gray" id="camDot" style="vertical-align:middle;margin-right:5px;"></span>Camera
-    </button>
     <button class="btn btn-dim" id="btnConfig" onclick="openConfigModal()">Config</button>
     <button class="btn btn-dim" id="btnSchedule" onclick="openScheduleModal()" style="border-color:var(--blue);color:var(--blue);display:none;">🗓 Schedule</button>
     <button class="btn btn-dim" id="btnHistory"  onclick="openHistoryModal()" style="border-color:var(--yellow);color:var(--yellow);position:relative;">
@@ -3295,7 +3838,7 @@ html[data-night] img, html[data-night] video { filter: none; }
 <div class="main" id="mainGrid">
 
   <!-- Empty state shown when nothing to display -->
-  <div class="main-empty" id="mainEmpty" style="grid-column:1/-1;background:transparent;">
+  <div class="main-empty" id="mainEmpty" style="grid-column:1/-1;background:transparent;display:none;">
     <div style="font-size:32px;opacity:0.25">✦</div>
     <div>No active feeds — connect a device to get started</div>
   </div>
@@ -3318,7 +3861,7 @@ html[data-night] img, html[data-night] video { filter: none; }
   <!-- Panel row: telescope + camera side by side with draggable divider -->
   <div id="panelRow" style="display:flex;min-height:0;overflow:hidden;gap:0;">
   <!-- Telescope Panel -->
-  <div class="panel-embed hidden" id="telModal" style="flex:1;min-width:0;">
+  <div class="panel-embed" id="telModal" style="flex:1;min-width:0;">
     <div class="panel-embed-inner">
       <div class="modal-header">
         <div class="modal-title">
@@ -3465,24 +4008,12 @@ html[data-night] img, html[data-night] video { filter: none; }
 
   <div class="resize-handle-v" id="panelResizer"></div>
   <!-- Camera Panel -->
-  <div class="panel-embed hidden" id="camModal" style="flex:1;min-width:0;">
+  <div class="panel-embed" id="camModal" style="flex:1;min-width:0;">
     <div class="panel-embed-inner">
       <div class="modal-header">
         <div class="modal-title">
           <span class="dot dot-gray" id="camModalDot"></span>
           📷 Camera Control
-        </div>
-      </div>
-
-      <!-- Last exposure preview (shown after first capture) -->
-      <div id="camLastExpSection" style="display:none;border-bottom:1px solid var(--border);padding-bottom:14px;">
-        <div class="panel-label" style="margin-bottom:8px;">Last Exposure</div>
-        <div style="display:flex;gap:14px;align-items:flex-start;">
-          <img id="camLastImg" src="" alt="Last exposure" style="max-width:55%;max-height:200px;object-fit:contain;image-rendering:pixelated;border-radius:6px;background:#000;flex-shrink:0;">
-          <div>
-            <div id="imgReadyBadge" style="font-size:11px;color:var(--green);margin-bottom:6px;font-weight:bold;min-height:16px;"></div>
-            <div id="camLastMeta" style="font-size:11px;color:var(--dim);line-height:1.8;"></div>
-          </div>
         </div>
       </div>
 
@@ -4317,6 +4848,7 @@ function renderSafety(sf) {
   const label  = document.getElementById("safetyLabel");
   const reason = document.getElementById("safetyReason");
   const sunEl  = document.getElementById("sunEl");
+  const resetBtn = document.getElementById("safetyResetBtn");
 
   if (!sf || sf.safe === undefined) { pill.style.display = "none"; return; }
   pill.style.display = "flex";
@@ -4326,11 +4858,13 @@ function renderSafety(sf) {
     label.textContent = "SAFE";
     label.style.color = "var(--green)";
     reason.textContent = sf.heartbeat_ok ? "" : "hb?";
+    if (resetBtn) resetBtn.style.display = "none";
   } else {
     dot.className     = "dot dot-red pulse";
     label.textContent = "UNSAFE";
     label.style.color = "var(--red)";
     reason.textContent = sf.reason ? `· ${sf.reason}` : "";
+    if (resetBtn) resetBtn.style.display = "inline-block";
   }
 
   if (sf.sun_elevation != null) {
@@ -4344,18 +4878,26 @@ function renderSafety(sf) {
   }
 }
 
+async function resetSafety() {
+  const btn = document.getElementById("safetyResetBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    const r = await fetch("/api/safety/reset", { method: "POST" });
+    const j = await r.json();
+    if (!r.ok) { alert(j.error || "Safety reset failed"); }
+    else { renderSafety(j); }
+  } catch (e) {
+    alert("Safety reset failed: " + e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Reset"; }
+  }
+}
+
 // ── Telescope ───────────────────────────────────────────────────────────────
 
 function renderTelescope(t) {
   const dotCls = t.connected ? "dot dot-green" : "dot dot-gray";
-  document.getElementById("telDot").className      = dotCls;
   document.getElementById("telModalDot").className = dotCls;
-
-  // Update header button style to show connection state
-  const hdrBtn = document.getElementById("btnHdrTel");
-  if (t.connected)       hdrBtn.className = "btn btn-green";
-  else if (t.enabled)    hdrBtn.className = "btn btn-red";
-  else                   hdrBtn.className = "btn btn-dim";
 
   const raEl  = document.getElementById("telModalRA");
   const decEl = document.getElementById("telModalDec");
@@ -4425,12 +4967,6 @@ function renderTelescope(t) {
 
   updateSkyOverlay(t);
 
-  // Show/hide telescope panel based on whether device is enabled
-  const telPanel = document.getElementById("telModal");
-  if (telPanel) {
-    telPanel.classList.toggle("hidden", !t.enabled);
-    updateImgRow();
-  }
 }
 
 // ── Camera ───────────────────────────────────────────────────────────────────
@@ -4439,15 +4975,7 @@ const CAM_CLASSES = ["cs-idle","cs-wait","cs-expose","cs-read","cs-dl","cs-error
 
 function renderCamera(c) {
   const dotCls = c.connected ? "dot dot-green" : "dot dot-gray";
-  document.getElementById("camDot").className      = dotCls;
   document.getElementById("camModalDot").className = dotCls;
-
-  // Update header button style
-  const hdrBtn = document.getElementById("btnHdrCam");
-  if (c.connected && c.exposing) hdrBtn.className = "btn btn-yellow";
-  else if (c.connected)          hdrBtn.className = "btn btn-green";
-  else if (c.enabled)            hdrBtn.className = "btn btn-red";
-  else                           hdrBtn.className = "btn btn-dim";
 
   const stEl  = document.getElementById("camModalState");
   const subEl = document.getElementById("camModalSub");
@@ -4464,13 +4992,6 @@ function renderCamera(c) {
     stEl.textContent = "—"; stEl.className = "cam-state cs-idle";
     subEl.textContent = c.enabled ? "Disconnected" : "Not enabled";
     rdEl.textContent  = "";
-  }
-
-  // Also reflect image-ready in main area badge
-  const imgReadyBadge = document.getElementById("imgReadyBadge");
-  if (imgReadyBadge) {
-    imgReadyBadge.textContent = c.image_ready ? "✓ IMAGE READY" : "";
-    imgReadyBadge.style.color = c.image_ready ? "var(--green)" : "var(--dim)";
   }
 
   document.getElementById("btnModalExpose").disabled   = !c.connected || c.exposing;
@@ -4495,12 +5016,6 @@ function renderCamera(c) {
     ring.classList.remove("active");
   }
 
-  // Show/hide camera panel based on whether device is enabled
-  const camPanel = document.getElementById("camModal");
-  if (camPanel) {
-    camPanel.classList.toggle("hidden", !c.enabled);
-    updateImgRow();
-  }
 }
 
 // ── Night-vision toggle ───────────────────────────────────────────────────────
@@ -4715,31 +5230,6 @@ async function renderImage(s) {
   if (s.image_id === _lastImageId) return;
   _lastImageId = s.image_id;
 
-  const section = document.getElementById("camLastExpSection");
-  const img     = document.getElementById("camLastImg");
-  const meta    = document.getElementById("camLastMeta");
-
-  if (section) section.style.display = "";
-  if (meta) meta.innerHTML = "Downloading…";
-
-  try {
-    const r    = await fetch("/api/image");
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const blob = await r.blob();
-    const url  = URL.createObjectURL(blob);
-    if (img) img.src = url;
-    const kb = (blob.size / 1024).toFixed(1);
-    const ts = new Date().toLocaleTimeString();
-    if (img) img.onload = () => {
-      if (meta) meta.innerHTML =
-        `Captured: <span>${ts}</span><br>` +
-        `Size: <span>${img.naturalWidth} × ${img.naturalHeight} px</span><br>` +
-        `File: <span>${kb} KB (PNG)</span>`;
-    };
-  } catch (e) {
-    if (meta) meta.innerHTML = `<span style="color:var(--red)">Image load failed: ${e.message}</span>`;
-    _lastImageId = -1;
-  }
 }
 
 // ── Pier cam ──────────────────────────────────────────────────────────────────

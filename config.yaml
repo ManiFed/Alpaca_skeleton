@@ -28,6 +28,23 @@ telescope:
 camera:
   exposure_duration: 1.0
   binning: 1
+autofocus:
+  exposure_s: 2.0          # short exposure per focus sample
+  step_size: 50            # focuser steps between samples
+  steps_per_side: 5        # sweep visits 2*steps_per_side + 1 positions
+  settle_s: 1.0            # vibration settle after each move
+  samples_per_point: 1     # frames median-combined per position (>1 fights noise)
+  min_position: null       # hard focuser travel floor (null = none)
+  max_position: null       # hard focuser travel ceiling (null = none)
+centering:
+  exposure_s: 3.0          # exposure per plate-solve frame
+  tolerance_arcmin: 3.0    # stop once target is within this of frame centre
+  max_iterations: 4        # give up after this many solve attempts
+  settle_s: 2.0            # vibration settle after each slew
+stacking:
+  frames: 20               # number of sub-frames to capture and stack
+  exposure_s: 10.0         # per sub-frame exposure
+  preview_every: 1         # re-render the live preview every N stacked frames
 logging:
   level: INFO
   format: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
