@@ -74,8 +74,8 @@ node_v1-main/
 | Phase | Status | Goal |
 |-------|--------|------|
 | **0 — Proof of Concept** | ✅ Code complete | First AAVSO-accepted automated observation |
-| **1 — Core System** | In progress | Installers shipped, member accounts live, Flutter app, 3–5 beta nodes |
-| **2 — Launch** | Not started | 50 nodes, App Store, first ATel, first grant application |
+| **1 — Core System** | In progress | Installers shipped, member accounts live, web dashboard, 3–5 beta nodes |
+| **2 — Launch** | Not started | 50 nodes, marketing website live, first ATel, first grant application |
 | **3 — Growth** | Not started | 200 nodes, 25 countries, 10,000+ AAVSO submissions |
 
 ---
@@ -687,7 +687,7 @@ Non-fatal — no cover calibrator device is configured at ALPACA index 0. Suppre
 | Member auth | PBKDF2-SHA256 + bearer tokens | 260K rounds, per-user salt, hashed token storage |
 | Sleep prevention | OS-native APIs | `SetThreadExecutionState` (Win), `caffeinate` (Mac), `systemd-inhibit` (Linux) |
 | Packaging | PyInstaller one-file | NSIS (Win), pkgbuild/productbuild (Mac), systemd install.sh (Linux) |
-| Mobile app | Flutter / Dart *(Phase 1)* | Single codebase iOS, Android, PWA |
+| Web dashboard & marketing site | React / TypeScript *(Phase 1)* | Mobile-first responsive design; runs locally for development |
 
 ---
 
