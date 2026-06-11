@@ -292,12 +292,9 @@ optionally printed on a physical card for members who prefer it (accessibility o
 
 #### Secondary Path: Node Builder (Guided Hardware Configurator)
 
-For members who want a more autonomous or weatherproof setup, or who don't yet own a
-Seestar, the Node Builder is a community resource that recommends tested hardware
-combinations. It is not a storefront — it links to retailers at standard prices.
+It's a storefront if you don't have the necessary equipment to operate a node.
 
 The Node Builder is a sleek, dark space-themed mobile-first wizard:
-- Accessibility-first throughout (VoiceOver, large taps, audio descriptions)
 - Starts with a Hardware Inventory Quiz to detect what the user already has
 - Persistent summary panel showing estimated science impact and uptime for the build
 - Hero preset: "Complete Autonomous Node" — fully assembled recommendation
