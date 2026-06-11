@@ -80,6 +80,7 @@ def main() -> None:
     def maintenance():
         data_pipeline.prune_raw_images(config)
         nights.generate_pending_summaries(config)
+        registry.refresh_all_performance()
         # Light pollution drifts on month scales — refresh on day 1
         if time.gmtime().tm_mday == 1:
             registry.refresh_light_pollution(

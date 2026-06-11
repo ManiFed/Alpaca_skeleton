@@ -25,6 +25,9 @@ Admin endpoints (X-Admin-Key header):
 
 import json
 import logging
+import re
+import secrets
+import string
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -78,14 +81,68 @@ def require_admin(fn):
 
 # ── Node management ────────────────────────────────────────────────────────────
 
+def _generate_activation_code(year: int | None = None) -> str:
+    """Generate a unique BS-YYYY-XXXXXXXX activation code."""
+    y = year or datetime.now(timezone.utc).year
+    chars = string.ascii_uppercase + string.digits
+    suffix = "".join(secrets.choice(chars) for _ in range(8))
+    return f"BS-{y}-{suffix}"
+
+
+def _validate_and_consume_code(code: str, node_id: str) -> str | None:
+    """
+    Validate an activation code and mark it consumed.
+    Returns the associated user_id (may be None for generic codes), or raises
+    ValueError if the code is invalid, expired, or already used.
+    """
+    row = db.query_one("SELECT * FROM activation_codes WHERE code = ?", (code,))
+    if row is None:
+        raise ValueError(f"activation code not found: {code}")
+    if row["used_at"]:
+        raise ValueError("activation code already used")
+    if row["expires_at"] and row["expires_at"] < _now():
+        raise ValueError("activation code expired")
+
+    db.execute(
+        "UPDATE activation_codes SET used_at = ?, node_id = ? WHERE code = ?",
+        (_now(), node_id, code),
+    )
+    return row["user_id"]  # may be None
+
+
 @app.route("/api/v1/nodes/register", methods=["POST"])
 def api_register():
     info = request.get_json(force=True, silent=True) or {}
+    activation_code = str(info.pop("activation_code", "") or "").strip().upper()
+
     try:
         creds = registry.register_node(
             info, _config.get("light_pollution", {}).get("api_key", ""))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+    # Consume the activation code and link the node to the member account
+    if activation_code:
+        try:
+            user_id = _validate_and_consume_code(activation_code, creds["node_id"])
+        except ValueError as exc:
+            logger.warning("Activation code error for %s: %s", creds["node_id"], exc)
+            # Registration still succeeds — the node works, just isn't linked
+            creds["activation_warning"] = str(exc)
+        else:
+            if user_id:
+                if not db.query_one(
+                    "SELECT 1 FROM node_members WHERE node_id = ? AND user_id = ?",
+                    (creds["node_id"], user_id),
+                ):
+                    db.execute(
+                        "INSERT INTO node_members (node_id, user_id, claimed_at)"
+                        " VALUES (?,?,?)",
+                        (creds["node_id"], user_id, _now()),
+                    )
+            logger.info("Activation code %s consumed — node %s linked to user %s",
+                        activation_code, creds["node_id"], user_id or "(generic)")
+
     return jsonify(creds)
 
 
@@ -469,6 +526,45 @@ def api_me_notification_read(user, notif_id):
         (_now(), notif_id, user["user_id"]),
     )
     return jsonify({"ok": True})
+
+
+@app.route("/api/v1/me/activation-code", methods=["POST"])
+@auth.require_member
+def api_me_generate_activation_code(user):
+    """
+    Generate a personal activation code for the logged-in member.
+    Used during the installer flow to link a new node to the account.
+    """
+    code = _generate_activation_code()
+    expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    db.execute(
+        "INSERT INTO activation_codes (code, user_id, created_at, expires_at)"
+        " VALUES (?,?,?,?)",
+        (code, user["user_id"], _now(), expires),
+    )
+    logger.info("Activation code generated for member %s: %s", user["user_id"], code)
+    return jsonify({"code": code, "expires_at": expires})
+
+
+@app.route("/api/v1/admin/activation-codes", methods=["POST"])
+@require_admin
+def api_admin_generate_code():
+    """Generate activation codes in bulk (admin). Optional user_id links them."""
+    body = request.get_json(force=True, silent=True) or {}
+    n = min(int(body.get("count", 1)), 100)
+    user_id = body.get("user_id")
+    days = int(body.get("expires_days", 90))
+    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    codes = []
+    for _ in range(n):
+        code = _generate_activation_code()
+        db.execute(
+            "INSERT INTO activation_codes (code, user_id, created_at, expires_at)"
+            " VALUES (?,?,?,?)",
+            (code, user_id, _now(), expires),
+        )
+        codes.append(code)
+    return jsonify({"codes": codes, "expires_at": expires})
 
 
 @app.route("/api/v1/me/notifications/prefs", methods=["PUT"])

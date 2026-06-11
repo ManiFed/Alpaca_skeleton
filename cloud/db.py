@@ -25,32 +25,90 @@ _init_lock = threading.Lock()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS nodes (
+    -- Identity
     node_id                TEXT PRIMARY KEY,
     api_key                TEXT NOT NULL,
     owner_name             TEXT DEFAULT '',
     owner_email            TEXT DEFAULT '',
+
+    -- Location (used for observability windows, airmass, twilight times)
     latitude               REAL NOT NULL,
     longitude              REAL NOT NULL,
     elevation              REAL DEFAULT 0,
     city                   TEXT DEFAULT '',
     country                TEXT DEFAULT '',
     utc_offset_hours       REAL DEFAULT 0,
+
+    -- Sky quality at this location
+    light_pollution_mpsas  REAL DEFAULT 20.0,
+    bortle                 INTEGER DEFAULT 5,
+
+    -- Local horizon obstructions: JSON [[alt_deg, az_deg], ...]
+    -- Used by scheduler to avoid targets behind trees/buildings
+    horizon_mask           TEXT DEFAULT '[]',
+
+    -- Hardware: telescope
+    tier                   INTEGER DEFAULT 1,      -- 1=Seestar, 2=Filtered, 3=Spectroscopy
     telescope_model        TEXT DEFAULT 'ZWO Seestar S50',
     aperture_mm            REAL DEFAULT 50,
     focal_length_mm        REAL DEFAULT 250,
-    fov_deg                REAL DEFAULT 1.27,
+    fov_deg                REAL DEFAULT 1.27,      -- diagonal, degrees
     pixel_scale_arcsec     REAL DEFAULT 2.4,
-    filters                TEXT DEFAULT 'CV',
-    mag_bright_limit       REAL DEFAULT 6.0,
-    mag_faint_limit        REAL DEFAULT 15.5,
+    mount_type             TEXT DEFAULT 'alt_az',  -- alt_az | equatorial
+    max_exposure_s         REAL DEFAULT 30.0,      -- field rotation limit per sub
+
+    -- Hardware: camera
+    camera_model           TEXT DEFAULT '',
+    cooled_camera          INTEGER DEFAULT 0,      -- 1 = TEC cooled (lower noise, fainter limit)
+
+    -- Hardware: photometry capability
+    filter_set             TEXT DEFAULT '["CV"]',  -- JSON list, e.g. ["B","V","R","I"]
+    mag_bright_limit       REAL DEFAULT 6.0,       -- saturates brighter than this
+    mag_faint_limit        REAL DEFAULT 15.5,      -- SNR < threshold fainter than this
     min_altitude_deg       REAL DEFAULT 25.0,
-    max_exposure_s         REAL DEFAULT 30.0,
-    light_pollution_mpsas  REAL DEFAULT 20.0,
-    bortle                 INTEGER DEFAULT 5,
-    status                 TEXT DEFAULT 'active',
+
+    -- Hardware: autonomy (critical for overnight unattended operation)
+    -- Each flag improves the node's ability to run without human intervention
+    has_dew_heater         INTEGER DEFAULT 0,      -- prevents lens fogging in humid conditions
+    has_power_mgmt         INTEGER DEFAULT 0,      -- smart power box: can remotely cycle Seestar
+    has_enclosure          INTEGER DEFAULT 0,      -- dome/minidome: operates in light rain/wind
+    has_ups                INTEGER DEFAULT 0,      -- survives brief power cuts
+
+    -- Status and connectivity
+    status                 TEXT DEFAULT 'active',  -- active | offline | disabled
     registered_at          TEXT NOT NULL,
     last_heartbeat         TEXT,
-    last_conditions        TEXT DEFAULT '{}'    -- JSON from heartbeat
+    last_conditions        TEXT DEFAULT '{}',      -- JSON snapshot from heartbeat
+
+    -- Operator notes visible to the scheduler
+    -- e.g. "south horizon blocked past az=200", "poor in high wind", "WiFi unstable"
+    scheduling_notes       TEXT DEFAULT '',
+
+    -- Target type preferences (JSON list): types this node is historically best at
+    -- e.g. ["SN", "nova"] means prioritise these targets for this node
+    preferred_targets      TEXT DEFAULT '[]',
+
+    -- ── Performance metrics (recomputed nightly by the maintenance loop) ─────
+    -- These are the ground truth for whether a node actually delivers science.
+    -- The scheduler uses reliability_score as a final multiplier on all scores:
+    -- a node that looks good on paper but consistently produces outlier or
+    -- rejected data will be deprioritised.
+
+    total_observations     INTEGER DEFAULT 0,      -- all-time measurement count
+    aavso_accepted         INTEGER DEFAULT 0,      -- submitted and accepted by AAVSO
+    aavso_rejected         INTEGER DEFAULT 0,      -- flagged as outlier (not submitted)
+    mean_uncertainty       REAL DEFAULT 0.0,       -- avg photometric uncertainty (mag)
+    mean_fwhm              REAL DEFAULT 0.0,       -- avg seeing (pixels, proxy for image quality)
+    clear_nights_30d       INTEGER DEFAULT 0,      -- distinct nights with ≥1 obs in last 30 days
+    outlier_rate           REAL DEFAULT 0.0,       -- fraction flagged as cross-val outlier (0..1)
+
+    -- Composite reliability score (0..1) used as a multiplier by the scheduler.
+    -- Formula: 0.40 × acceptance_rate + 0.25 × (1 − outlier_rate)
+    --        + 0.20 × clear_fraction_30d + 0.15 × precision_factor
+    -- New nodes start at 0.50 and converge toward their true value over ~20 observations.
+    reliability_score      REAL DEFAULT 0.5,
+
+    perf_updated_at        TEXT DEFAULT ''         -- ISO timestamp of last performance refresh
 );
 
 CREATE TABLE IF NOT EXISTS targets (
@@ -206,11 +264,63 @@ CREATE TABLE IF NOT EXISTS review_queue (
     decision       TEXT DEFAULT 'pending'        -- pending | accept | reject
 );
 CREATE INDEX IF NOT EXISTS idx_review_pending ON review_queue(decision);
+
+CREATE TABLE IF NOT EXISTS activation_codes (
+    code         TEXT PRIMARY KEY,
+    user_id      TEXT REFERENCES users(user_id), -- NULL = generic (not pre-linked)
+    node_id      TEXT DEFAULT '',               -- set when consumed
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT,                          -- NULL = no expiry
+    used_at      TEXT                           -- NULL = not yet used
+);
+CREATE INDEX IF NOT EXISTS idx_codes_user ON activation_codes(user_id);
 """
 
 
+# New columns added to existing tables.  Appended to here whenever the schema
+# grows; init() runs them once against every existing database so no manual
+# migration step is ever needed.
+_COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
+    # (table, column_name, column_definition)
+    ("nodes", "tier",               "INTEGER DEFAULT 1"),
+    ("nodes", "camera_model",       "TEXT DEFAULT ''"),
+    ("nodes", "mount_type",         "TEXT DEFAULT 'alt_az'"),
+    ("nodes", "cooled_camera",      "INTEGER DEFAULT 0"),
+    ("nodes", "filter_set",         'TEXT DEFAULT \'["CV"]\''),
+    ("nodes", "horizon_mask",       "TEXT DEFAULT '[]'"),
+    ("nodes", "has_dew_heater",     "INTEGER DEFAULT 0"),
+    ("nodes", "has_power_mgmt",     "INTEGER DEFAULT 0"),
+    ("nodes", "has_enclosure",      "INTEGER DEFAULT 0"),
+    ("nodes", "has_ups",            "INTEGER DEFAULT 0"),
+    ("nodes", "scheduling_notes",   "TEXT DEFAULT ''"),
+    ("nodes", "preferred_targets",  "TEXT DEFAULT '[]'"),
+    ("nodes", "total_observations", "INTEGER DEFAULT 0"),
+    ("nodes", "aavso_accepted",     "INTEGER DEFAULT 0"),
+    ("nodes", "aavso_rejected",     "INTEGER DEFAULT 0"),
+    ("nodes", "mean_uncertainty",   "REAL DEFAULT 0.0"),
+    ("nodes", "mean_fwhm",          "REAL DEFAULT 0.0"),
+    ("nodes", "clear_nights_30d",   "INTEGER DEFAULT 0"),
+    ("nodes", "outlier_rate",       "REAL DEFAULT 0.0"),
+    ("nodes", "reliability_score",  "REAL DEFAULT 0.5"),
+    ("nodes", "perf_updated_at",    "TEXT DEFAULT ''"),
+]
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Add any missing columns to existing tables.  Safe to call on every init."""
+    existing: dict[str, set] = {}
+    for table, col, defn in _COLUMN_MIGRATIONS:
+        if table not in existing:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            existing[table] = {r[1] for r in rows}
+        if col not in existing[table]:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
+            existing[table].add(col)
+            logger.info("Migration: added %s.%s", table, col)
+
+
 def init(path: str = "cloud_data/cloud.db") -> None:
-    """Create the database file and schema if missing."""
+    """Create the database file and schema if missing, then run column migrations."""
     global _DB_PATH
     with _init_lock:
         _DB_PATH = Path(path)
@@ -219,6 +329,7 @@ def init(path: str = "cloud_data/cloud.db") -> None:
         try:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            _run_migrations(conn)
             conn.commit()
         finally:
             conn.close()

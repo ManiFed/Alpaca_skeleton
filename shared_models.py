@@ -28,29 +28,89 @@ def _from_dict(cls, data: dict):
 
 @dataclass
 class NodeInfo:
-    """One registered telescope node."""
+    """
+    One registered telescope node.
+
+    Fields are grouped by what the scheduler uses them for.  Hardware fields
+    describe physical capability; performance fields are recomputed nightly from
+    the measurements table and feed directly into reliability_score, which the
+    scorer applies as a multiplier on every (target, node) score pair.
+    """
+
+    # ── Identity ───────────────────────────────────────────────────────────────
     node_id: str = ""
     owner_name: str = ""
     owner_email: str = ""
+
+    # ── Location ───────────────────────────────────────────────────────────────
     latitude: float = 0.0
     longitude: float = 0.0
     elevation: float = 0.0
     city: str = ""
     country: str = ""
     utc_offset_hours: float = 0.0
+
+    # ── Sky quality ────────────────────────────────────────────────────────────
+    light_pollution_mpsas: float = 20.0  # sky brightness (mag/arcsec²)
+    bortle: int = 5
+
+    # JSON [[alt_deg, az_deg], ...] polygon of local horizon obstructions
+    horizon_mask: str = "[]"
+
+    # ── Hardware: telescope ────────────────────────────────────────────────────
+    tier: int = 1                    # 1=Seestar, 2=Filtered, 3=Spectroscopy
     telescope_model: str = "ZWO Seestar S50"
     aperture_mm: float = 50.0
     focal_length_mm: float = 250.0
-    fov_deg: float = 1.27            # diagonal field of view
+    fov_deg: float = 1.27
     pixel_scale_arcsec: float = 2.4
-    filters: str = "CV"              # comma-separated available filters
-    mag_bright_limit: float = 6.0    # saturates brighter than this
-    mag_faint_limit: float = 15.5    # SNR too low fainter than this
+    mount_type: str = "alt_az"       # alt_az | equatorial
+    max_exposure_s: float = 30.0     # field-rotation limit (alt-az)
+
+    # ── Hardware: camera ──────────────────────────────────────────────────────
+    camera_model: str = ""
+    cooled_camera: bool = False      # TEC cooled → lower noise, fainter limit
+
+    # ── Hardware: filters / photometry ────────────────────────────────────────
+    filter_set: str = '["CV"]'       # JSON list, e.g. '["B","V","R","I"]'
+    filters: str = "CV"              # legacy comma-separated; keep for compat
+    mag_bright_limit: float = 6.0
+    mag_faint_limit: float = 15.5
     min_altitude_deg: float = 25.0
-    max_exposure_s: float = 30.0     # alt-az field rotation limit per sub
-    light_pollution_mpsas: float = 20.0   # sky brightness, mag/arcsec²
-    bortle: int = 5
+
+    # ── Hardware: autonomy ────────────────────────────────────────────────────
+    # These flags determine how well the node can run unattended overnight.
+    # The scheduler gives a small bonus to nodes with higher autonomy because
+    # they are more likely to complete a night without human intervention.
+    has_dew_heater: bool = False     # prevents lens fogging in humid weather
+    has_power_mgmt: bool = False     # smart power box: can remotely cycle Seestar
+    has_enclosure: bool = False      # dome/minidome: operates in light rain/wind
+    has_ups: bool = False            # survives brief power cuts
+
+    # ── Status ────────────────────────────────────────────────────────────────
     status: str = "active"           # active | offline | disabled
+
+    # ── Scheduler hints (operator-provided) ───────────────────────────────────
+    scheduling_notes: str = ""       # free text, e.g. "south blocked past az 200"
+    preferred_targets: str = "[]"    # JSON list of target types this node excels at
+
+    # ── Performance metrics (recomputed nightly) ──────────────────────────────
+    # Read by the scheduler; never set by the node agent directly.
+    total_observations: int = 0
+    aavso_accepted: int = 0
+    aavso_rejected: int = 0          # cross-val outliers that were not submitted
+    mean_uncertainty: float = 0.0    # typical photometric precision (mag)
+    mean_fwhm: float = 0.0           # typical seeing (pixels)
+    clear_nights_30d: int = 0        # distinct nights with ≥1 obs in last 30 days
+    outlier_rate: float = 0.0        # fraction of obs flagged as cross-val outlier
+
+    # Composite 0..1 multiplier applied to every scheduler score for this node.
+    # New nodes start at 0.50.  Formula:
+    #   0.40 × aavso_acceptance_rate
+    # + 0.25 × (1 − outlier_rate)
+    # + 0.20 × (clear_nights_30d / 30)
+    # + 0.15 × precision_factor          (= max(0, 1 − mean_uncertainty / 0.3))
+    reliability_score: float = 0.5
 
     def to_dict(self) -> dict:
         return asdict(self)

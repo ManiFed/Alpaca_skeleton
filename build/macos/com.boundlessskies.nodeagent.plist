@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Boundless Skies Node Agent — macOS LaunchDaemon
+
+    Installed to /Library/LaunchDaemons/ by the postinstall script.
+    Runs as root, starts at boot, restarts automatically on exit.
+
+    To control manually:
+        sudo launchctl load   /Library/LaunchDaemons/com.boundlessskies.nodeagent.plist
+        sudo launchctl unload /Library/LaunchDaemons/com.boundlessskies.nodeagent.plist
+        sudo launchctl start  com.boundlessskies.nodeagent
+        sudo launchctl stop   com.boundlessskies.nodeagent
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.boundlessskies.nodeagent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/BoundlessSkiesNode/BoundlessSkiesNode</string>
+        <string>--no-browser</string>
+        <string>--data-dir</string>
+        <string>/Library/Application Support/BoundlessSkies/NodeAgent</string>
+    </array>
+
+    <!-- Start immediately at load and restart on exit -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Throttle rapid restart loops -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/Library/Application Support/BoundlessSkies/NodeAgent</string>
+
+    <!-- Log files -->
+    <key>StandardOutPath</key>
+    <string>/Library/Logs/BoundlessSkies/node_agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/Logs/BoundlessSkies/node_agent_error.log</string>
+
+    <!-- Environment -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!--
+        Power management: prevent idle sleep while the service is running.
+        The node agent also calls caffeinate internally via sleep_prevention.py,
+        but this assertion provides a belt-and-suspenders guarantee even if the
+        Python process can't find caffeinate.
+    -->
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

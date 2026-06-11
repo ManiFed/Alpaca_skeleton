@@ -103,6 +103,7 @@ class CloudCommunicator:
 
         obs = self._config.get("observatory", {})
         phot = self._config.get("photometry", {})
+        cloud_cfg = self._config.get("cloud", {})
         payload = {
             "node_id":          phot.get("node_id", ""),
             "owner_name":       obs.get("observer", ""),
@@ -114,6 +115,10 @@ class CloudCommunicator:
             "utc_offset_hours": -time.timezone / 3600.0
                                 + (1.0 if time.localtime().tm_isdst else 0.0),
         }
+        # Include activation code on first boot if present in config
+        activation_code = str(cloud_cfg.get("activation_code", "") or "").strip()
+        if activation_code:
+            payload["activation_code"] = activation_code
         try:
             resp = self._post("/api/v1/nodes/register", payload, auth=False)
         except Exception as exc:

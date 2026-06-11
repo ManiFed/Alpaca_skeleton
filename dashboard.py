@@ -8087,6 +8087,13 @@ def launch(port: int = 5173) -> None:
         format=log_cfg.get("format", "%(asctime)s [%(levelname)s] %(name)s: %(message)s"),
     )
     logger.info("NODE v1 starting on port %d", port)
+
+    # Prevent the host OS from sleeping during overnight observations
+    try:
+        from sleep_prevention import enable as _sleep_enable
+        _sleep_enable()
+    except Exception as exc:
+        logger.warning("Sleep prevention unavailable: %s", exc)
     _load_history_from_disk()
 
     _safety_mgr = SafetyManager(config=cfg, on_unsafe=_on_safety_unsafe)
@@ -8159,6 +8166,11 @@ def launch(port: int = 5173) -> None:
             _safety_mgr.stop()
         if _image_watcher is not None:
             _image_watcher.stop()
+        try:
+            from sleep_prevention import disable as _sleep_disable
+            _sleep_disable()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

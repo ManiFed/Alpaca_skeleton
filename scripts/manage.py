@@ -275,6 +275,43 @@ def cmd_nights(config: dict) -> None:
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
+def cmd_generate_code(args) -> None:
+    """Generate one or more activation codes (admin-only, cloud-side operation)."""
+    import string
+    from datetime import timedelta
+
+    n = max(1, min(getattr(args, "count", 1), 100))
+    user_id = getattr(args, "user", None)
+    expires_days = getattr(args, "expires_days", 90)
+
+    year = datetime.now(timezone.utc).year
+    chars = string.ascii_uppercase + string.digits
+    expires = (datetime.now(timezone.utc) + timedelta(days=expires_days)).isoformat()
+
+    print(f"\n=== Activation Code Generator ===\n")
+    if user_id:
+        u = db.query_one("SELECT email FROM users WHERE user_id = ?", (user_id,))
+        if u is None:
+            print(f"ERROR: user_id {user_id!r} not found in database")
+            sys.exit(1)
+        print(f"Linked to: {u['email']} ({user_id})")
+    else:
+        print("Generic codes (not pre-linked to any member).")
+    print(f"Expires:   {expires[:10]}  ({expires_days} days)\n")
+
+    import secrets as _sec
+    for _ in range(n):
+        suffix = "".join(_sec.choice(chars) for _ in range(8))
+        code = f"BS-{year}-{suffix}"
+        db.execute(
+            "INSERT INTO activation_codes (code, user_id, created_at, expires_at)"
+            " VALUES (?,?,?,?)",
+            (code, user_id, datetime.now(timezone.utc).isoformat(), expires),
+        )
+        print(f"  {code}")
+    print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Boundless Skies cloud admin CLI",
@@ -284,8 +321,21 @@ def main() -> None:
     parser.add_argument("--config", help="path to config.yaml (default: cloud/config.yaml)")
     parser.add_argument(
         "command",
-        choices=["status", "ingest", "batch", "submit", "check-aavso", "nights"],
+        choices=["status", "ingest", "batch", "submit", "check-aavso",
+                 "nights", "generate-code"],
         help="command to run",
+    )
+    parser.add_argument(
+        "--user", metavar="USER_ID",
+        help="(generate-code) link the code to this member user_id",
+    )
+    parser.add_argument(
+        "--count", type=int, default=1,
+        help="(generate-code) number of codes to generate",
+    )
+    parser.add_argument(
+        "--expires-days", type=int, default=90,
+        help="(generate-code) days until codes expire (default: 90)",
     )
     args = parser.parse_args()
 
@@ -293,12 +343,13 @@ def main() -> None:
     db.init(config.get("database", {}).get("path", "cloud_data/cloud.db"))
 
     dispatch = {
-        "status":      lambda: cmd_status(config),
-        "ingest":      lambda: cmd_ingest(config),
-        "batch":       lambda: cmd_batch(config, submit=False),
-        "submit":      lambda: cmd_batch(config, submit=True),
-        "check-aavso": lambda: cmd_check_aavso(config),
-        "nights":      lambda: cmd_nights(config),
+        "status":        lambda: cmd_status(config),
+        "ingest":        lambda: cmd_ingest(config),
+        "batch":         lambda: cmd_batch(config, submit=False),
+        "submit":        lambda: cmd_batch(config, submit=True),
+        "check-aavso":   lambda: cmd_check_aavso(config),
+        "nights":        lambda: cmd_nights(config),
+        "generate-code": lambda: cmd_generate_code(args),
     }
     dispatch[args.command]()
 

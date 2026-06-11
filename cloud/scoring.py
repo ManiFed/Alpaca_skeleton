@@ -230,6 +230,17 @@ def score_target_for_node(target: dict, node: dict, night: Optional[tuple],
         total_w = sum(weights.values()) or 1.0
         total = sum(weights[k] * components[k]
                     for k in ("brightness", "science", "time", "coverage", "observe")) / total_w
+
+        # Apply node reliability as a multiplier.
+        # reliability_score is 0..1; new nodes start at 0.5.
+        # Scaling: total × (0.5 + 0.5 × reliability) means:
+        #   reliability=1.0 → ×1.00 (no penalty)
+        #   reliability=0.5 → ×0.75 (new/unknown node — slight preference for proven ones)
+        #   reliability=0.0 → ×0.50 (persistently poor node — still gets some assignments)
+        reliability = float(node.get("reliability_score", 0.5) or 0.5)
+        total = total * (0.5 + 0.5 * reliability)
+        components["reliability_score"] = round(reliability, 3)
+
     components["total"] = round(total, 4)
     return components
 

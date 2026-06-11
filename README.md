@@ -1,218 +1,458 @@
-# Boundless Skies — Node v1
+# Boundless Skies — Node Software & Cloud
 
-**Node Software (Layer 4)** for the Boundless Skies automated telescope network. Runs on a member's computer, connects to a Seestar S50 via the ALPACA API, monitors for new FITS files, runs local differential photometry, and submits calibrated magnitudes to AAVSO.
+**The world's first automated telescope network built for people with disabilities.**
 
-> **Boundless Skies** is an accessible astronomy charity that gives people with disabilities access to real telescope time. Seestar owners donate their nights; AI schedules variable-star observations, processes photometry, and submits to AAVSO on the member's behalf.
+Seestar owners donate their telescope's nights. The pipeline schedules observations of
+scientifically valuable targets, processes the data into calibrated photometry, and
+submits it to AAVSO under the contributor's name. Members do real astronomy — no
+manual intervention required.
 
----
-
-## Phase 0 status
-
-| Milestone | Description | Status |
-|-----------|-------------|--------|
-| M1 | ALPACA API client layer (telescope / camera / focuser / filterwheel) | ✅ Done |
-| M2 | ImageWatcher — detect new FITS files from Seestar SMB share | ✅ Done |
-| M3 | Local photometry pipeline (plate-solve → comp stars → aperture photometry → magnitude) | ✅ Done |
-| M4 | First AAVSO-accepted automated observation (magnitude within 0.15 mag of known) | 🔄 In progress |
-
-**Success criterion for Phase 0:** one AAVSO-accepted observation with magnitude agreeing within 0.15 mag of a known standard.
+> **Boundless Skies** is an accessible astronomy charity that gives people with
+> disabilities access to real telescope time. AI schedules variable-star observations,
+> processes photometry, and submits to AAVSO on each member's behalf.
 
 ---
 
-## What is ALPACA?
+## Repository Contents
 
-ALPACA (Astronomy Low-level Control And Automation) is an open HTTP/JSON protocol by the [ASCOM Initiative](https://ascom-standards.org/). It lets astronomy software talk to mounts, cameras, focusers, and other equipment over a network without proprietary drivers.
+```
+node_v1-main/
+├── dashboard.py          Node Agent — Flask dashboard + control loop
+├── main.py               Dev-mode watchdog (auto-restarts dashboard.py)
+├── main_service.py       Production entry point (used by installers, no subprocess)
+├── sleep_prevention.py   Cross-platform OS sleep prevention
+├── cloud_communicator.py Node → Cloud API client (heartbeat, plan, measurements)
+├── photometry.py         Aperture photometry pipeline (ASTAP → comp stars → mag)
+├── stacking.py           RANSAC live sub-pixel stacking
+├── image_watcher.py      FSEvents/inotify watcher on the Seestar SMB share
+├── aavso_submission.py   AAVSO Extended File Format + WebObs API (node-side)
+├── fits_export.py        Enhanced FITS header writer
+├── geolocation.py        IP-based location detection for auto-registration
+├── shared_models.py      NodeInfo, TargetInfo, PlanItem, ObservationPlan, Measurement
+├── config.yaml           Node configuration (edit before first run)
+│
+├── alpaca/               ALPACA protocol abstraction layer
+│   ├── telescope.py      Slew, track, park, RA/Dec query
+│   ├── camera.py         Expose, status, FITS export
+│   ├── focuser.py        Move, halt, position
+│   ├── autofocus.py      V-curve sweep → parabolic minimum
+│   ├── filterwheel.py    Filter position management
+│   ├── platesolve.py     ASTAP → WCS → closed-loop centering
+│   ├── safety_manager.py Altitude limits, auto-park, dawn detection
+│   └── device_manager.py Connect / disconnect all devices
+│
+├── cloud/                Cloud server (runs on a VPS, not on the telescope host)
+│   ├── main.py           Entry point — Flask API + background loops
+│   ├── server.py         All API routes (nodes, members, public, admin)
+│   ├── db.py             SQLite schema + migration system
+│   ├── registry.py       Node registration, auth, heartbeat, performance refresh
+│   ├── auth.py           Member registration, login, bearer token auth
+│   ├── alerts.py         Alert ingestion (ALeRCE, Gaia, TNS, ATLAS, ASAS-SN, AAVSO)
+│   ├── scoring.py        Composite (target × node) scoring engine
+│   ├── scheduler.py      Nightly plan generation
+│   ├── data_pipeline.py  Measurement ingestion, cross-validation, AAVSO batch
+│   ├── nights.py         Night summary generation, notification dispatch
+│   ├── conditions.py     Weather, moon, airmass utilities
+│   └── config.yaml       Cloud configuration (fill in AAVSO credentials here)
+│
+├── scripts/
+│   └── manage.py         Admin CLI (status, ingest, batch, submit, check-aavso, generate-code)
+│
+└── build/                Installer build system
+    ├── node_agent.spec   PyInstaller spec
+    ├── build.py          Cross-platform build orchestration
+    ├── config.template.yaml  Config template written by installers
+    ├── windows/install.nsi   NSIS Windows installer
+    ├── macos/            macOS .pkg + launchd plist
+    └── linux/            systemd unit + install.sh
+```
 
 ---
 
-## Prerequisites
+## Phase Status
 
-- **Python 3.10+**
-- **ZWO Seestar S50** (or any ALPACA-compatible telescope) on the same LAN
-  - Server must be reachable via UDP broadcast (port 32227) and HTTP (typically port 11111)
-- **ASTAP** plate solver — download from [hnsky.org](https://www.hnsky.org/astap.htm) and put it in your `PATH` (only needed if FITS files lack WCS; Seestar usually solves onboard)
-- **macOS / Linux / Windows** — no platform-specific code; tested on macOS
-
----
-
-## Installation
-
-1. **Clone or navigate into this directory.**
-
-2. **Create and activate a virtual environment:**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate   # Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-   Key packages: `requests`, `pyyaml`, `flask`, `watchdog`, `astropy`, `photutils`, `astroquery`, `numpy`, `Pillow`, `zwoasi`, `pyongc`
-
-4. **For first-time testing**, see **Quick Start — First-Time Dry Run** below.
-
-   **For production**, you'll also need to edit `config.yaml`:
-   - `observatory.latitude` / `longitude` (your site coordinates)
-   - `photometry.node_id` (unique ID for your node)
-   - `aavso.observer_code` / `username` / `password` (your AAVSO credentials)
-   - `image_watcher.watch_path` (SMB share path where Seestar writes FITS files)
+| Phase | Status | Goal |
+|-------|--------|------|
+| **0 — Proof of Concept** | ✅ Code complete | First AAVSO-accepted automated observation |
+| **1 — Core System** | In progress | Installers shipped, member accounts live, Flutter app, 3–5 beta nodes |
+| **2 — Launch** | Not started | 50 nodes, App Store, first ATel, first grant application |
+| **3 — Growth** | Not started | 200 nodes, 25 countries, 10,000+ AAVSO submissions |
 
 ---
 
-## Quick Start — First-Time Dry Run
+## Node Data Model
 
-If this is your first time running the software and you want to test everything without dealing with external dependencies (AAVSO, cloud, image watching), follow this simplified setup:
+> This is the most important architectural document in the repo. The `nodes` table
+> is the single source of truth the AI scheduler reads when deciding which telescope
+> points where. Every column exists for a reason.
 
-### 1. Minimal Config for Dry Run
-Edit `config.yaml` and ensure these are all **disabled**:
+### Location (observability)
+
+| Column | Type | Used for |
+|--------|------|---------|
+| `latitude`, `longitude` | REAL | Night window, altitude curve, airmass, moon angle |
+| `elevation` | REAL | Pressure correction for airmass calculation |
+| `utc_offset_hours` | REAL | Twilight times in local clock; auto-updated from heartbeat |
+| `city`, `country` | TEXT | Display, geographic diversity tracking |
+| `light_pollution_mpsas` | REAL | Sky background noise; faint-target magnitude limit adjustment |
+| `bortle` | INT | Human-readable sky quality label; auto-fetched on registration |
+| `horizon_mask` | JSON `[[alt,az],…]` | Local obstructions — the scheduler won't assign targets behind trees or buildings |
+
+### Hardware: Telescope (capability)
+
+| Column | Type | Used for |
+|--------|------|---------|
+| `tier` | INT 1–3 | 1=Seestar broadband, 2=Filtered BVRI, 3=Spectroscopy; controls which target classes get assigned |
+| `telescope_model` | TEXT | Display; future per-model aperture lookup |
+| `aperture_mm` | REAL | Faint magnitude limit, integration time scaling |
+| `focal_length_mm`, `fov_deg`, `pixel_scale_arcsec` | REAL | Field-of-view matching for targets with extended structure |
+| `mount_type` | TEXT `alt_az\|equatorial` | Equatorial mounts can take longer sub-frames; alt-az has field rotation |
+| `max_exposure_s` | REAL | Sub-frame cap, primarily field-rotation limited for alt-az mounts |
+| `mag_bright_limit`, `mag_faint_limit` | REAL | Direct inputs to the `brightness_match()` scorer |
+| `min_altitude_deg` | REAL | Hard floor — targets below this altitude are never scheduled for this node |
+
+### Hardware: Camera & Filters (photometry quality)
+
+| Column | Type | Used for |
+|--------|------|---------|
+| `camera_model` | TEXT | Display; future per-camera calibration frames |
+| `cooled_camera` | BOOL | TEC cooling lowers read noise → better faint limit; captured but not yet scored |
+| `filter_set` | JSON `["CV","B","V","R","I"]` | Multi-band targets require a matching filter; broadband-only Seestars get `["CV"]` |
+| `filters` | TEXT | Legacy comma-separated; kept for compatibility with older node agents |
+
+### Hardware: Autonomy (unattended operation reliability)
+
+These four flags determine whether a node can run an entire night without human
+intervention. The scheduler does not assign a numeric penalty for missing them today,
+but nodes with all four tend to produce better `clear_nights_30d` and higher
+`aavso_accepted` counts — which flows directly into their `reliability_score` over time.
+
+| Column | Why it matters for the scheduler |
+|--------|----------------------------------|
+| `has_dew_heater` | Prevents lens fogging in humid conditions. Without one, a node fails silently — images blur, plate-solving fails, the whole night is wasted with no measurement data. |
+| `has_power_mgmt` | Smart power box lets the node agent remotely cycle a hung Seestar. Without it, a crashed scope means a missed assignment with no recovery until a human intervenes. |
+| `has_enclosure` | Dome or minidome — the node can observe through light rain, wind, and heavy dew. Dramatically improves `clear_nights_30d` which feeds the reliability score. |
+| `has_ups` | Brief power cuts don't kill the night. Especially relevant for nodes in regions with unstable grid power — protects both `clear_nights_30d` and `aavso_acceptance_rate`. |
+
+### Scheduler Hints (operator-provided)
+
+| Column | Example |
+|--------|---------|
+| `scheduling_notes` | `"south horizon blocked past az 195"`, `"WiFi drops after midnight"`, `"struggles above airmass 2.5"` — free text surfaced to the scheduler and admin |
+| `preferred_targets` | `["SN","nova"]` — scheduler gives this node a soft preference for these target types when scores are close |
+
+### Performance Metrics (recomputed nightly)
+
+These columns are **never set by the node agent**. The nightly maintenance loop calls
+`registry.refresh_all_performance()` which recomputes them from the `measurements`
+table. They represent ground truth — what a node has actually delivered, not what it
+claims it can deliver.
+
+| Column | Formula | What it tells the scheduler |
+|--------|---------|----------------------------|
+| `total_observations` | `COUNT(*)` in measurements | Activity level; nodes with < 10 observations stay at neutral 0.50 reliability |
+| `aavso_accepted` | `SUM(aavso_submitted = 1)` | How much science has been delivered — the ultimate output metric |
+| `aavso_rejected` | Outlier count with good quality flag | How often this node produces data the network can't corroborate |
+| `mean_uncertainty` | `AVG(uncertainty)` for non-poor measurements | Typical photometric precision; AAVSO quality ceiling is 0.30 mag |
+| `mean_fwhm` | `AVG(fwhm)` for non-poor measurements | Typical image quality / seeing; proxy for focus and atmospheric stability |
+| `clear_nights_30d` | `COUNT(DISTINCT date)` in last 30 days | How often the node actually observes; captures weather + hardware reliability combined |
+| `outlier_rate` | `outliers / total` | Cross-validation disagreement rate; high values signal that data can't be trusted |
+
+### Reliability Score
+
+`reliability_score` is a composite 0..1 value stored per-node and applied as a
+**multiplier** on every scheduler score for that node:
+
+```
+total_score = theoretical_score × (0.5 + 0.5 × reliability_score)
+```
+
+| reliability | multiplier | meaning |
+|-------------|-----------|---------|
+| 1.0 | ×1.00 | proven node — no penalty |
+| 0.5 | ×0.75 | new or data-sparse node — slight preference for proven peers |
+| 0.0 | ×0.50 | persistently poor data — still gets some assignments (floor prevents starvation) |
+
+**Formula** (computed in `cloud/registry.py` → `refresh_node_performance()`):
+```
+reliability = 0.40 × aavso_acceptance_rate
+            + 0.25 × (1 − outlier_rate)
+            + 0.20 × min(1, clear_nights_30d / 30)
+            + 0.15 × precision_factor
+
+precision_factor = max(0, 1 − mean_uncertainty / 0.30)
+```
+
+New nodes (< 10 observations) start at **0.50** and converge toward their true value
+over roughly 20–30 observations. The formula is intentionally multi-dimensional: a
+node can't inflate its score by gaming one metric — it has to deliver across all four
+simultaneously.
+
+---
+
+## Activation Code System
+
+Every node is registered with a **Node Activation Code** (`BS-YYYY-XXXXXXXX`). This
+is the link between a member's account, their telescope hardware, and the cloud
+scheduler. It is also the data that seeds the `nodes` row — every field group
+described above gets populated from this first registration.
+
+```
+Member signs up on the website
+         ↓
+Member requests a code (POST /api/v1/me/activation-code)
+or admin bulk-generates codes (scripts/manage.py generate-code)
+         ↓
+Code issued: BS-2026-ABCD1234  (expires in 90 days by default)
+         ↓
+Member downloads the installer for their OS
+Installer prompts for the activation code during setup
+Writes it to config.yaml:
+    cloud:
+      activation_code: 'BS-2026-ABCD1234'
+         ↓
+Node Agent starts for the first time
+First heartbeat sends POST /api/v1/nodes/register
+with the activation code + full hardware payload
+         ↓
+Cloud validates the code (not expired, not previously used)
+Cloud auto-generates node_id (e.g. node_a3f9b2c1) + api_key
+Cloud populates the nodes row with all hardware fields
+Cloud links node to the member's account (node_members table)
+Cloud marks code used (activation_codes.used_at = now)
+         ↓
+Node saves node_id + api_key to data/cloud_state.json
+Subsequent API calls use node_id + api_key directly
+The activation code is never sent again
+```
+
+**Codes are single-use.** A shared or leaked code lets someone else claim your node
+registration slot. If a code is compromised before use, generate a replacement.
+
+**Generating codes:**
+```bash
+# Admin CLI — bulk generation (server-side)
+python3 scripts/manage.py generate-code --count 5 --expires-days 90
+
+# Pre-link codes to a specific member account
+python3 scripts/manage.py generate-code --count 1 --user u_abc123
+
+# Member self-service via the API
+curl -X POST https://cloud.boundlessskies.org/api/v1/me/activation-code \
+     -H "Authorization: Bearer <your_token>"
+# → {"code": "BS-2026-ABCD1234", "expires_at": "2026-09-08T..."}
+```
+
+---
+
+## Quick Start — Node Agent (Development)
+
+```bash
+# 1. Clone and set up
+git clone https://github.com/boundlessskies/node_v1 && cd node_v1-main
+python3 -m venv venv && source venv/bin/activate
+pip install flask pyyaml numpy astropy pillow requests watchdog photutils astroquery pyongc
+
+# 2. Install ASTAP (required for plate-solving and photometry)
+#    https://www.hnsky.org/astap.htm — install binary + G18 star catalogue
+
+# 3. Configure (for a dry run, only these are required)
+nano config.yaml
+#    observatory.latitude / longitude
+#    image_watcher.watch_path (Seestar SMB share mount point)
+#    cloud.url + cloud.activation_code
+
+# 4. Run (dev mode — auto-restarts on file changes)
+python3 main.py
+# Dashboard: http://localhost:5173
+```
+
+### First-Time Dry Run (no hardware)
+
+Set these in `config.yaml` to test the dashboard without a Seestar:
 
 ```yaml
 cloud:
-  enabled: false        # ← must be false
+  enabled: false
 
 image_watcher:
-  enabled: false        # ← must be false (don't auto-watch files yet)
+  enabled: false
 
 photometry:
-  enabled: false        # ← must be false (don't auto-run pipeline yet)
-
-pier_cam:
-  enabled: false        # ← must be false (optional guide camera)
-
-safety:
-  enabled: true         # ← keep this enabled for safe operation
+  enabled: false
 
 aavso:
-  observer_code: ''     # ← no credentials needed for dry run
-  dry_run: true         # ← if you do test submission, it won't POST
+  dry_run: true
 ```
 
-That's all you need. The safety manager and dashboard will still work fully.
+Then `python3 dashboard.py`. Everything in the dashboard works except hardware
+control. Object catalog, config editor, logs, and API endpoints are all live.
 
-### 2. Start the Dashboard
+---
+
+## Quick Start — Cloud Server (Development)
 
 ```bash
-python dashboard.py
+cd cloud/
+pip install flask pyyaml requests
+
+# Edit cloud/config.yaml:
+#   aavso.observer_code: MXXX
+#   aavso.username / aavso.password
+#   server.admin_key
+
+python3 -m cloud.main
+# API: http://localhost:8800
+# Health check: http://localhost:8800/api/v1/health
 ```
 
-The Flask server starts on `http://localhost:5173` and opens automatically. You'll see a clean dashboard with no background tasks running.
+---
 
-### 3. Test ALPACA Connection (No Telescope Needed)
+## First AAVSO Submission — Step by Step
 
-The dashboard works fine without a Seestar connected. You can:
-- Click **Discover** — it will timeout gracefully if no Seestar is on the LAN
-- Click **Connect** — will fail if no hardware exists, but no crash
-- Explore the UI, configuration editor, object catalog, etc.
+```bash
+# 1. Set AAVSO credentials in cloud/config.yaml
+#    aavso.observer_code: MXXX
+#    aavso.username: ...
+#    aavso.password: ...
 
-### 4. Next Steps (After Dry Run)
+# 2. Verify the Extended File Format looks correct (no live POST)
+python3 scripts/manage.py check-aavso
+# Prints a formatted test record with your observer code filled in
 
-When you're ready to connect real hardware or enable features:
+# 3. Check that the network has active nodes
+python3 scripts/manage.py status
 
-**Manual telescope control:**
-1. Power on your Seestar and connect it to the same LAN
-2. Click **Discover** in the dashboard — should find it
-3. Click **Connect** → establishes ALPACA session
-4. Unpark in the Seestar app, then use dashboard slew / tracking controls
+# 4. Trigger alert ingestion (or wait for the hourly background loop)
+python3 scripts/manage.py ingest
 
-**Enable photometry pipeline:**
-1. Set `photometry.enabled: true` in config
-2. Set `photometry.node_id` to a unique identifier (e.g., `"node_001"`)
-3. Ensure `image_watcher.watch_path` points to the Seestar SMB share
-4. Set `image_watcher.enabled: true`
-5. New FITS files will trigger the pipeline automatically
+# 5. Run a night's observations with a connected node
 
-**Enable cloud (optional):**
-1. Set `cloud.enabled: true` in config
-2. Set `cloud.url` to your Boundless Skies cloud endpoint
-3. Restart — node auto-registers and receives observation plans
+# 6. Preview the AAVSO batch before committing (dry run)
+python3 scripts/manage.py batch
+# Prints the exact Extended File Format that would be POSTed to WebObs
 
-**Live AAVSO submission:**
-1. Get AAVSO observer code at [aavso.org](https://www.aavso.org/)
-2. Set `aavso.observer_code`, `username`, `password` in config
-3. Set `aavso.dry_run: false` to submit for real
-4. Check `aavso_submissions/<date>/` for audit trail on each submission
+# 7. Submit live (calls AAVSO WebObs API)
+python3 scripts/manage.py submit
 
-### 5. Verify Everything Works
+# 8. Verify
+python3 scripts/manage.py status
+```
 
-You should see:
-- ✅ Flask server starts (check console logs)
-- ✅ Browser opens to `http://localhost:5173`
-- ✅ Dashboard shows green "Connected" status (to dashboard server)
-- ✅ Object catalog loads
-- ✅ Configuration panel is editable
-- ✅ No background errors in the logs panel
-
-This proves the core software is working before hardware complexity.
+**Success criterion (Phase 0):** One observation accepted by AAVSO with magnitude
+agreeing within 0.15 mag of the known value for the target.
 
 ---
 
-## Production Quick Start
+## Admin CLI (`scripts/manage.py`)
 
-Once you're confident, the full checklist is:
+```
+python3 scripts/manage.py [--config PATH] <command>
 
-1. Click **Discover** to find the Seestar on your LAN
-2. Click **Connect** to establish the ALPACA connection
-3. Enable `image_watcher.enabled: true` in config to start watching for new FITS files
-4. Enable `photometry.enabled: true` to run the pipeline automatically on each new file
-5. Set `aavso.dry_run: true` for a test run before live submission
+status          Node count, measurement queue, AAVSO batch history, config check
+ingest          Trigger alert ingestion + scoring + plan regeneration
+batch           Dry-run preview of the pending AAVSO batch (does not POST)
+submit          Live AAVSO submission (ignores config dry_run setting)
+check-aavso     Verify credentials config, print a formatted test observation
+nights          Generate/backfill night summaries for all active nodes
 
----
-
-## What Works in Dry Run (No Hardware)
-
-Even with no Seestar connected and all features disabled, you can test:
-
-- **Dashboard loads** — verify Flask server starts on `http://localhost:5173`
-- **Configuration editor** — load and edit `config.yaml` from the browser
-- **Object catalog** — browse Messier and NGC objects (no hardware needed)
-- **Logs viewer** — watch live server-sent events with timestamps
-- **ALPACA discovery** — click "Discover" (will timeout if no Seestar, but doesn't crash)
-- **API endpoints** — test HTTP routes via curl or the browser (responses show expected structure)
-
-When you connect a Seestar, the same dashboard instantly controls it without code changes.
+generate-code   Create activation codes
+  --count N       Number of codes to generate (default 1, max 100)
+  --user USER_ID  Pre-link to a specific member (optional)
+  --expires-days  Days until expiry (default 90)
+```
 
 ---
 
-## Dashboard
+## Building Installers
 
-The web dashboard provides full observatory control from a browser.
+```bash
+pip install pyinstaller
 
-### Telescope controls
-- **Discover / Connect / Disconnect** — ALPACA server management
-- **Unpark / Park** — mount stowing
-- **Tracking on/off** — sidereal tracking toggle
-- **Slew** — RA/Dec (decimal or sexagesimal) or Alt/Az coordinate entry
-- **Joystick / nudge** — real-time directional control
-- **Telescope modal** — live coordinate display and slew history
+# Auto-detect platform and build installer
+python3 build/build.py
 
-### Scheduling
-- **Object catalog** — browse Messier / NGC objects (powered by `pyongc`)
-- **Scheduling modal** — queue targets for an observing run with per-target exposure count and filter selection
-- **Schedule runner** — executes the queue: unpark → slew → expose × N → next target
+# Bundle only (PyInstaller one-file, no OS installer wrapper)
+python3 build/build.py --bundle-only
 
-### Imaging
-- **Manual exposure** — trigger a single exposure from the dashboard
-- **FITS browser** — list and download captured FITS files
-- **Observation history** — thumbnail gallery of completed observations
-- **Pier cam** — optional live video feed from a ZWO guide/pier camera
+# Outputs:
+#   Windows  → dist/BoundlessSkiesNode-Setup.exe   (requires NSIS + NSSM on PATH)
+#   macOS    → dist/BoundlessSkiesNode-X.Y.Z.pkg
+#   Linux    → dist/BoundlessSkiesNode-linux-x86_64
+```
 
-### Safety
-- **Safety Manager** — continuous background watchdog (heartbeat, reconnect, dawn parking, OS signal handling)
-- **Sky area safety monitor** — auto-detect horizon obstructions; block slews into masked zones
-- **Horizon scan** — drive the telescope along the horizon to map the local obstruction profile
+**Windows (NSIS + NSSM)**
+- Installer prompts for activation code; writes it to `config.yaml`
+- Registers the agent as a Windows service via NSSM; auto-starts at boot
+- Calls `powercfg /change standby-timeout-ac 0` to disable AC idle sleep
 
-### Configuration
-- **Config editor modal** — live edit `config.yaml` from the browser (parsed YAML, validated on save)
-- **Config reload** — apply changes without restarting the server
+**macOS (.pkg)**
+- Installs to `/Applications/BoundlessSkiesNode/`
+- Installs a launchd plist → `/Library/LaunchDaemons/` (auto-start at boot)
+- Calls `pmset -c sleep 0` to disable AC idle sleep
+- Data: `/Library/Application Support/BoundlessSkies/NodeAgent/`
 
-### Photometry & submission
-- **Photometry status** — last pipeline result (target, magnitude, uncertainty, SNR, quality flag)
-- **AAVSO submission status** — last submission outcome (accepted / rejected / dry_run)
+**Linux (systemd)**
+```bash
+# One-line install
+curl -sSL https://boundlessskies.org/install.sh | sudo bash --code BS-2026-XXXXXXXX
 
-### Live log
-Server-Sent Events stream of all log messages with timestamps and level colours.
+# Or manually
+sudo bash build/linux/install.sh --code BS-2026-XXXXXXXX
+```
+- Creates `boundlessskies` service user; installs systemd unit; enables at boot
+- Masks `sleep.target`, `suspend.target`, `hibernate.target`, `hybrid-sleep.target`
+
+---
+
+## Cloud API Reference
+
+### Node-authenticated (headers: `X-Node-Id` + `X-Api-Key`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/nodes/register` | First-boot registration; accepts `activation_code` in JSON body |
+| POST | `/api/v1/nodes/heartbeat` | 60-second keepalive with optional conditions JSON |
+| GET  | `/api/v1/nodes/me` | Own registry entry (all columns including performance metrics) |
+| GET  | `/api/v1/plan` | Tonight's observation plan |
+| POST | `/api/v1/measurements` | Upload a photometry result |
+| POST | `/api/v1/images` | Upload raw FITS (retained 14 days) |
+| GET  | `/api/v1/interrupts` | High-priority target alerts |
+
+### Member-authenticated (header: `Authorization: Bearer <token>`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/auth/register` | Create member account |
+| POST | `/api/v1/auth/login` | Authenticate; returns bearer token |
+| GET  | `/api/v1/me` | Member profile |
+| GET  | `/api/v1/me/nodes` | My registered nodes |
+| POST | `/api/v1/me/nodes/<id>` | Claim an existing node by api_key |
+| POST | `/api/v1/me/activation-code` | Generate a personal activation code |
+| GET  | `/api/v1/me/observations` | Observation history |
+| GET  | `/api/v1/me/stats` | Cumulative totals (observations, AAVSO accepted, targets covered) |
+| GET  | `/api/v1/me/nights` | Night-by-night summaries |
+| GET  | `/api/v1/me/notifications` | Notification inbox |
+| POST | `/api/v1/me/notifications/<id>/read` | Mark a notification read |
+| PUT  | `/api/v1/me/notifications/prefs` | Update notification preferences |
+
+### Public (no auth required)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/targets` | Active target queue with current composite scores |
+| GET | `/api/v1/lightcurves/<name>` | Historical photometry for a named target |
+| GET | `/api/v1/network/status` | Live node count, submission totals |
+| GET | `/api/v1/health` | Uptime check |
+
+### Admin (header: `X-Admin-Key`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/admin/ingest` | Trigger alert ingestion + scoring |
+| POST | `/api/v1/admin/replan` | Trigger rescoring + plan regeneration |
+| POST | `/api/v1/admin/activation-codes` | Generate codes in bulk |
+| POST | `/api/v1/interrupts` | Broadcast a high-priority target interrupt to nodes |
 
 ---
 
@@ -242,7 +482,7 @@ FITS file
     "uncertainty":      0.031,
     "filter":           "CV",
     "airmass":          1.24,
-    "fwhm":             3.8,        # pixels
+    "fwhm":             3.8,
     "snr":              52.0,
     "comparison_stars": 9,
     "quality_flag":     "good",
@@ -253,152 +493,46 @@ FITS file
 }
 ```
 
-**Public API:**
-```python
-from photometry import run_pipeline
-result = run_pipeline(fits_path, config)   # returns dict or None
-```
-
 ---
 
-## AAVSO Submission (`aavso_submission.py`)
-
-Takes a photometry result dict, formats it as AAVSO Extended File Format, POSTs it to WebObs, and writes a full audit trail to disk.
-
-```python
-from aavso_submission import submit
-result = submit(measurement, config)
-# result["status"] → "accepted" | "rejected" | "skipped" | "dry_run" | "error"
-```
-
-**Audit trail** (written to `aavso_submissions/YYYY-MM-DD/`):
-- `<target>_<bjd>.txt` — the AAVSO Extended Format submission text
-- `<target>_<bjd>_response.txt` — raw WebObs HTTP response
-- `<target>_<bjd>_record.json` — complete audit record with all measurement fields
-
-**Config keys** (`config["aavso"]`):
-
-| Key | Description |
-|-----|-------------|
-| `observer_code` | AAVSO OBSCODE (required) |
-| `username` / `password` | AAVSO login credentials (required to POST) |
-| `dry_run` | If `true`, format and save but do not POST |
-| `submit_poor_quality` | If `true`, submit even `quality=poor` measurements |
-| `audit_dir` | Local directory for audit trail (default: `aavso_submissions`) |
-| `chart_id` | VSP chart ID to include in submission |
-
----
-
-## FITS Export (`fits_export.py`)
-
-After a successful photometry run, writes a science-ready copy of the FITS file enriched with observatory, detector, and processing headers. Original Seestar headers are never overwritten.
-
-Added keywords include: `TELESCOP`, `INSTRUME`, `OBSERVER`, `SITELAT`, `SITELONG`, `GAIN`, `RDNOISE`, `BJD-OBS`, `AIRMASS`, `SWCREATE`, `HISTORY` entries for the photometry result and WCS provenance.
-
-Enabled via `photometry.fits_export.enabled: true` in `config.yaml`.
-
----
-
-## Architecture
+## Architecture Overview
 
 ```
 dashboard.py (Flask, port 5173)
   │
-  ├─ API endpoints
-  │   ├─ /api/discover, /api/connect, /api/disconnect
-  │   ├─ /api/telescope/unpark, park, tracking, nudge, moveaxis
-  │   ├─ /api/slew                        — RA/Dec or Alt/Az
-  │   ├─ /api/camera/expose, abort
-  │   ├─ /api/schedule/run, status, abort — multi-target queue
-  │   ├─ /api/catalog                     — object catalog (pyongc)
-  │   ├─ /api/photometry, /api/aavso       — pipeline status
-  │   ├─ /api/fits/list, download          — FITS file browser
-  │   ├─ /api/history, history/<id>        — observation gallery
-  │   ├─ /api/safety, horizon-mask, horizon-scan
-  │   ├─ /api/pier-cam/stream, snapshot
-  │   ├─ /api/config (GET/POST)            — live config editor
-  │   ├─ /api/status                       — full system state
-  │   └─ /api/logs                         — SSE log stream
+  ├─ API endpoints (telescope, camera, schedule, photometry, config, logs, …)
   │
   ├─ SafetyManager (daemon thread)
-  │   ├─ Heartbeat monitor (every 30 s)
-  │   ├─ Reconnect with backoff
-  │   ├─ Dawn parking (NOAA solar elevation algorithm)
-  │   ├─ Sky area / horizon mask enforcement
-  │   └─ SIGTERM / SIGINT → emergency park
+  │   heartbeat monitor, reconnect, dawn parking, horizon mask, SIGTERM handler
   │
   ├─ ImageWatcher (daemon thread, when enabled)
-  │   ├─ OS file system events (FSEvents / inotify / kqueue)
-  │   ├─ Debounce for partial writes
-  │   ├─ FITS header extraction
-  │   └─ Triggers photometry pipeline on new file
+  │   OS filesystem events → debounce → photometry pipeline
   │
   ├─ Photometry pipeline (photometry.py)
-  │   ├─ WCS check / ASTAP plate solve
-  │   ├─ AAVSO VSP + Gaia DR3 comparison stars
-  │   ├─ Aperture photometry (photutils)
-  │   ├─ Differential photometry + quality flag
-  │   └─ → AAVSO submission + FITS export
+  │   WCS → comp stars → aperture phot → differential → AAVSO submission
   │
   ├─ CloudCommunicator (daemon threads, when cloud.enabled)
-  │   ├─ Auto-registration with the Boundless Skies cloud
-  │   ├─ Heartbeats with local conditions
-  │   ├─ Observation-plan polling → schedule runner
-  │   ├─ Interrupt polling (high-priority targets)
-  │   └─ Measurement upload after each photometry run (disk-backed retry queue)
+  │   auto-register → heartbeats → plan polling → measurement upload (retry queue)
   │
   └─ DeviceManager → AlpacaClient (HTTP/JSON)
-       ├─ Telescope
-       ├─ Camera
-       ├─ Focuser (optional)
-       └─ FilterWheel (optional)
+       Telescope, Camera, Focuser, FilterWheel
+
+cloud/ (Flask, port 8800)
+  │
+  ├─ Background loops
+  │   alert-ingest → scoring → (optionally) replan  every 60 min
+  │   replan                                         every 120 min
+  │   aavso-batch                                    every 360 min
+  │   maintenance (image pruning, night summaries,   daily
+  │                performance refresh, LP refresh)
+  │
+  └─ nodes table — the AI scheduler's view of each telescope
+       location → observability windows, airmass, moon
+       hardware → what the scope can see and how long it can expose
+       autonomy → likelihood of completing a night unattended
+       performance → what it has actually delivered to AAVSO
+       reliability_score → multiplier on every (target, node) score pair
 ```
-
----
-
-## Cloud Layer (`cloud/`)
-
-The cloud coordinates many nodes into one network. Run it anywhere with
-Python + this repo:
-
-```bash
-python -m cloud.main              # uses cloud/config.yaml, serves on :8800
-```
-
-What it does:
-
-- **Node registry** — nodes auto-register with location + telescope details
-  and get an API key; light pollution is fetched automatically for each
-  location (`lightpollutionmap.info` key optional).
-- **Alert ingestion** — pulls ALeRCE, Gaia Alerts, TNS, ATLAS, ASAS-SN, and
-  the AAVSO/VSX watch list on an interval, deduplicating by 3″ cross-match.
-- **Scoring engine** — composite score per (target, node): brightness match,
-  scientific value, time criticality, network coverage gap, and observability
-  (light pollution, weather forecast, moon, airmass, visibility window,
-  telescope match).
-- **Scheduler** — generates a nightly plan per node in the exact JSON the
-  node schedule runner consumes, packed by altitude inside the node's dark
-  window, with start times in the node's local clock.
-- **Data pipeline** — ingests every measurement with capture-time conditions,
-  cross-validates co-temporal measurements across nodes, serves aggregated
-  light curves, and batch-submits validated results to AAVSO in Extended
-  Format under the network observer code (dry-run by default).
-- **APIs** — node endpoints (register/heartbeat/plan/measurements/images/
-  interrupts) plus query endpoints (`/api/v1/targets`, `/api/v1/lightcurves/
-  <name>`, `/api/v1/network/status`) for the future member dashboard and app.
-
-To connect this node to a cloud, set in `config.yaml`:
-
-```yaml
-cloud:
-  enabled: true
-  url: https://cloud.example.org
-  auto_run_plans: true     # execute the nightly plan automatically
-```
-
-Leave `node_id`/`api_key` blank — the node registers itself on first start
-and persists its credentials in `data/cloud_state.json`. Cloud status is
-visible at `/api/cloud` on the dashboard.
 
 ---
 
@@ -409,33 +543,25 @@ visible at `/api/cloud` on the dashboard.
 ```yaml
 photometry:
   enabled: false           # set true to auto-run on each new FITS file
-
-  node_id: "node_001"      # unique node identifier — set before joining network
-  filter_name: "CV"        # AAVSO filter code (CV=broadband, V=Johnson-V)
-
-  gain: 1.0                # e-/ADU  (Seestar S50 ≈ 1.0)
-  read_noise: 5.0          # ADU
-
-  target:                  # leave blank to use FITS header values (normal operation)
-    name: ""               # e.g. "SS Cyg"
+  node_id: "node_001"
+  filter_name: "CV"
+  gain: 1.0                # e-/ADU
+  read_noise: 5.0
+  target:
+    name: ""               # leave blank to use FITS header values
     ra_deg: ~
     dec_deg: ~
-
-  astap_path: "astap"      # path to ASTAP executable
-  astap_search_radius: 10  # degrees
-
-  aperture_factor: 2.5     # aperture radius = factor × FWHM
-  annulus_inner:   4.0
-  annulus_outer:   6.0
-
-  field_radius: 0.5        # degrees for comparison star search
+  astap_path: "astap"
+  astap_search_radius: 10
+  aperture_factor: 2.5
+  annulus_inner: 4.0
+  annulus_outer: 6.0
+  field_radius: 0.5
   mag_limit: 15.0
-
   min_comparison_stars: 3
   snr_threshold: 20
   max_uncertainty: 0.3
   max_airmass: 3.0
-
   fits_export:
     enabled: true
     export_dir: "fits_export"
@@ -448,7 +574,6 @@ aavso:
   observer_code: ""        # AAVSO OBSCODE  ← required
   username: ""             # AAVSO login    ← required to POST
   password: ""
-
   audit_dir: "aavso_submissions"
   dry_run: false
   submit_poor_quality: false
@@ -459,13 +584,23 @@ aavso:
 
 ```yaml
 observatory:
-  name: ""                        # e.g. "Boundless Skies Node 001"
-  latitude: ~                     # decimal degrees N
-  longitude: ~                    # decimal degrees E (negative = West)
-  elevation: 0.0                  # metres
+  name: ""
+  latitude: ~              # decimal degrees N
+  longitude: ~             # decimal degrees E (negative = West)
+  elevation: 0.0           # metres
   telescope: "ZWO Seestar S50"
   instrument: "ZWO Seestar S50 IMX462"
-  observer: ""                    # AAVSO observer code or name
+  observer: ""
+```
+
+### Cloud connection
+
+```yaml
+cloud:
+  enabled: true
+  url: https://cloud.boundlessskies.org
+  activation_code: ''      # BS-YYYY-XXXXXXXX from your account page; used once on first boot
+  auto_run_plans: true
 ```
 
 ### Safety
@@ -473,14 +608,14 @@ observatory:
 ```yaml
 safety:
   enabled: true
-  disconnect_timeout: 600     # seconds — park after this long without contact
-  heartbeat_interval: 30      # seconds between pings
+  disconnect_timeout: 600
+  heartbeat_interval: 30
   reconnect_attempts: 3
   reconnect_delay: 10
   park_at_dawn: true
-  dawn_type: astronomical     # astronomical (-18°), nautical (-12°), civil (-6°)
+  dawn_type: astronomical  # astronomical (-18°), nautical (-12°), civil (-6°)
   observer:
-    latitude: 0.0             # ← set your location for dawn detection
+    latitude: 0.0
     longitude: 0.0
 ```
 
@@ -489,56 +624,8 @@ safety:
 ```yaml
 image_watcher:
   enabled: false
-  watch_path: "/mnt/seestar"   # SMB share mount point
-  debounce_delay: 2.0          # seconds
-```
-
-### Pier Cam (optional ZWO guide camera)
-
-```yaml
-pier_cam:
-  enabled: false
-  device_index: 0
-  exposure_ms: 80
-  gain: 200
-  bin: 2
-  target_fps: 10
-```
-
----
-
-## Module Reference
-
-### `photometry.run_pipeline(fits_path, config) → dict | None`
-
-Runs the full pipeline on one FITS file. Returns the measurement dict on success, `None` on unrecoverable failure (bad WCS, no comp stars, non-positive flux).
-
-### `aavso_submission.submit(measurement, config) → dict`
-
-Formats and POSTs one observation to AAVSO WebObs. Never raises — returns `status="error"` on failure so the caller can continue. Writes the audit trail regardless of POST outcome.
-
-### `fits_export.export_enhanced_fits(source_fits, result, config) → str | None`
-
-Copies `source_fits` to `fits_export/YYYY-MM-DD/` and enriches headers. Returns destination path or `None` on failure.
-
-### `alpaca/safety_manager.SafetyManager`
-
-```python
-sm = SafetyManager(telescope=None, config=cfg, on_unsafe=callback)
-sm.attach_telescope(telescope)   # call after device connects
-sm.start()                       # install signal handlers + begin monitoring
-sm.stop()
-sm.is_safe() -> bool
-sm.status() -> dict              # safe, parked, reason, heartbeat_ok, sun_elevation, ...
-```
-
-### `image_watcher.ImageWatcher`
-
-```python
-watcher = ImageWatcher(watch_path, callback, debounce_delay=2.0)
-watcher.start()
-# callback(event_dict) called on each new .fits/.fit file
-# event_dict keys: path, size, header, mtime
+  watch_path: "/mnt/seestar"
+  debounce_delay: 2.0
 ```
 
 ---
@@ -546,117 +633,63 @@ watcher.start()
 ## Troubleshooting
 
 ### "No ALPACA servers found"
-- Verify the Seestar is powered on and connected to the same subnet
-- Some routers block UDP broadcast; confirm with `tcpdump -i en0 udp port 32227`
+- Verify the Seestar is powered on and on the same subnet
+- Some routers block UDP broadcast; check with `tcpdump -i en0 udp port 32227`
 - macOS may require allowing Python in System Preferences → Privacy & Security
 
 ### "ErrorNumber 1: Device not connected"
-- The ALPACA server responded but the device is not yet connected inside the Seestar app
-- Ensure the Seestar app is running and the telescope is initialised
+The ALPACA server responded but the device isn't initialised inside the Seestar app yet. Open the Seestar app first.
 
 ### Plate solve fails
 - ASTAP not in PATH — set `photometry.astap_path` to the full binary path
-- ASTAP star catalog not installed — download the D50 or H18 catalog from the ASTAP site
-- Search radius too small for a wide-field image — increase `astap_search_radius`
+- G18 star catalogue not installed — download from the ASTAP site
+- Increase `astap_search_radius` if the image is very wide field
 
 ### AAVSO submission rejected
-- Check `aavso_submissions/YYYY-MM-DD/*_response.txt` for the raw WebObs error message
-- Common causes: invalid observer code, target name not in AAVSO VSX, date out of range
-- Use `dry_run: true` to validate the format before live submission
+Check `aavso_submissions/YYYY-MM-DD/*_response.txt` for the raw WebObs error message. Common causes: invalid observer code, target name not in AAVSO VSX, date out of range. Use `dry_run: true` to validate format before a live submission.
 
 ### Photometry quality always "poor"
 - Low SNR: increase exposure time or check sky conditions
-- Too few comparison stars: target may be outside AAVSO VSX coverage — Gaia DR3 fallback should help
-- Large ZP scatter: poor seeing or clouds; the scatter contributes directly to uncertainty
+- Too few comparison stars: Gaia DR3 fallback should help for targets outside AAVSO VSX coverage
+- Large ZP scatter: poor seeing or clouds; scatter contributes directly to uncertainty
 
-### "Host is down" errors despite Seestar app showing connected
+### "Host is down" despite Seestar app showing connected
+The ALPACA HTTP server has wedged while the core firmware remains operational. The Seestar app talks to the firmware directly; ALPACA is a separate HTTP service that can fail independently. Recovery: **Settings → Restart** in the Seestar app (a full firmware reboot, not just app relaunch).
 
-**Symptom:** Dashboard logs show repeated `[Errno 64] Host is down` or `ConnectTimeoutError` on port 32323, but the Seestar app displays the telescope as fully connected and operational.
+### SafetyManager stuck in unsafe state after reconnect
+The SafetyManager lost contact for longer than `disconnect_timeout` and triggered emergency park. The unsafe state does not self-clear. Recovery: restart `dashboard.py`. The manager initialises safe on startup and re-attaches cleanly.
 
-**What happened:** The ALPACA HTTP server on the Seestar has wedged (hung, deadlocked, or crashed), while the core device firmware remains operational. The Seestar app talks to the firmware directly; the ALPACA endpoint is a separate HTTP service that can fail independently.
+Root causes: Seestar WiFi drop, Seestar app crash, host machine sleep. Prevention: increase `disconnect_timeout`, fix WiFi signal quality, ensure `sleep_prevention` is active.
 
-**Recovery:**
-
-1. Open the Seestar app and restart the device: **Settings → Restart**.
-2. A simple app quit and relaunch will not fix this — the HTTP daemon is built into the firmware and requires a full device reboot.
-3. Once the Seestar finishes restarting, `dashboard.py` should reconnect cleanly.
-
-This is a firmware quirk, typically triggered by rapid successive API calls or memory pressure. If it recurs frequently, check whether the node software is firing commands too fast (e.g., rapid slew tests or a tight loop without delays between API calls).
-
-### SafetyManager: "telescope unreachable" / stuck unsafe state after reconnect
-
-**Symptom:** Logs show repeated heartbeat failures, an emergency park attempt, and then all slews rejected with `Slew rejected — system is in an unsafe state (telescope unreachable for Xs)` even after the Seestar comes back online.
-
-**What happened:** The SafetyManager lost contact with the ALPACA server for longer than `safety.disconnect_timeout` (default 600 s) and triggered an emergency park. Once the unsafe state is set it does not self-clear — slews remain blocked until the session is restarted.
-
-**Likely root causes:**
-
-- **Seestar dropped off WiFi** — the most common cause. `[Errno 64] Host is down` followed by `ConnectTimeoutError` in the same reconnect cycle indicates intermittent wireless loss rather than a clean disconnect. Check the Seestar's WiFi signal strength and whether your router rate-limits or disconnects idle devices.
-- **Seestar app crashed or was suspended** — the device stayed on the network but the ALPACA HTTP server stopped responding.
-- **Mac or host machine went to sleep** — the node software paused, accumulated a gap, and woke up past the timeout threshold.
-
-**Recovery:**
-
-1. Confirm the Seestar is back online — open a browser to `http://<seestar-ip>:32323/api/v1/telescope/0/connected` and check for a valid JSON response.
-2. Restart `dashboard.py`. The SafetyManager initialises in a safe state on startup and will re-attach cleanly.
-3. If the emergency park command also failed (logged as `park command failed`), the mount may still be physically unparked — verify its position in the Seestar app before slewing.
-
-**Preventing recurrence:**
-
-- Place the Seestar closer to the access point or use a 2.4 GHz band for better range.
-- Increase `safety.disconnect_timeout` if brief network glitches are common at your site (e.g. `900` or `1200` s).
-- Disable Wi-Fi sleep / power-save on your router for the Seestar's MAC address.
-- Prevent the host Mac from sleeping during a session: `sudo pmset -b sleep 0` or use Amphetamine/Caffeinate.
-
-### "ErrorNumber 1024: Method Unpark is not implemented in this driver"
-
-The Seestar S50 ALPACA driver does not implement the `Unpark` command. Unparking must be done from within the Seestar iOS/Android app. After unparking in the app, the dashboard's telescope controls will work normally — the `Unpark` button in the dashboard has no effect on this device.
+### "ErrorNumber 1024: Method Unpark is not implemented"
+The Seestar S50 ALPACA driver does not implement `Unpark`. Unpark from within the Seestar app. The dashboard Unpark button has no effect on this device.
 
 ### "CoverCalibrator connect failed: 400 Client Error"
-
-A 400 response (rather than a connection error) means the ALPACA server is reachable but rejects the request — typically because no cover/calibrator device is configured at index 0 on this firmware version. This is a non-fatal warning; arm control is listed as unavailable in the dashboard but all other functions continue normally. If you do not have a cover calibrator attached, you can suppress these messages by setting `devices.covercalibrator.enabled: false` in `config.yaml`.
+Non-fatal — no cover calibrator device is configured at ALPACA index 0. Suppress with `devices.covercalibrator.enabled: false` in `config.yaml`.
 
 ### Dawn parking not triggering
 - `observer.latitude` and `observer.longitude` must be non-zero
-- `dawn_type: astronomical` requires the sun to reach −18°; at mid-latitudes in summer it may not — try `nautical` or `civil`
-- Dashboard header shows current sun elevation — compare against the configured threshold
+- At mid-latitudes in summer the sun may not reach −18° — try `dawn_type: nautical`
 
 ---
 
-## Extending
+## Technology Stack
 
-### Adding a custom safety check
-
-```python
-from alpaca.safety_manager import SafetyManager
-
-class WindSafetyManager(SafetyManager):
-    def _run_dawn_check(self):
-        super()._run_dawn_check()
-        if get_wind_speed() > 30:
-            self._emergency_park("high wind")
-```
-
-### Gating operations on safety
-
-```python
-if not _safety_mgr.is_safe():
-    logger.critical("Cannot proceed: %s", _safety_mgr.status()["reason"])
-    return
-my_device.move()
-```
-
-### Adding a new device type
-
-1. Create `alpaca/mydevice.py` modelled on `telescope.py`
-2. Register it in `DeviceManager.connect_all()` / `disconnect_all()`
-3. Add a config entry under `devices:` in `config.yaml`
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| Node Agent | Python 3.10+ / Flask | Runs Windows, macOS, Linux; pip only |
+| Telescope control | ALPACA REST via seestar_alp | Vendor-neutral; replaceable in Phase 4 |
+| Plate solving | ASTAP + G18 catalogue | Fast, offline, accurate on Seestar images |
+| Image stacking | NumPy + RANSAC | Sub-pixel alignment, no external binaries |
+| Photometry | astropy + custom aperture code | Differential against AAVSO/Gaia comp stars |
+| Cloud server | Python / Flask | Upgrade to FastAPI + async at Phase 2 scale |
+| Database | SQLite (WAL mode) | Zero-config; migrate to Postgres at ~50 nodes |
+| Member auth | PBKDF2-SHA256 + bearer tokens | 260K rounds, per-user salt, hashed token storage |
+| Sleep prevention | OS-native APIs | `SetThreadExecutionState` (Win), `caffeinate` (Mac), `systemd-inhibit` (Linux) |
+| Packaging | PyInstaller one-file | NSIS (Win), pkgbuild/productbuild (Mac), systemd install.sh (Linux) |
+| Mobile app | Flutter / Dart *(Phase 1)* | Single codebase iOS, Android, PWA |
 
 ---
-
-## License
-
-Provided for the Boundless Skies project. ALPACA protocol maintained by the [ASCOM Initiative](https://ascom-standards.org/).
 
 ## Further Reading
 
@@ -666,3 +699,8 @@ Provided for the Boundless Skies project. ALPACA protocol maintained by the [ASC
 - [ASTAP plate solver](https://www.hnsky.org/astap.htm)
 - [photutils documentation](https://photutils.readthedocs.io/)
 - [Astroquery (Gaia / AAVSO VSP)](https://astroquery.readthedocs.io/)
+
+---
+
+*Boundless Skies — The night sky belongs to everyone.*
+*Founded 2025.*
