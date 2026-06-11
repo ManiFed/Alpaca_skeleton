@@ -51,7 +51,9 @@ ALPACA (Astronomy Low-level Control And Automation) is an open HTTP/JSON protoco
    ```
    Key packages: `requests`, `pyyaml`, `flask`, `watchdog`, `astropy`, `photutils`, `astroquery`, `numpy`, `Pillow`, `zwoasi`, `pyongc`
 
-4. **Edit `config.yaml`** — at minimum, set:
+4. **For first-time testing**, see **Quick Start — First-Time Dry Run** below.
+
+   **For production**, you'll also need to edit `config.yaml`:
    - `observatory.latitude` / `longitude` (your site coordinates)
    - `photometry.node_id` (unique ID for your node)
    - `aavso.observer_code` / `username` / `password` (your AAVSO credentials)
@@ -59,20 +61,117 @@ ALPACA (Astronomy Low-level Control And Automation) is an open HTTP/JSON protoco
 
 ---
 
-## Quick Start
+## Quick Start — First-Time Dry Run
+
+If this is your first time running the software and you want to test everything without dealing with external dependencies (AAVSO, cloud, image watching), follow this simplified setup:
+
+### 1. Minimal Config for Dry Run
+Edit `config.yaml` and ensure these are all **disabled**:
+
+```yaml
+cloud:
+  enabled: false        # ← must be false
+
+image_watcher:
+  enabled: false        # ← must be false (don't auto-watch files yet)
+
+photometry:
+  enabled: false        # ← must be false (don't auto-run pipeline yet)
+
+pier_cam:
+  enabled: false        # ← must be false (optional guide camera)
+
+safety:
+  enabled: true         # ← keep this enabled for safe operation
+
+aavso:
+  observer_code: ''     # ← no credentials needed for dry run
+  dry_run: true         # ← if you do test submission, it won't POST
+```
+
+That's all you need. The safety manager and dashboard will still work fully.
+
+### 2. Start the Dashboard
 
 ```bash
 python dashboard.py
 ```
 
-The Flask server starts on `http://localhost:5173` and opens a browser automatically.
+The Flask server starts on `http://localhost:5173` and opens automatically. You'll see a clean dashboard with no background tasks running.
 
-**First-run checklist:**
+### 3. Test ALPACA Connection (No Telescope Needed)
+
+The dashboard works fine without a Seestar connected. You can:
+- Click **Discover** — it will timeout gracefully if no Seestar is on the LAN
+- Click **Connect** — will fail if no hardware exists, but no crash
+- Explore the UI, configuration editor, object catalog, etc.
+
+### 4. Next Steps (After Dry Run)
+
+When you're ready to connect real hardware or enable features:
+
+**Manual telescope control:**
+1. Power on your Seestar and connect it to the same LAN
+2. Click **Discover** in the dashboard — should find it
+3. Click **Connect** → establishes ALPACA session
+4. Unpark in the Seestar app, then use dashboard slew / tracking controls
+
+**Enable photometry pipeline:**
+1. Set `photometry.enabled: true` in config
+2. Set `photometry.node_id` to a unique identifier (e.g., `"node_001"`)
+3. Ensure `image_watcher.watch_path` points to the Seestar SMB share
+4. Set `image_watcher.enabled: true`
+5. New FITS files will trigger the pipeline automatically
+
+**Enable cloud (optional):**
+1. Set `cloud.enabled: true` in config
+2. Set `cloud.url` to your Boundless Skies cloud endpoint
+3. Restart — node auto-registers and receives observation plans
+
+**Live AAVSO submission:**
+1. Get AAVSO observer code at [aavso.org](https://www.aavso.org/)
+2. Set `aavso.observer_code`, `username`, `password` in config
+3. Set `aavso.dry_run: false` to submit for real
+4. Check `aavso_submissions/<date>/` for audit trail on each submission
+
+### 5. Verify Everything Works
+
+You should see:
+- ✅ Flask server starts (check console logs)
+- ✅ Browser opens to `http://localhost:5173`
+- ✅ Dashboard shows green "Connected" status (to dashboard server)
+- ✅ Object catalog loads
+- ✅ Configuration panel is editable
+- ✅ No background errors in the logs panel
+
+This proves the core software is working before hardware complexity.
+
+---
+
+## Production Quick Start
+
+Once you're confident, the full checklist is:
+
 1. Click **Discover** to find the Seestar on your LAN
 2. Click **Connect** to establish the ALPACA connection
 3. Enable `image_watcher.enabled: true` in config to start watching for new FITS files
 4. Enable `photometry.enabled: true` to run the pipeline automatically on each new file
 5. Set `aavso.dry_run: true` for a test run before live submission
+
+---
+
+## What Works in Dry Run (No Hardware)
+
+Even with no Seestar connected and all features disabled, you can test:
+
+- **Dashboard loads** — verify Flask server starts on `http://localhost:5173`
+- **Configuration editor** — load and edit `config.yaml` from the browser
+- **Object catalog** — browse Messier and NGC objects (no hardware needed)
+- **Logs viewer** — watch live server-sent events with timestamps
+- **ALPACA discovery** — click "Discover" (will timeout if no Seestar, but doesn't crash)
+- **API endpoints** — test HTTP routes via curl or the browser (responses show expected structure)
+
+When you connect a Seestar, the same dashboard instantly controls it without code changes.
 
 ---
 
