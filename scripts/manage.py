@@ -234,7 +234,7 @@ def cmd_check_aavso(config: dict) -> None:
         "fits_file":      "test.fits",
     }
 
-    from aavso_submission import _format_extended
+    from src.aavso_submission import _format_extended
     observer_code = (aavso_cfg.get("observer_code") or "XXXXX").upper()
     formatted = _format_extended(synthetic, observer_code, aavso_cfg)
     print("Formatted AAVSO Extended File Format (synthetic observation):")

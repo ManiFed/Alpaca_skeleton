@@ -4,8 +4,14 @@
     {
       "name": "dashboard",
       "runtimeExecutable": "venv/bin/python3",
-      "runtimeArgs": ["dashboard.py"],
+      "runtimeArgs": ["src/dashboard.py"],
       "port": 5173
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4180", "--directory", "website"],
+      "port": 4180
     }
   ]
 }

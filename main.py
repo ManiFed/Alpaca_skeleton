@@ -4,7 +4,7 @@ Entry point with auto-restart watchdog.
 
 Usage:
     python main.py          # launches dashboard, restarts on crash or file change
-    python dashboard.py     # single run, no auto-restart
+    python src/dashboard.py # single run, no auto-restart
 """
 
 import subprocess
@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-WATCH = [Path(__file__).parent / "dashboard.py"]
+WATCH = [Path(__file__).parent / "src" / "dashboard.py"]
 
 
 def _mtimes():
@@ -24,7 +24,7 @@ def main():
     stamps = _mtimes()
 
     while True:
-        proc = subprocess.Popen([sys.executable, "dashboard.py"])
+        proc = subprocess.Popen([sys.executable, "src/dashboard.py"])
         try:
             while proc.poll() is None:
                 time.sleep(1)
