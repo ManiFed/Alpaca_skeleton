@@ -1,21 +1,21 @@
 #!/bin/bash
-# Boundless Skies Node Agent — macOS DMG / pkg builder
+# Boundless Skies Node Agent — macOS pkg / dmg builder
 #
 # Usage:  bash build/macos/build_dmg.sh [--sign "Developer ID: ..."]
 #
 # Prerequisites:
-#   pyinstaller (for the bundle)
-#   create-dmg  (brew install create-dmg) — or pkgbuild/productbuild for .pkg
-#   Xcode command-line tools
+#   PyInstaller bundle already built at dist/BoundlessSkiesNode
+#   pkgbuild + productbuild  (Xcode command-line tools)
+#   create-dmg (optional, brew install create-dmg)
 #
 # Outputs:
-#   dist/BoundlessSkiesNode-macOS.dmg   (drag-to-install, casual users)
-#   dist/BoundlessSkiesNode-macOS.pkg   (managed deployment, used by Munki/MDM)
+#   dist/BoundlessSkiesNode-X.Y.Z-macOS.pkg   (primary — GUI installer)
+#   dist/BoundlessSkiesNode-X.Y.Z-macOS.dmg   (optional, if create-dmg present)
 
 set -e
 cd "$(dirname "$0")/../.."   # repo root
 
-VERSION=$(python3 -c "print('1.0.0')")    # TODO: read from version.py
+VERSION="1.0.0"
 APP_NAME="BoundlessSkiesNode"
 BUNDLE_DIR="dist/${APP_NAME}.app"
 CONTENTS="${BUNDLE_DIR}/Contents"
@@ -24,26 +24,28 @@ RESOURCES_DIR="${CONTENTS}/Resources"
 BUILD_DIR="build/macos"
 DIST_DIR="dist"
 
-SIGN_ID="${1:-}"
+SIGN_ID=""
 if [ "$1" = "--sign" ]; then
     SIGN_ID="$2"
 fi
 
 echo "=== Building Boundless Skies Node Agent for macOS v${VERSION} ==="
 
-# ── Step 1: PyInstaller bundle ─────────────────────────────────────────────────
-echo "Building PyInstaller bundle..."
-pyinstaller build/node_agent.spec --clean --noconfirm
+# ── Guard: require the PyInstaller bundle ──────────────────────────────────────
+if [ ! -f "${DIST_DIR}/${APP_NAME}" ]; then
+    echo "ERROR: PyInstaller bundle not found at ${DIST_DIR}/${APP_NAME}"
+    echo "Run first:  python -m PyInstaller build/node_agent.spec --clean --noconfirm"
+    exit 1
+fi
 
-# ── Step 2: Assemble .app bundle ───────────────────────────────────────────────
+# ── Assemble .app bundle ───────────────────────────────────────────────────────
 echo "Assembling .app bundle..."
+rm -rf "${BUNDLE_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
-# Move the PyInstaller one-file exe into the .app
-cp "dist/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
+cp "${DIST_DIR}/${APP_NAME}" "${MACOS_DIR}/${APP_NAME}"
 chmod +x "${MACOS_DIR}/${APP_NAME}"
 
-# Info.plist
 cat > "${CONTENTS}/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -70,27 +72,28 @@ cat > "${CONTENTS}/Info.plist" <<EOF
 </plist>
 EOF
 
-# Supporting files bundled into .app/Contents/Resources
 cp "${BUILD_DIR}/com.boundlessskies.nodeagent.plist" "${RESOURCES_DIR}/"
 cp "build/config.template.yaml" "${RESOURCES_DIR}/"
 [ -f "build/icon.icns" ] && cp "build/icon.icns" "${RESOURCES_DIR}/AppIcon.icns"
 
-# ── Step 3: Code signing ───────────────────────────────────────────────────────
+# ── Code signing ───────────────────────────────────────────────────────────────
 if [ -n "${SIGN_ID}" ]; then
     echo "Code-signing with: ${SIGN_ID}"
     codesign --deep --force --options runtime \
         --sign "${SIGN_ID}" \
-        --entitlements "${BUILD_DIR}/entitlements.plist" \
         "${BUNDLE_DIR}"
-    echo "Verifying signature..."
     codesign --verify --deep --strict "${BUNDLE_DIR}"
 else
     echo "Skipping code signing (pass --sign 'Developer ID: ...' to sign)"
 fi
 
-# ── Step 4: Build installer .pkg ───────────────────────────────────────────────
+# ── Build component .pkg ───────────────────────────────────────────────────────
 echo "Building .pkg installer..."
 PKG_STAGING="${DIST_DIR}/pkg_staging"
+COMPONENT_PKG="${DIST_DIR}/${APP_NAME}-${VERSION}-macOS-component.pkg"
+FINAL_PKG="${DIST_DIR}/${APP_NAME}-${VERSION}-macOS.pkg"
+
+rm -rf "${PKG_STAGING}"
 mkdir -p "${PKG_STAGING}/Applications"
 cp -r "${BUNDLE_DIR}" "${PKG_STAGING}/Applications/"
 
@@ -100,15 +103,46 @@ pkgbuild \
     --version "${VERSION}" \
     --scripts "${BUILD_DIR}" \
     --install-location "/" \
-    "${DIST_DIR}/${APP_NAME}-${VERSION}-macOS-component.pkg"
+    "${COMPONENT_PKG}"
 
-# Wrap with productbuild for a GUI installer
+# ── Build GUI installer .pkg via productbuild ──────────────────────────────────
+RESOURCES_SRC="${BUILD_DIR}/resources"
+mkdir -p "${RESOURCES_SRC}"
+
+# Write welcome screen if absent
+if [ ! -f "${RESOURCES_SRC}/welcome.html" ]; then
+    cat > "${RESOURCES_SRC}/welcome.html" <<'HTML'
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"/></head>
+<body style="font-family: -apple-system, Helvetica; font-size: 13px; color: #1a1a1a; padding: 20px;">
+<h2 style="color:#1a1a1a;">Welcome to Boundless Skies Node Agent</h2>
+<p>This installer will set up the <strong>Boundless Skies Node Agent</strong> on your Mac.</p>
+<p>The Node Agent runs in the background as a system service, automatically:</p>
+<ul>
+<li>Connecting to your Seestar telescope</li>
+<li>Downloading tonight's observation plan</li>
+<li>Processing photometry and uploading science data</li>
+</ul>
+<p><strong>Requirements:</strong></p>
+<ul>
+<li>macOS 11 or later</li>
+<li>Seestar S50 or S30 in Station Mode on your local WiFi</li>
+<li>A Boundless Skies activation code (get one at boundlessskies.org)</li>
+<li>ASTAP plate solver (<a href="https://www.hnsky.org/astap.htm">hnsky.org/astap.htm</a>)</li>
+</ul>
+<p style="color:#555;">After installation, add your activation code to:<br/>
+<code>/Library/Application Support/BoundlessSkies/NodeAgent/config.yaml</code></p>
+</body>
+</html>
+HTML
+fi
+
 cat > "${DIST_DIR}/distribution.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
-    <title>Boundless Skies Node Agent</title>
-    <background file="background.png" alignment="bottomleft" scaling="none"/>
-    <welcome file="welcome.html"/>
+    <title>Boundless Skies Node Agent ${VERSION}</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
     <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
     <choices-outline>
         <line choice="default">
@@ -128,12 +162,15 @@ EOF
 productbuild \
     --distribution "${DIST_DIR}/distribution.xml" \
     --package-path "${DIST_DIR}" \
-    --resources "${BUILD_DIR}/resources" \
-    "${DIST_DIR}/${APP_NAME}-${VERSION}-macOS.pkg"
+    --resources "${RESOURCES_SRC}" \
+    "${FINAL_PKG}"
 
-# ── Step 5: DMG (drag-to-install) ─────────────────────────────────────────────
-echo "Building .dmg..."
+# Clean up staging artifacts
+rm -rf "${PKG_STAGING}" "${COMPONENT_PKG}" "${DIST_DIR}/distribution.xml"
+
+# ── Optional DMG (drag-to-Applications) ───────────────────────────────────────
 if command -v create-dmg &>/dev/null; then
+    echo "Building .dmg..."
     create-dmg \
         --volname "Boundless Skies Node Agent" \
         --window-pos 200 120 \
@@ -145,13 +182,12 @@ if command -v create-dmg &>/dev/null; then
         "${DIST_DIR}/${APP_NAME}-${VERSION}-macOS.dmg" \
         "${BUNDLE_DIR}"
 else
-    echo "create-dmg not found — install with: brew install create-dmg"
-    echo "Skipping .dmg creation (the .pkg is the primary installer)"
+    echo "(create-dmg not found — skipping .dmg, install with: brew install create-dmg)"
 fi
 
 echo ""
 echo "=== Build complete ==="
-echo "  Installer:  ${DIST_DIR}/${APP_NAME}-${VERSION}-macOS.pkg"
+echo "  Installer:  ${FINAL_PKG}"
 [ -f "${DIST_DIR}/${APP_NAME}-${VERSION}-macOS.dmg" ] && \
 echo "  DMG:        ${DIST_DIR}/${APP_NAME}-${VERSION}-macOS.dmg"
 echo ""

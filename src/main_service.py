@@ -20,6 +20,8 @@ import pathlib
 import signal
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+
 logger = logging.getLogger("main_service")
 
 
@@ -51,7 +53,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _sigterm)
 
     # Import and run the dashboard (this blocks until Ctrl-C / SIGTERM)
-    import dashboard
+    import src.dashboard as dashboard
     dashboard.launch(port=args.port)
 
 

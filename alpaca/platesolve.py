@@ -242,7 +242,7 @@ def solve_image_array(
     import numpy as np
     from astropy.io import fits
     from astropy.wcs import WCS
-    from photometry import _run_astap
+    from src.photometry import _run_astap
 
     data = np.asarray(image_array, dtype=np.float32)
     if data.ndim == 3:          # colour / 3-plane ALPACA response → first plane

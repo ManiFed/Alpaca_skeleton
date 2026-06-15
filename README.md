@@ -17,19 +17,22 @@ manual intervention required.
 
 ```
 node_v1-main/
-├── dashboard.py          Node Agent — Flask dashboard + control loop
-├── main.py               Dev-mode watchdog (auto-restarts dashboard.py)
-├── main_service.py       Production entry point (used by installers, no subprocess)
-├── sleep_prevention.py   Cross-platform OS sleep prevention
-├── cloud_communicator.py Node → Cloud API client (heartbeat, plan, measurements)
-├── photometry.py         Aperture photometry pipeline (ASTAP → comp stars → mag)
-├── stacking.py           RANSAC live sub-pixel stacking
-├── image_watcher.py      FSEvents/inotify watcher on the Seestar SMB share
-├── aavso_submission.py   AAVSO Extended File Format + WebObs API (node-side)
-├── fits_export.py        Enhanced FITS header writer
-├── geolocation.py        IP-based location detection for auto-registration
-├── shared_models.py      NodeInfo, TargetInfo, PlanItem, ObservationPlan, Measurement
+├── main.py               Dev-mode watchdog (auto-restarts src/dashboard.py)
 ├── config.yaml           Node configuration (edit before first run)
+│
+├── src/                  Node Agent source (moved for clean separation)
+│   ├── dashboard.py          Flask dashboard + control loop
+│   ├── main_service.py       Production entry point (used by installers, no subprocess)
+│   ├── sleep_prevention.py   Cross-platform OS sleep prevention
+│   ├── cloud_communicator.py Node → Cloud API client (heartbeat, plan, measurements)
+│   ├── photometry.py         Aperture photometry pipeline (ASTAP → comp stars → mag)
+│   ├── stacking.py           RANSAC live sub-pixel stacking
+│   ├── image_watcher.py      FSEvents/inotify watcher on the Seestar SMB share
+│   ├── aavso_submission.py   AAVSO Extended File Format + WebObs API (node-side)
+│   ├── fits_export.py        Enhanced FITS header writer
+│   ├── geolocation.py        IP-based location detection for auto-registration
+│   ├── shared_models.py      NodeInfo, TargetInfo, PlanItem, ObservationPlan, Measurement
+│   └── __init__.py           Package marker
 │
 ├── alpaca/               ALPACA protocol abstraction layer
 │   ├── telescope.py      Slew, track, park, RA/Dec query
@@ -53,10 +56,21 @@ node_v1-main/
 │   ├── data_pipeline.py  Measurement ingestion, cross-validation, AAVSO batch
 │   ├── nights.py         Night summary generation, notification dispatch
 │   ├── conditions.py     Weather, moon, airmass utilities
+│   ├── tuning.py         Claude-powered weight tuning monitor (observability scoring)
 │   └── config.yaml       Cloud configuration (fill in AAVSO credentials here)
 │
+├── cloud_data/          Data files (database, batches, exports)
+│   ├── cloud.db          SQLite database
+│   └── aavso_batches/    Generated AAVSO submission batches
+│
+├── website/             Member portal + marketing site (Phase 1)
+│   ├── index.html        Landing page
+│   ├── app.js            SPA application logic
+│   └── styles.css        Responsive design
+│
 ├── scripts/
-│   └── manage.py         Admin CLI (status, ingest, batch, submit, check-aavso, generate-code)
+│   ├── manage.py         Admin CLI (status, ingest, batch, submit, check-aavso, generate-code)
+│   └── seed_demo.py      Demo data generator for testing
 │
 └── build/                Installer build system
     ├── node_agent.spec   PyInstaller spec
@@ -77,6 +91,48 @@ node_v1-main/
 | **1 — Core System** | In progress | Installers shipped, member accounts live, web dashboard, 3–5 beta nodes |
 | **2 — Launch** | Not started | 50 nodes, marketing website live, first ATel, first grant application |
 | **3 — Growth** | Not started | 200 nodes, 25 countries, 10,000+ AAVSO submissions |
+
+---
+
+## Recent Changes (June 2026)
+
+### Directory Reorganization
+- **Node Agent source files moved to `src/`** — cleaner separation of concerns
+  - `src/dashboard.py`, `src/cloud_communicator.py`, `src/photometry.py`, etc.
+  - Main entry point `main.py` and `config.yaml` remain at project root
+  - Installer and launch configurations updated
+
+- **Website added to `website/`** — HTML/CSS/JavaScript SPA for Phase 1
+  - Member portal and marketing site (not yet integrated with cloud backend)
+  - Single-page app with responsive design
+
+- **Database and demo data organized into `cloud_data/`**
+  - `cloud_data/cloud.db` — SQLite database
+  - `cloud_data/aavso_batches/` — Generated submission files
+  - `scripts/seed_demo.py` — Demo data generator for testing
+
+### Claude Weight-Tuning Monitor (New Feature)
+- **`cloud/tuning.py`** — Nightly advisory monitor that reads observation outcomes and proposes adjustments to observability scoring weights
+  - **Hot path unchanged** — alert ingestion, scoring, and planning remain 100% procedural
+  - **Opt-in** — controlled by `tuning.enabled` in `cloud/config.yaml`
+  - **Audited** — every weight change is logged with reasoning and can be rolled back
+  - Requires `ANTHROPIC_API_KEY` environment variable when enabled
+  - See [Weight Tuning Monitor](#weight-tuning-monitor--claude-powered-observability-optimization) section for full documentation
+
+### Database Schema Extensions
+- New `tuning_state` table — stores live observability weights
+- New `weight_history` table — audit trail of all scoring weight changes
+- Fixed missing `filters` column in `nodes` table
+- All migrations applied automatically on cloud server startup
+
+### Alert Integration Improvements
+- **ATLAS** — fixed token-based authentication endpoint
+- All alert sources now use modern auth patterns
+
+### Other Updates
+- `requirements.txt` — added `anthropic>=0.92` (optional, lazy-loaded)
+- Admin CLI (`scripts/manage.py`) — added tuning monitoring support
+- API server (`cloud/server.py`) — new tuning endpoints (`GET /api/v1/admin/tuning`, `POST /api/v1/admin/tuning/rollback`)
 
 ---
 
@@ -262,7 +318,7 @@ nano config.yaml
 #    image_watcher.watch_path (Seestar SMB share mount point)
 #    cloud.url + cloud.activation_code
 
-# 4. Run (dev mode — auto-restarts on file changes)
+# 4. Run (dev mode — auto-restarts src/dashboard.py on file changes)
 python3 main.py
 # Dashboard: http://localhost:5173
 ```
@@ -285,7 +341,7 @@ aavso:
   dry_run: true
 ```
 
-Then `python3 dashboard.py`. Everything in the dashboard works except hardware
+Then `python3 main.py`. Everything in the dashboard works except hardware
 control. Object catalog, config editor, logs, and API endpoints are all live.
 
 ---
@@ -296,10 +352,15 @@ control. Object catalog, config editor, logs, and API endpoints are all live.
 cd cloud/
 pip install flask pyyaml requests
 
+# Optional: enable Claude weight tuning (requires ANTHROPIC_API_KEY env var)
+export ANTHROPIC_API_KEY="sk-..."
+pip install anthropic
+
 # Edit cloud/config.yaml:
 #   aavso.observer_code: MXXX
 #   aavso.username / aavso.password
 #   server.admin_key
+#   tuning.enabled: true  (optional, defaults to false)
 
 python3 -m cloud.main
 # API: http://localhost:8800
@@ -341,6 +402,94 @@ python3 scripts/manage.py status
 
 **Success criterion (Phase 0):** One observation accepted by AAVSO with magnitude
 agreeing within 0.15 mag of the known value for the target.
+
+---
+
+## Weight Tuning Monitor — Claude-Powered Observability Optimization
+
+The scoring engine is built on **six observability sub-weights** that balance how heavily each factor influences target assignment:
+
+```
+{
+  "light_pollution":  0.20,   Weight of sky brightness on assignment
+  "weather":          0.25,   Clearness likelihood (historical)
+  "moon":             0.15,   Lunar illumination + position
+  "airmass":          0.15,   Atmospheric extinction + target altitude
+  "window":           0.15,   Hours the target is visible each night
+  "telescope":        0.10,   Hardware capability match to target
+}
+```
+
+By default these are **static**. When `tuning.enabled: true` in `cloud/config.yaml`, a nightly monitor wakes after maintenance and:
+
+1. **Gathers evidence** from the last N nights of observations
+   - Measures ingested, quality flags, AAVSO acceptance rate
+   - Correlates outcomes with the factors above
+   - Identifies which weights may be misaligned
+
+2. **Proposes adjustments** (Claude API call)
+   - Reads the evidence brief + current weights
+   - Returns proposed values for each sub-weight
+   - Reasoning is logged but not applied automatically
+
+3. **Applies with safeguards** (procedural)
+   - Clamps each weight to ±5% change per night (trust-region limit)
+   - Renormalizes to sum 1.0
+   - Persists to the database with full audit trail
+   - Notifies admins via the API if changes exceed 2% on any weight
+
+The **hot path** (alert ingestion, scoring, planning) remains 100% procedural — no Claude calls, no latency added. Scoring reads live weights from `tuning_state` table on every run via `scoring.score_all()`, so a change takes effect on the next rescore with no restart.
+
+**Key points:**
+- Only the advisory monitor calls Claude; schedulers and scorers use fixed formulas
+- Tuning is **opt-in** and ships disabled; behavior is identical to static weights when disabled
+- All weight changes are audited in `weight_history` table — rollback is a single API call
+- Configuration lives in both `config.yaml` (seed values) and the database (live values)
+
+### Tuning Configuration
+
+```yaml
+tuning:
+  enabled: false                    # set true to enable Claude-powered tuning
+  model: claude-opus-4-8            # Claude model for proposals (impacts cost/latency)
+  lookback_days: 14                 # analyze the last N nights for evidence
+  max_delta_per_night: 0.05         # trust-region clamp (±5% per weight per night)
+  min_nights_for_tuning: 7          # don't tune until ≥ 7 nights of data exist
+  min_measurements: 30              # require ≥ 30 measurements to tune
+  min_weight_change: 0.005          # skip notify if no weight moves > 0.5%
+
+# Seed values — used as defaults if tuning is disabled or on fresh install
+scoring:
+  observability_weights:
+    light_pollution: 0.20
+    weather: 0.25
+    moon: 0.15
+    airmass: 0.15
+    window: 0.15
+    telescope: 0.10
+```
+
+### Monitoring the Tuning Monitor
+
+```bash
+# Check current live weights
+curl -H "X-Admin-Key: your-admin-key" \
+     https://cloud.boundlessskies.org/api/v1/admin/tuning
+
+# Response:
+# {
+#   "active_weights": { … },
+#   "last_tuning_run": "2026-06-15T02:30:00Z",
+#   "weight_history": [ … ],
+#   "recent_changes": [ … ]
+# }
+
+# Rollback to a prior weight set (manual safety valve)
+curl -X POST -H "X-Admin-Key: your-admin-key" \
+     -H "Content-Type: application/json" \
+     -d '{"rollback_to_id": 5}' \
+     https://cloud.boundlessskies.org/api/v1/admin/tuning/rollback
+```
 
 ---
 
@@ -453,10 +602,31 @@ sudo bash build/linux/install.sh --code BS-2026-XXXXXXXX
 | POST | `/api/v1/admin/replan` | Trigger rescoring + plan regeneration |
 | POST | `/api/v1/admin/activation-codes` | Generate codes in bulk |
 | POST | `/api/v1/interrupts` | Broadcast a high-priority target interrupt to nodes |
+| GET | `/api/v1/admin/tuning` | Get current active weights, history, and last run timestamp |
+| POST | `/api/v1/admin/tuning/rollback` | Rollback to a previous weight set by history ID |
 
 ---
 
-## Photometry Pipeline (`photometry.py`)
+## Database Schema Updates
+
+### New Tables (Phase 0.5+)
+
+| Table | Purpose | Columns |
+|-------|---------|---------|
+| `tuning_state` | Active observability sub-weights | `id`, `obs_weights` (JSON), `updated_at` |
+| `weight_history` | Audit trail of all weight changes | `id`, `timestamp`, `old_weights`, `new_weights`, `reason`, `claude_reasoning` |
+
+### Schema Changes to Existing Tables
+
+| Table | Change | Notes |
+|-------|--------|-------|
+| `nodes` | Added `filters` column | Previously missing, needed for multi-band target assignment |
+
+**Migration:** All schema updates are applied automatically on cloud server startup via `db.py` migration system.
+
+---
+
+## Photometry Pipeline (`src/photometry.py`)
 
 Runs automatically on each new FITS file when `photometry.enabled: true`.
 
@@ -498,7 +668,7 @@ FITS file
 ## Architecture Overview
 
 ```
-dashboard.py (Flask, port 5173)
+src/dashboard.py (Flask, port 5173)
   │
   ├─ API endpoints (telescope, camera, schedule, photometry, config, logs, …)
   │
@@ -523,20 +693,51 @@ cloud/ (Flask, port 8800)
   │   alert-ingest → scoring → (optionally) replan  every 60 min
   │   replan                                         every 120 min
   │   aavso-batch                                    every 360 min
+  │   weight-tuning (Claude advisory monitor)        daily
   │   maintenance (image pruning, night summaries,   daily
   │                performance refresh, LP refresh)
   │
-  └─ nodes table — the AI scheduler's view of each telescope
-       location → observability windows, airmass, moon
-       hardware → what the scope can see and how long it can expose
-       autonomy → likelihood of completing a night unattended
-       performance → what it has actually delivered to AAVSO
-       reliability_score → multiplier on every (target, node) score pair
+  ├─ nodes table — the AI scheduler's view of each telescope
+  │   location → observability windows, airmass, moon
+  │   hardware → what the scope can see and how long it can expose
+  │   autonomy → likelihood of completing a night unattended
+  │   performance → what it has actually delivered to AAVSO
+  │   reliability_score → multiplier on every (target, node) score pair
+  │
+  └─ tuning_state + weight_history tables (when tuning enabled)
+      active observability sub-weights, audit trail of all changes
 ```
 
 ---
 
 ## Configuration Reference (`config.yaml`)
+
+### Cloud Configuration (when `enabled: true`)
+
+```yaml
+cloud:
+  enabled: true
+  url: https://cloud.boundlessskies.org
+  activation_code: ''      # BS-YYYY-XXXXXXXX from your account page; used once on first boot
+  auto_run_plans: true     # automatically execute observation plans from the cloud
+```
+
+### Tuning (Claude weight monitor — requires Anthropic API key in environment)
+
+**Note:** See [Weight Tuning Monitor](#weight-tuning-monitor--claude-powered-observability-optimization) section above for detailed documentation.
+
+```yaml
+tuning:
+  enabled: false                    # set true to enable Claude-powered observability weight tuning
+  model: claude-opus-4-8            # Claude model for advisory proposals
+  lookback_days: 14                 # analyze the last N nights of observations
+  max_delta_per_night: 0.05         # clamp changes to ±5% per weight per night
+  min_nights_for_tuning: 7          # require ≥ 7 nights of historical data
+  min_measurements: 30              # require ≥ 30 measurements to enable tuning
+  min_weight_change: 0.005          # skip notifications if max change < 0.5%
+```
+
+**Environment variable:** `ANTHROPIC_API_KEY` must be set for tuning to function.
 
 ### Photometry
 
@@ -671,6 +872,23 @@ Non-fatal — no cover calibrator device is configured at ALPACA index 0. Suppre
 - `observer.latitude` and `observer.longitude` must be non-zero
 - At mid-latitudes in summer the sun may not reach −18° — try `dawn_type: nautical`
 
+### Weight-tuning monitor not running
+- Check that `ANTHROPIC_API_KEY` is set in the environment: `echo $ANTHROPIC_API_KEY`
+- Verify `tuning.enabled: true` in `cloud/config.yaml`
+- Tuning is a daily task — runs during the maintenance window, typically 2–3 AM UTC
+- Check cloud server logs: `cloud.tuning` logger will show evidence gathered and Claude responses
+- Insufficient data: tuning requires at least `min_measurements` (default 30) and `min_nights_for_tuning` (default 7) of observations
+
+### Weight changes seem to have no effect on plan
+- Plans are built during the `replan` loop (every 120 min); a weight change takes effect on the **next** replan, not retroactively
+- To see weights take effect immediately, trigger a manual rescore: `curl -X POST -H "X-Admin-Key: ..." http://localhost:8800/api/v1/admin/replan`
+- Check the `GET /api/v1/admin/tuning` response to confirm weights were actually updated
+
+### Claude API errors during tuning
+- **429 (rate limited):** reduce frequency by increasing `tuning.lookback_days` or temporarily disabling
+- **401 (auth failed):** verify `ANTHROPIC_API_KEY` is correct and has quota remaining
+- **Content policy violations:** evidence brief triggers a refusal (rare); tuning skips apply and notifies in logs
+
 ---
 
 ## Technology Stack
@@ -683,11 +901,12 @@ Non-fatal — no cover calibrator device is configured at ALPACA index 0. Suppre
 | Image stacking | NumPy + RANSAC | Sub-pixel alignment, no external binaries |
 | Photometry | astropy + custom aperture code | Differential against AAVSO/Gaia comp stars |
 | Cloud server | Python / Flask | Upgrade to FastAPI + async at Phase 2 scale |
+| Scoring weights | Claude API (opt-in) | Advisory monitor for observability tuning; hot path stays procedural |
 | Database | SQLite (WAL mode) | Zero-config; migrate to Postgres at ~50 nodes |
 | Member auth | PBKDF2-SHA256 + bearer tokens | 260K rounds, per-user salt, hashed token storage |
 | Sleep prevention | OS-native APIs | `SetThreadExecutionState` (Win), `caffeinate` (Mac), `systemd-inhibit` (Linux) |
 | Packaging | PyInstaller one-file | NSIS (Win), pkgbuild/productbuild (Mac), systemd install.sh (Linux) |
-| Web dashboard & marketing site | React / TypeScript *(Phase 1)* | Mobile-first responsive design; runs locally for development |
+| Member portal | HTML/CSS/JavaScript (Phase 1) | Single-page app; code in `website/` directory |
 
 ---
 

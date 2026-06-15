@@ -12,10 +12,10 @@
 
 set -e
 
-APP_DIR="/Applications/BoundlessSkiesNode"
+APP_DIR="/Applications/BoundlessSkiesNode.app"
 DATA_DIR="/Library/Application Support/BoundlessSkies/NodeAgent"
 LOG_DIR="/Library/Logs/BoundlessSkies"
-PLIST_SRC="${APP_DIR}/com.boundlessskies.nodeagent.plist"
+PLIST_SRC="${APP_DIR}/Contents/Resources/com.boundlessskies.nodeagent.plist"
 PLIST_DEST="/Library/LaunchDaemons/com.boundlessskies.nodeagent.plist"
 ACTIVATION_CODE="${BS_ACTIVATION_CODE:-}"    # Set by the GUI installer page
 

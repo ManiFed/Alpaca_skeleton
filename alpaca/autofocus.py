@@ -255,7 +255,7 @@ def autofocus_device(
     The focuser's current position is used as the sweep centre.
     """
     import numpy as np
-    from photometry import _estimate_fwhm
+    from src.photometry import _estimate_fwhm
 
     start_position = focuser.position()
 

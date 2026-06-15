@@ -16,7 +16,7 @@ from typing import Optional
 
 from cloud import db
 from cloud.conditions import fetch_light_pollution
-from shared_models import NodeInfo
+from src.shared_models import NodeInfo
 
 logger = logging.getLogger("cloud.registry")
 
