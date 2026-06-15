@@ -49,6 +49,16 @@ def create_app(config: dict) -> Flask:
     return app
 
 
+@app.after_request
+def _cors(resp):
+    """Allow the marketing site / dashboard (served from another origin in dev)
+    to read the public JSON endpoints from the browser."""
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Node-Id, X-Api-Key, Authorization"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, OPTIONS"
+    return resp
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 

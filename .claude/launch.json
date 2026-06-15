@@ -12,6 +12,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "4180", "--directory", "website"],
       "port": 4180
+    },
+    {
+      "name": "cloud-api",
+      "runtimeExecutable": "venv/bin/python3",
+      "runtimeArgs": ["-m", "cloud.main"],
+      "port": 8800
     }
   ]
 }

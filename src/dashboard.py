@@ -6,6 +6,9 @@ Run:  python dashboard.py
 Then open http://localhost:5173 in a browser.
 """
 
+import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
+
 import base64
 import copy
 import io

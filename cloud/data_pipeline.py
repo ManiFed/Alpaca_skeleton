@@ -119,7 +119,7 @@ def light_curve(target_name: str, days: float = 365.0) -> list:
     """All non-outlier measurements of a target, time-ordered, for the API."""
     rows = db.query(
         """SELECT node_id, bjd, magnitude, uncertainty, filter, airmass, snr,
-                  quality_flag, validation_status, received_at
+                  quality_flag, validation_status, aavso_submitted, received_at
            FROM measurements
            WHERE target_name = ? AND validation_status != 'outlier'
            ORDER BY bjd""",
