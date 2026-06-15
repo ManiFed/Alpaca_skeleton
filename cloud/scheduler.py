@@ -28,7 +28,7 @@ from typing import Optional
 
 from cloud import db, registry
 from cloud.conditions import altitude_curve, night_window
-from shared_models import ObservationPlan, PlanItem
+from src.shared_models import ObservationPlan, PlanItem
 
 logger = logging.getLogger("cloud.scheduler")
 

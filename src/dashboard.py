@@ -33,13 +33,13 @@ from alpaca.camera import Camera, ExposureCancelled
 from alpaca.focuser import Focuser
 from alpaca.autofocus import autofocus_device, AutofocusCancelled, AutofocusError
 from alpaca.covercalibrator import CoverCalibrator, COVER_STATE_NAMES, COVER_NOT_PRESENT, COVER_MOVING, COVER_OPEN, COVER_CLOSED
-from image_watcher import ImageWatcher
-from photometry import run_pipeline as _run_photometry
-from aavso_submission import submit as _aavso_submit
-from fits_export import export_enhanced_fits as _export_fits
-from geolocation import enrich_config_with_location
-from stacking import LiveStacker
-from cloud_communicator import CloudCommunicator
+from src.image_watcher import ImageWatcher
+from src.photometry import run_pipeline as _run_photometry
+from src.aavso_submission import submit as _aavso_submit
+from src.fits_export import export_enhanced_fits as _export_fits
+from src.geolocation import enrich_config_with_location
+from src.stacking import LiveStacker
+from src.cloud_communicator import CloudCommunicator
 
 
 app = Flask(__name__)
@@ -8093,7 +8093,7 @@ def launch(port: int = 5173) -> None:
 
     # Prevent the host OS from sleeping during overnight observations
     try:
-        from sleep_prevention import enable as _sleep_enable
+        from src.sleep_prevention import enable as _sleep_enable
         _sleep_enable()
     except Exception as exc:
         logger.warning("Sleep prevention unavailable: %s", exc)
@@ -8170,7 +8170,7 @@ def launch(port: int = 5173) -> None:
         if _image_watcher is not None:
             _image_watcher.stop()
         try:
-            from sleep_prevention import disable as _sleep_disable
+            from src.sleep_prevention import disable as _sleep_disable
             _sleep_disable()
         except Exception:
             pass

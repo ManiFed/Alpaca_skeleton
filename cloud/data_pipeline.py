@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from cloud import db
-from shared_models import Measurement
+from src.shared_models import Measurement
 
 logger = logging.getLogger("cloud.data_pipeline")
 
