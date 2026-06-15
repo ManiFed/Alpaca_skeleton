@@ -20,7 +20,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/BoundlessSkiesNode/BoundlessSkiesNode</string>
+        <string>/Applications/BoundlessSkiesNode.app/Contents/MacOS/BoundlessSkiesNode</string>
         <string>--no-browser</string>
         <string>--data-dir</string>
         <string>/Library/Application Support/BoundlessSkies/NodeAgent</string>

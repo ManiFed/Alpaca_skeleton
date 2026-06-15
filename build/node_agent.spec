@@ -11,12 +11,12 @@
 #   pip install pyinstaller
 #   (All runtime deps must be installed in the active venv)
 
-import os
+import glob as _glob
 import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent          # repo root (build/ is one level down)
-ENTRY = ROOT / "main_service.py"
+ENTRY = ROOT / "src" / "main_service.py"
 
 block_cipher = None
 
@@ -34,7 +34,6 @@ hidden_imports = [
     "astropy.wcs.utils",
 
     # numpy extension modules
-    "numpy.core._methods",
     "numpy.lib.format",
 
     # Flask internals
@@ -60,7 +59,7 @@ hidden_imports = [
     # PyYAML
     "yaml",
 
-    # Local packages
+    # alpaca package (top-level, unchanged)
     "alpaca",
     "alpaca.telescope",
     "alpaca.camera",
@@ -74,16 +73,18 @@ hidden_imports = [
     "alpaca.covercalibrator",
     "alpaca.client",
 
-    # Other local modules
-    "shared_models",
-    "photometry",
-    "stacking",
-    "image_watcher",
-    "cloud_communicator",
-    "aavso_submission",
-    "fits_export",
-    "geolocation",
-    "sleep_prevention",
+    # src package — files moved here from repo root
+    "src",
+    "src.dashboard",
+    "src.shared_models",
+    "src.photometry",
+    "src.stacking",
+    "src.image_watcher",
+    "src.cloud_communicator",
+    "src.aavso_submission",
+    "src.fits_export",
+    "src.geolocation",
+    "src.sleep_prevention",
 
     # pyongc
     "pyongc",
@@ -102,23 +103,23 @@ hidden_imports = [
 # ── Data files ─────────────────────────────────────────────────────────────────
 # Tuples: (source_path, dest_directory_in_bundle)
 
-datas = [
-    # pyongc database
-    (str(ROOT / "venv" / "lib" / "python*" / "site-packages" / "pyongc" / "ongc.db"),
-     "pyongc"),
+# Resolve pyongc database — the glob is needed because the python version
+# in the venv path is not known at spec-parse time.
+_pyongc_matches = _glob.glob(
+    str(ROOT / "venv" / "lib" / "python*" / "site-packages" / "pyongc" / "ongc.db"))
 
+datas = [
     # Config template — installer writes the real config; this is the fallback
     (str(ROOT / "build" / "config.template.yaml"), "."),
-
-    # ASTAP is a separate binary; we ship a reference, not the binary itself.
-    # Members install ASTAP separately.  See README.
 ]
+if _pyongc_matches:
+    datas.append((_pyongc_matches[0], "pyongc"))
 
 # ── Analysis ───────────────────────────────────────────────────────────────────
 
 a = Analysis(
     [str(ENTRY)],
-    pathex=[str(ROOT)],
+    pathex=[str(ROOT), str(ROOT / "src")],
     binaries=[],
     datas=datas,
     hiddenimports=hidden_imports,
