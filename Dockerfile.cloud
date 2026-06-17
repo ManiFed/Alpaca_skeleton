@@ -14,6 +14,6 @@ RUN mkdir -p /data/aavso_batches /data/raw_images
 
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8800
+EXPOSE ${PORT:-8800}
 
 CMD ["python", "-m", "cloud.main", "cloud/config.production.yaml"]
