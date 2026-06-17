@@ -429,8 +429,8 @@ def _store(candidate: dict) -> bool:
         db.execute(
             """UPDATE targets SET mag = COALESCE(%s, mag),
                    mag_band = CASE WHEN %s IS NULL THEN mag_band ELSE %s END,
-                   target_type = %s, priority = MAX(priority, %s),
-                   time_critical = MAX(time_critical, %s),
+                   target_type = %s, priority = GREATEST(priority, %s),
+                   time_critical = GREATEST(time_critical, %s),
                    sources = %s, last_updated = %s, active = 1
                WHERE target_id = %s""",
             (candidate.get("mag"), candidate.get("mag"), candidate.get("mag_band"),
@@ -500,7 +500,7 @@ def _expire_stale_targets(alerts_cfg: dict) -> None:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db.execute(
         """UPDATE targets SET active = 0
-           WHERE active = 1 AND last_updated < %s AND sources NOT LIKE '%aavso%'""",
+           WHERE active = 1 AND last_updated < %s AND sources NOT LIKE '%%aavso%%'""",
         (cutoff,),
     )
 
