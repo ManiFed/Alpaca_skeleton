@@ -7,7 +7,7 @@
 <meta name="description" content="The world's first automated telescope network built for people with disabilities. Donate your Seestar's nights. We do the science." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Monoton&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -22,6 +22,7 @@
       <a href="#builder">Node builder</a>
       <a href="#science">The science</a>
       <a href="#network">Network</a>
+      <a href="#impact">Who it's for</a>
     </div>
     <div class="nav-right">
       <a href="#" class="btn btn-plain">Sign in</a>
@@ -38,7 +39,7 @@
 
   <div class="wrap hero-inner">
     <span class="badge"><span class="dot"></span> <span id="badge-text">nodes observing right now</span></span>
-    <h1 class="serif">The night sky belongs to <span class="muted">everyone.</span></h1>
+    <h1 class="serif">The night sky belongs to <span class="laser">everyone.</span></h1>
     <p class="hero-sub">The world's first automated telescope network built for people with disabilities. Donate your Seestar's nights — our pipeline schedules the observations, processes the photometry, and submits real science to AAVSO under your name.</p>
     <div class="hero-cta">
       <a href="#builder" class="btn btn-cream">Build your node <i class="ti ti-arrow-right"></i></a>
@@ -120,163 +121,137 @@
   <div class="wrap">
     <div class="section-head reveal">
       <span class="eyebrow">Node builder</span>
-      <h2 class="serif">Configure your node.</h2>
-      <p>Choose your telescope tier and the autonomy hardware you run. Watch your projected reliability — and the science you unlock — update in real time.</p>
+      <h2 class="serif">Build a node from scratch.</h2>
+      <p>No Seestar yet? This guided builder assembles a complete autonomous node — telescope, computer, and the hardware that keeps it observing unattended. Every part links out to standard retail: no markup, no checkout, no Boundless Skies transaction.</p>
+    </div>
+
+    <!-- flagship preset -->
+    <div class="preset reveal">
+      <div class="preset-info">
+        <span class="preset-tag"><i class="ti ti-sparkles"></i> Flagship preset</span>
+        <h3 class="serif">The Complete Autonomous Node</h3>
+        <p>Our fully assembled recommendation — runs outdoors, unattended, every clear night. Load it, then trim anything you don't need.</p>
+        <ul class="preset-parts">
+          <li>Seestar S50</li><li>Raspberry Pi 5</li><li>Smart power + SwitchBot</li>
+          <li>UPS backup</li><li>Minidome + weather</li><li>WiFi extender</li>
+        </ul>
+      </div>
+      <div class="preset-side">
+        <div class="preset-cost"><span id="preset-cost">$1,729</span><small>approx. at retail</small></div>
+        <button class="btn btn-cream" id="load-preset" type="button">Load this build <i class="ti ti-bolt"></i></button>
+        <span class="preset-note">Reliability ≈ 1.00 · fully unattended</span>
+      </div>
     </div>
 
     <div class="builder reveal">
-      <!-- LEFT: live visual + summary -->
-      <div class="builder-visual">
+      <!-- LEFT: persistent summary -->
+      <aside class="builder-visual">
         <div class="scope-stage">
-          <svg viewBox="0 0 240 240" id="scope-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Seestar node schematic">
-            <!-- enclosure dome (behind, toggles) -->
-            <g id="g-enclosure" opacity="0">
-              <path d="M34 160 A 86 76 0 0 1 206 160" fill="rgba(110,89,242,0.05)" stroke="#6E59F2" stroke-width="1.5"/>
-              <line x1="28" y1="160" x2="212" y2="160" stroke="#6E59F2" stroke-width="1.5"/>
-              <line x1="90" y1="90" x2="90" y2="160" stroke="#6E59F2" stroke-width="1" stroke-dasharray="3 3"/>
-              <line x1="124" y1="90" x2="124" y2="160" stroke="#6E59F2" stroke-width="1" stroke-dasharray="3 3"/>
-            </g>
-
-            <!-- tripod -->
-            <g stroke="#7c8090" stroke-width="2.4" stroke-linecap="round">
-              <line x1="120" y1="150" x2="94" y2="206"/>
-              <line x1="120" y1="150" x2="146" y2="206"/>
-              <line x1="120" y1="150" x2="120" y2="204"/>
-            </g>
-            <g fill="#5a5e6b"><circle cx="94" cy="207" r="2.4"/><circle cx="146" cy="207" r="2.4"/><circle cx="120" cy="205" r="2.4"/></g>
-
-            <!-- alt-az mount head -->
-            <rect x="106" y="138" width="28" height="16" rx="4" fill="#15161d" stroke="#5a5e6b" stroke-width="1.6"/>
-            <!-- arm -->
-            <rect x="126" y="86" width="12" height="58" rx="4" fill="#181a22" stroke="#5a5e6b" stroke-width="1.6"/>
-
-            <!-- body (Seestar tower) -->
-            <rect x="84" y="56" width="44" height="88" rx="14" fill="#13141b" stroke="#d6d9e2" stroke-width="2"/>
-            <rect x="90" y="62" width="32" height="76" rx="10" fill="none" stroke="#2b2d38" stroke-width="1"/>
-            <line x1="84" y1="104" x2="128" y2="104" stroke="#2b2d38" stroke-width="1"/>
-            <!-- filter wheel (tier ≥ 2, toggles) -->
-            <g id="g-filter" opacity="0">
-              <circle cx="106" cy="118" r="11" fill="rgba(79,139,255,0.10)" stroke="#4F8BFF" stroke-width="1.8"/>
-              <circle cx="106" cy="111" r="1.9" fill="#4F8BFF"/><circle cx="113" cy="118" r="1.9" fill="#4F8BFF"/>
-              <circle cx="106" cy="125" r="1.9" fill="#4F8BFF"/><circle cx="99" cy="118" r="1.9" fill="#4F8BFF"/>
-            </g>
-            <!-- objective lens -->
-            <circle cx="106" cy="80" r="15" fill="#0b0c11" stroke="#aeb2bf" stroke-width="2"/>
-            <circle cx="106" cy="80" r="9" fill="#0e1118" stroke="#3a4055" stroke-width="1.2"/>
-            <path d="M100 76 A 7 7 0 0 1 109 73" fill="none" stroke="#7a8294" stroke-width="1.4" stroke-linecap="round"/>
-            <!-- power LED -->
-            <circle cx="106" cy="128" r="2.4" fill="#54D98C"/>
-            <circle cx="106" cy="128" r="4.5" fill="none" stroke="#54D98C" stroke-width="0.8" opacity="0.4"/>
-
-            <!-- dew heater band (toggles) -->
-            <circle id="g-dew" cx="106" cy="80" r="19" fill="none" stroke="#E8A93A" stroke-width="2.6" stroke-dasharray="4 3" opacity="0"/>
-
-            <!-- smart power box + cable (toggles) -->
-            <g id="g-power" opacity="0">
-              <line x1="71" y1="170" x2="106" y2="150" stroke="#4F8BFF" stroke-width="1.2"/>
-              <rect x="58" y="168" width="24" height="16" rx="3" fill="rgba(79,139,255,0.12)" stroke="#4F8BFF" stroke-width="1.6"/>
-              <circle cx="64" cy="176" r="1.6" fill="#4F8BFF"/><circle cx="70" cy="176" r="1.6" fill="#4F8BFF"/><circle cx="76" cy="176" r="1.6" fill="#4F8BFF"/>
-            </g>
-
-            <!-- UPS battery (toggles) -->
-            <g id="g-ups" opacity="0">
-              <line x1="166" y1="166" x2="124" y2="150" stroke="#54D98C" stroke-width="1.2"/>
-              <rect x="156" y="166" width="24" height="16" rx="3" fill="rgba(84,217,140,0.12)" stroke="#54D98C" stroke-width="1.6"/>
-              <rect x="180" y="170" width="3" height="8" rx="1" fill="#54D98C"/>
-              <g stroke="#54D98C" stroke-width="2.6"><line x1="161" y1="174" x2="161" y2="178"/><line x1="167" y1="174" x2="167" y2="178"/><line x1="173" y1="174" x2="173" y2="178"/></g>
-            </g>
-
-            <!-- blueprint scale bar -->
-            <g stroke="#3a3d49" stroke-width="1">
-              <line x1="20" y1="224" x2="56" y2="224"/>
-              <line x1="20" y1="221" x2="20" y2="227"/><line x1="56" y1="221" x2="56" y2="227"/>
-            </g>
-            <text x="20" y="217" font-family="monospace" font-size="7" fill="#5a5e6b">SEESTAR S50 · ALT-AZ</text>
-          </svg>
+          <!-- realistic product render — JS swaps the art to match your build -->
+          <div class="node-art" id="node-art" role="img" aria-label="Your node, assembled"></div>
+          <!-- live "tonight's run" — the real targets this node would chase -->
+          <div class="stage-tonight" id="stage-tonight" aria-hidden="true"></div>
+          <!-- add-on badges pop in as you equip the node -->
+          <div class="addon-badges" id="addon-badges"></div>
+          <!-- celebration shimmer when the build is complete -->
+          <div class="assembled-burst" id="assembled-burst" aria-hidden="true"></div>
+          <!-- reward toasts fire as you unlock each capability -->
+          <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
           <div class="scope-cap"><span class="tier-name" id="tier-name">ZWO Seestar S50 · Tier 1</span></div>
         </div>
 
         <div class="summary">
-          <div class="summary-row"><span class="lbl">Projected reliability score</span><span class="val" id="rel-val" style="color:var(--green)">0.50</span></div>
+          <!-- THE PAYOFF — what this node actually delivers, every year -->
+          <div class="impact-head" id="impact-head">A real node, every clear night.</div>
+          <div class="impact-grid">
+            <div class="impact-stat"><div class="ival" id="imp-nights">0</div><div class="ilbl">clear nights / yr</div></div>
+            <div class="impact-stat"><div class="ival" id="imp-obs">0</div><div class="ilbl">observations / yr</div></div>
+            <div class="impact-stat"><div class="ival amber" id="imp-aavso">0</div><div class="ilbl">AAVSO · your name</div></div>
+            <div class="impact-stat"><div class="ival" id="imp-events">0</div><div class="ilbl">outburst catches / yr</div></div>
+          </div>
+
+          <div class="summary-row" style="margin-top:18px"><span class="lbl">Node readiness</span><span class="val" id="rel-val" style="color:var(--green)">0.50</span></div>
           <div class="rel-track"><div class="rel-fill" id="rel-fill"></div></div>
-          <div class="rel-meta"><span>new node floor</span><span>proven · 1.00</span></div>
-          <div class="summary-row" style="margin-top:16px"><span class="lbl">Scheduler multiplier</span><span class="val" id="mult-val">×0.75</span></div>
+          <div class="rel-meta"><span id="rel-stage">new node</span><span>mission ready · 1.00</span></div>
+
+          <div class="summary-divider"></div>
+          <div class="summary-row"><span class="lbl">Build cost · one-time</span><span class="val" id="cost-val">$0</span></div>
+          <div class="summary-row sub"><span class="lbl">at standard retail</span><span class="mono" id="cost-range">—</span></div>
+
+          <div class="summary-divider"></div>
+          <div class="summary-cap">Science you unlock</div>
           <div class="unlocks" id="unlocks">
             <span class="chip">variable stars</span>
             <span class="chip">novae</span>
           </div>
         </div>
-      </div>
+      </aside>
 
-      <!-- RIGHT: configuration -->
+      <!-- RIGHT: guided wizard -->
       <div class="builder-config">
-        <div class="cfg-step">
-          <div class="cfg-label"><span class="cfg-num">01</span><span class="cfg-title">Telescope tier</span></div>
-          <label class="opt">
-            <input type="radio" name="tier" value="1" checked />
-            <div class="opt-card">
-              <span class="opt-radio"></span>
-              <div class="opt-info"><div class="t">Tier 1 — Seestar broadband</div><div class="d">ZWO Seestar S50, single CV filter. The network's backbone.</div></div>
-              <span class="opt-delta tier">included</span>
-            </div>
-          </label>
-          <label class="opt">
-            <input type="radio" name="tier" value="2" />
-            <div class="opt-card">
-              <span class="opt-radio"></span>
-              <div class="opt-info"><div class="t">Tier 2 — Filtered BVRI</div><div class="d">Photometric filter wheel. Unlocks multi-band science.</div></div>
-              <span class="opt-delta">+0.05 rel</span>
-            </div>
-          </label>
-          <label class="opt">
-            <input type="radio" name="tier" value="3" />
-            <div class="opt-card">
-              <span class="opt-radio"></span>
-              <div class="opt-info"><div class="t">Tier 3 — Spectroscopy</div><div class="d">Spectrograph-equipped. Classifies transients, not just measures them.</div></div>
-              <span class="opt-delta">+0.08 rel</span>
-            </div>
-          </label>
+        <ol class="wiz-steps" id="wiz-steps">
+          <li data-go="0"><span class="wiz-dot">1</span> Inventory</li>
+          <li data-go="1"><span class="wiz-dot">2</span> Telescope</li>
+          <li data-go="2"><span class="wiz-dot">3</span> Computer</li>
+          <li data-go="3"><span class="wiz-dot">4</span> Add-ons</li>
+          <li data-go="4"><span class="wiz-dot">5</span> Review</li>
+        </ol>
+
+        <!-- STEP 1 — hardware inventory quiz -->
+        <div class="wiz-panel" data-step="0">
+          <div class="cfg-label"><span class="cfg-num">01</span><span class="cfg-title">What do you already own?</span></div>
+          <p class="wiz-help">We'll tailor the build around it — anything you already have is left out of the cost.</p>
+          <div class="quiz-grid">
+            <label class="opt"><input type="checkbox" name="have" value="seestar" />
+              <div class="opt-card compact"><span class="opt-check"></span><div class="opt-info"><div class="t">A Seestar</div></div></div></label>
+            <label class="opt"><input type="checkbox" name="have" value="computer" />
+              <div class="opt-card compact"><span class="opt-check"></span><div class="opt-info"><div class="t">An always-on computer</div></div></div></label>
+            <label class="opt"><input type="checkbox" name="have" value="enclosure" />
+              <div class="opt-card compact"><span class="opt-check"></span><div class="opt-info"><div class="t">Outdoor enclosure</div></div></div></label>
+            <label class="opt"><input type="checkbox" name="have" value="ups" />
+              <div class="opt-card compact"><span class="opt-check"></span><div class="opt-info"><div class="t">UPS / battery</div></div></div></label>
+          </div>
+          <div class="quiz-hint" id="quiz-hint">Tip: own a Seestar already? You can skip the builder and <a href="#">download the Node Agent free</a>.</div>
         </div>
 
-        <div class="cfg-step">
-          <div class="cfg-label"><span class="cfg-num">02</span><span class="cfg-title">Autonomy hardware</span></div>
-          <label class="opt">
-            <input type="checkbox" name="auto" value="dew" data-target="g-dew" data-rel="0.10" />
-            <div class="opt-card">
-              <span class="opt-check"></span>
-              <div class="opt-info"><div class="t">Dew heater</div><div class="d">Prevents lens fogging. Without it, a humid night is silently wasted.</div></div>
-              <span class="opt-delta">+0.10 rel</span>
-            </div>
-          </label>
-          <label class="opt">
-            <input type="checkbox" name="auto" value="power" data-target="g-power" data-rel="0.08" />
-            <div class="opt-card">
-              <span class="opt-check"></span>
-              <div class="opt-info"><div class="t">Smart power management</div><div class="d">Remotely power-cycle a hung Seestar — recover without a human present.</div></div>
-              <span class="opt-delta">+0.08 rel</span>
-            </div>
-          </label>
-          <label class="opt">
-            <input type="checkbox" name="auto" value="enclosure" data-target="g-enclosure" data-rel="0.14" />
-            <div class="opt-card">
-              <span class="opt-check"></span>
-              <div class="opt-info"><div class="t">Dome / enclosure</div><div class="d">Observe through light rain, wind, and heavy dew. Biggest single uptime boost.</div></div>
-              <span class="opt-delta">+0.14 rel</span>
-            </div>
-          </label>
-          <label class="opt">
-            <input type="checkbox" name="auto" value="ups" data-target="g-ups" data-rel="0.06" />
-            <div class="opt-card">
-              <span class="opt-check"></span>
-              <div class="opt-info"><div class="t">UPS battery backup</div><div class="d">Brief power cuts don't kill the night — vital on unstable grids.</div></div>
-              <span class="opt-delta">+0.06 rel</span>
-            </div>
-          </label>
+        <!-- STEP 2 — telescope -->
+        <div class="wiz-panel" data-step="1" hidden>
+          <div class="cfg-label"><span class="cfg-num">02</span><span class="cfg-title">Telescope</span></div>
+          <p class="wiz-help">The Seestar is the network's backbone. Science-impact score shown for each option.</p>
+          <div class="opt-list" data-group="telescope"></div>
         </div>
 
-        <div class="builder-cta">
-          <a href="#" class="btn btn-cream">Register this node <i class="ti ti-arrow-right"></i></a>
-          <a href="#" class="btn btn-plain">Need an activation code?</a>
+        <!-- STEP 3 — computer -->
+        <div class="wiz-panel" data-step="2" hidden>
+          <div class="cfg-label"><span class="cfg-num">03</span><span class="cfg-title">Computer</span></div>
+          <p class="wiz-help">Runs the Node Agent overnight. A Raspberry Pi sips power and can be left on for months.</p>
+          <div class="opt-list" data-group="computer"></div>
+        </div>
+
+        <!-- STEP 4 — add-ons (collapsible categories) -->
+        <div class="wiz-panel" data-step="3" hidden>
+          <div class="cfg-label"><span class="cfg-num">04</span><span class="cfg-title">Autonomy add-ons</span></div>
+          <p class="wiz-help">All optional. Each one buys back nights the network would otherwise lose.</p>
+          <div class="accord" id="accord"></div>
+        </div>
+
+        <!-- STEP 5 — review -->
+        <div class="wiz-panel" data-step="4" hidden>
+          <div class="cfg-label"><span class="cfg-num">05</span><span class="cfg-title">Review your build</span></div>
+          <p class="wiz-help">Standard retail links — buy directly from the vendor. We never handle the transaction.</p>
+          <ul class="review-list" id="review-list"></ul>
+          <div class="review-total"><span>Estimated total</span><span class="mono" id="review-total">$0</span></div>
+          <div class="review-payoff" id="review-payoff"></div>
+          <div class="builder-cta">
+            <a href="mailto:info@boundlessskies.org?subject=Node%20Activation%20Code%20Request&body=I%27d%20like%20to%20join%20the%20Boundless%20Skies%20network%20and%20request%20an%20activation%20code." class="btn btn-cream">Claim my node <i class="ti ti-arrow-right"></i></a>
+            <a href="#" class="btn btn-plain">Email me this build</a>
+          </div>
+        </div>
+
+        <div class="wiz-nav">
+          <button class="btn btn-ghost" id="wiz-back" type="button"><i class="ti ti-arrow-left"></i> Back</button>
+          <span class="wiz-count" id="wiz-count">Step 1 of 5</span>
+          <button class="btn btn-cream" id="wiz-next" type="button">Next <i class="ti ti-arrow-right"></i></button>
         </div>
       </div>
     </div>
@@ -286,7 +261,11 @@
 <!-- ===================== LIVE SCIENCE ===================== -->
 <section class="section science" id="science">
   <div class="wrap">
-    <div class="section-head reveal"><span class="eyebrow">Live science</span></div>
+    <div class="section-head reveal">
+      <span class="eyebrow">Live science</span>
+      <h2 class="serif">Photometry, every clear night.</h2>
+      <p>SS Cygni — a cataclysmic variable 370 light-years away — caught mid-outburst. Real measurements from real nodes, submitted to AAVSO under each contributor's name.</p>
+    </div>
     <div class="curve-top reveal">
       <div>
         <div class="curve-target" id="curve-target">SS Cyg — light curve</div>
@@ -306,7 +285,31 @@
       <span class="eyebrow">Global network</span>
       <h2 class="serif" id="network-heading">A network across one sky.</h2>
     </div>
-    <div class="mapbox reveal" id="mapbox"><div class="mapgrid"></div></div>
+    <div class="mapbox reveal" id="mapbox">
+      <div class="mapgrid"></div>
+      <svg class="worldmap" viewBox="0 0 360 180" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <!-- North America -->
+        <path d="M12,25 L55,18 L90,18 L122,26 L120,44 L110,49 L103,55 L100,65 L91,62 L92,75 L76,71 L70,67 L63,57 L56,48 L56,42 L50,35 L40,30 L28,32 Z"/>
+        <!-- Greenland -->
+        <path d="M126,30 L125,14 L150,7 L162,14 L160,28 L142,32 Z"/>
+        <!-- South America -->
+        <path d="M100,81 L105,78 L118,79 L145,95 L144,99 L141,113 L128,123 L122,125 L115,145 L108,140 L107,132 L108,120 L103,95 L100,90 Z"/>
+        <!-- Europe -->
+        <path d="M172,54 L171,46 L175,42 L183,39 L185,36 L192,22 L208,20 L210,28 L217,43 L216,48 L208,49 L206,52 L195,52 L183,47 L178,53 Z"/>
+        <!-- Africa -->
+        <path d="M174,55 L190,53 L212,59 L231,79 L212,116 L206,124 L198,125 L196,119 L192,108 L189,95 L183,85 L165,80 L163,75 L167,62 Z"/>
+        <!-- Asia (main body) -->
+        <path d="M206,52 L217,43 L210,28 L240,17 L270,17 L320,17 L350,22 L344,30 L322,43 L308,55 L301,60 L290,70 L283,88 L260,86 L248,68 L224,68 L212,59 Z"/>
+        <!-- India peninsula -->
+        <path d="M248,68 L242,65 L235,70 L228,82 L240,95 L256,88 Z"/>
+        <!-- Arabian Peninsula -->
+        <path d="M212,59 L224,60 L236,68 L228,78 L220,78 L212,68 Z"/>
+        <!-- Indochina peninsula -->
+        <path d="M283,88 L290,70 L296,82 L294,96 L288,96 L283,90 Z"/>
+        <!-- Australia -->
+        <path d="M294,112 L312,102 L326,107 L334,118 L330,124 L325,128 L318,126 L296,122 Z"/>
+      </svg>
+    </div>
   </div>
 </section>
 
@@ -316,8 +319,43 @@
 <section class="section mission">
   <div class="wrap reveal">
     <span class="eyebrow">The mission</span>
-    <blockquote class="serif" style="margin-top:24px">“Existing citizen science asks you to click on galaxies. We hand you a telescope.”</blockquote>
-    <cite>Boundless Skies — accessible astronomy charity, founded 2025</cite>
+    <blockquote class="serif" style="margin-top:24px">"Existing citizen science asks you to click on galaxies. We hand you a telescope."</blockquote>
+    <cite>Boundless Skies — accessible astronomy charity, founded 2025 by Eli Goldfine &amp; Scott Mellis</cite>
+    <p class="mission-body">We built Boundless Skies because the scientific record should reflect every curious mind — not just those who can drive to a dark field at 2am carrying a heavy case of gear. The network runs autonomously so the science never stops, even when life does.</p>
+  </div>
+</section>
+
+<!-- ===================== IMPACT ===================== -->
+<section class="section impact" id="impact">
+  <div class="wrap">
+    <div class="section-head center reveal">
+      <span class="eyebrow">Who this is for</span>
+      <h2 class="serif">The sky doesn't care<br>if you can walk.</h2>
+      <p>Traditional astronomy means dark-sky road trips, heavy equipment, cold hours outdoors, and perfect health. We removed every one of those requirements — leaving only the science.</p>
+    </div>
+
+    <div class="barrier-grid reveal">
+      <div class="barrier">
+        <div class="barrier-icon"><i class="ti ti-wheelchair" aria-hidden="true"></i></div>
+        <h3>Mobility</h3>
+        <p>Your telescope sits outside. You sit wherever you're comfortable. The node handles every physical step — slewing, focusing, imaging, submitting — without you leaving your chair.</p>
+      </div>
+      <div class="barrier">
+        <div class="barrier-icon"><i class="ti ti-heartbeat" aria-hidden="true"></i></div>
+        <h3>Chronic illness</h3>
+        <p>A flare, a bad night, a hospital stay won't kill your contribution. Your node observes regardless. You're credited on every accepted submission, whether you're awake or not.</p>
+      </div>
+      <div class="barrier">
+        <div class="barrier-icon"><i class="ti ti-eye-off" aria-hidden="true"></i></div>
+        <h3>Vision</h3>
+        <p>Results arrive as structured data — CSV exports, JSON, magnitude tables. Screen-reader friendly throughout. No eyepiece. No dark adaptation. No "you had to be there."</p>
+      </div>
+    </div>
+
+    <blockquote class="impact-pull reveal">
+      <span class="impact-mark">"</span>For the first time, I'm not just near the sky.<br class="impact-br"> I'm working in it.<span class="impact-mark">"</span>
+      <cite>Network member with spinal muscular atrophy</cite>
+    </blockquote>
   </div>
 </section>
 
@@ -332,17 +370,17 @@
         <p>Own a Seestar? Build your node above and contribute its idle nights to real research.</p>
         <a class="lnk" href="#builder">Build your node <i class="ti ti-arrow-right"></i></a>
       </div>
-      <div class="involve-card">
+      <div class="involve-card involve-card-featured">
         <i class="ti ti-heart ic" aria-hidden="true"></i>
         <h3>Fund a telescope</h3>
-        <p>Sponsor hardware for a member who can't afford one. Accessibility shouldn't have a price.</p>
-        <a class="lnk" href="#">Donate <i class="ti ti-arrow-right"></i></a>
+        <p>A Seestar S50 costs $499. For someone on a disability income, that's months away. One donation changes that — and puts a disabled astronomer's name in the permanent scientific record.</p>
+        <a class="lnk" href="mailto:info@boundlessskies.org?subject=Telescope%20Donation&body=I%27d%20like%20to%20fund%20a%20telescope%20for%20a%20Boundless%20Skies%20member.">Donate <i class="ti ti-arrow-right"></i></a>
       </div>
       <div class="involve-card">
         <i class="ti ti-mail ic" aria-hidden="true"></i>
         <h3>Follow the science</h3>
         <p>Get the night summaries — new transients, accepted submissions, network milestones.</p>
-        <a class="lnk" href="#">Subscribe <i class="ti ti-arrow-right"></i></a>
+        <a class="lnk" href="mailto:info@boundlessskies.org?subject=Subscribe%20to%20Boundless%20Skies%20Updates&body=Please%20add%20me%20to%20your%20mailing%20list.">Subscribe <i class="ti ti-arrow-right"></i></a>
       </div>
     </div>
   </div>
@@ -359,7 +397,7 @@
       <div class="footer-cols">
         <div class="fcol"><h4>Network</h4><a href="#how">How it works</a><a href="#builder">Node builder</a><a href="#network">Live network</a></div>
         <div class="fcol"><h4>Science</h4><a href="#science">Light curves</a><a href="#">Targets</a><a href="https://www.aavso.org">AAVSO</a></div>
-        <div class="fcol"><h4>Project</h4><a href="#">About</a><a href="#">GitHub</a><a href="#">Contact</a></div>
+        <div class="fcol"><h4>Project</h4><a href="#impact">About</a><a href="https://github.com/boundlessskies" target="_blank" rel="noopener">GitHub</a><a href="mailto:info@boundlessskies.org">Contact</a></div>
       </div>
     </div>
     <div class="footer-bottom">
@@ -369,6 +407,6 @@
   </div>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
