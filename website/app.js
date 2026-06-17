@@ -691,8 +691,8 @@
       $("review-total").textContent = "$" + total.toLocaleString();
       var payoff = $("review-payoff");
       if (payoff && proj) {
-        payoff.innerHTML = "Your node could deliver <strong>~" + proj.aavso.toLocaleString() +
-          " AAVSO observations a year</strong> — every one credited to your name, permanently, in the scientific record.";
+        payoff.innerHTML = "Your node could catch <strong>~" + proj.aavso.toLocaleString() +
+          " observations a year</strong> — every one credited to your name, in a database professional astronomers actually pull from.";
       }
     }
 
@@ -1034,6 +1034,25 @@
     });
   }
 
+  // ---- "A night on the network": enhance the baked-in story with live data
+  //      (real node id + the actual magnitude swing). Stays graceful: if the
+  //      API is down the HTML already reads as a sensible illustrative night.
+  function nightStory(lc) {
+    if (!lc || !lc.points || !lc.points.length) return;
+    // busiest node carries the story
+    var counts = {};
+    lc.points.forEach(function (p) { counts[p.node_id] = (counts[p.node_id] || 0) + 1; });
+    var node = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; })[0];
+    var mags = lc.points.map(function (p) { return p.magnitude; });
+    var faint = Math.max.apply(null, mags), bright = Math.min.apply(null, mags);
+    var nodeEl = $("night-node"), magEl = $("night-mag");
+    if (node && nodeEl) nodeEl.textContent = node;
+    // only show a real swing if the data genuinely brightened
+    if (magEl && faint - bright >= 0.4) {
+      magEl.textContent = "mag " + faint.toFixed(1) + " → " + bright.toFixed(1);
+    }
+  }
+
   function placeMap(nodes) {
     var box = $("mapbox"); if (!box) return;
     var NS = "http://www.w3.org/2000/svg";
@@ -1091,19 +1110,18 @@
       if (!s) {
         // offline fallback: keep page sensible
         $("badge-text").textContent = "nodes observing right now";
-        $("stat-subs").textContent = "—"; $("stat-nodes").textContent = "—";
-        $("stat-accept").textContent = "—"; $("stat-countries").textContent = "—";
+        $("stat-targets").textContent = "—"; $("stat-subs").textContent = "—";
+        $("stat-nodes").textContent = "—"; $("stat-countries").textContent = "—";
         $("gauge-num").textContent = "—";
         return;
       }
-      var accept = s.measurements_total ? Math.round(s.aavso_submitted / s.measurements_total * 100) : 0;
       var countries = {}; (s.nodes || []).forEach(function (n) { if (n.country) countries[n.country] = 1; });
       var nCountries = Object.keys(countries).length;
 
-      $("badge-text").textContent = s.nodes_online + " nodes observing right now";
+      $("badge-text").textContent = s.nodes_online + " telescopes hunting right now";
+      countUp($("stat-targets"), s.active_targets, 1400);
       countUp($("stat-subs"), s.aavso_submitted, 1600);
       countUp($("stat-nodes"), s.nodes_online, 1200);
-      countUp($("stat-accept"), accept, 1400, "%");
       countUp($("stat-countries"), nCountries, 1200);
       $("network-heading").textContent = s.nodes_total + " nodes. " + nCountries + " countries. One sky.";
 
@@ -1138,6 +1156,7 @@
       animateCurve($("lightcurve"), pts, { grid: true }, 2600);
       animateCurve($("minicurve"), pts, { thin: true }, 2000);
       fillConsole(lc.points);
+      nightStory(lc);
     });
 
     // ---- targets → label the hero reticles with real catalogue objects ----
