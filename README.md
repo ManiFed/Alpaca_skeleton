@@ -63,10 +63,10 @@ node_v1-main/
 │   ├── cloud.db          SQLite database
 │   └── aavso_batches/    Generated AAVSO submission batches
 │
-├── website/             Member portal + marketing site (Phase 1)
-│   ├── index.html        Landing page
-│   ├── app.js            SPA application logic
-│   └── styles.css        Responsive design
+├── website/             Marketing site + member portal (Phase 1)
+│   ├── tour.html         Interactive founding network experience (main site)
+│   ├── README.md         Website documentation and API integration guide
+│   └── future/           Phase 2+ portal and future interfaces
 │
 ├── scripts/
 │   ├── manage.py         Admin CLI (status, ingest, batch, submit, check-aavso, generate-code)
@@ -88,13 +88,23 @@ node_v1-main/
 | Phase | Status | Goal |
 |-------|--------|------|
 | **0 — Proof of Concept** | ✅ Code complete | First AAVSO-accepted automated observation |
-| **1 — Core System** | In progress | Installers shipped, member accounts live, web dashboard, 3–5 beta nodes |
-| **2 — Launch** | Not started | 50 nodes, marketing website live, first ATel, first grant application |
+| **1 — Core System** | 🚀 In progress | Installers shipped, member accounts live, **founding network site live**, 3–5 beta nodes |
+| **2 — Launch** | 🔜 Next | 50 nodes, member portal app, first ATel, first grant application |
 | **3 — Growth** | Not started | 200 nodes, 25 countries, 10,000+ AAVSO submissions |
 
 ---
 
 ## Recent Changes (June 2026)
+
+### Marketing Site Launch (`website/tour.html`)
+- **Interactive founding network experience** — single-page scrollytelling site
+  - Beautiful, responsive design with glassmorphism + dark theme
+  - Animated sky visualization using Aladin Lite (live star field background)
+  - Real-time stats pulled from the cloud API (`/api/v1/network/status`, `/api/v1/lightcurves/SS_Cyg`)
+  - Seven narrative sections: why it matters, the network idea, how to join, real example (SS Cygni), science impact, accessibility, founding seats
+  - Email signup + funding donation flow (JavaScript form handling)
+  - Fully responsive — mobile, tablet, desktop
+  - No build step, no dependencies — runs as static HTML in any browser or on the cloud server
 
 ### Directory Reorganization
 - **Node Agent source files moved to `src/`** — cleaner separation of concerns
@@ -102,14 +112,15 @@ node_v1-main/
   - Main entry point `main.py` and `config.yaml` remain at project root
   - Installer and launch configurations updated
 
-- **Website added to `website/`** — HTML/CSS/JavaScript SPA for Phase 1
-  - Member portal and marketing site (not yet integrated with cloud backend)
-  - Single-page app with responsive design
+- **Website structure** (`website/`)
+  - `website/tour.html` — **Main public site** (replaces index.html)
+  - `website/future/` — Phase 2+ member portal scaffolding
+  - `website/README.md` — Site setup and API integration docs
 
 - **Database and demo data organized into `cloud_data/`**
   - `cloud_data/cloud.db` — SQLite database
   - `cloud_data/aavso_batches/` — Generated submission files
-  - `scripts/seed_demo.py` — Demo data generator for testing
+  - `scripts/seed_demo.py` — Demo data generator for testing (23 nodes across 14 countries)
 
 ### Claude Weight-Tuning Monitor (New Feature)
 - **`cloud/tuning.py`** — Nightly advisory monitor that reads observation outcomes and proposes adjustments to observability scoring weights
@@ -366,6 +377,64 @@ python3 -m cloud.main
 # API: http://localhost:8800
 # Health check: http://localhost:8800/api/v1/health
 ```
+
+---
+
+## Marketing Site (`website/tour.html`) — Running the Founding Network Experience
+
+The `tour.html` is a standalone, zero-dependency HTML+CSS+JS site that tells the Boundless Skies story and drives member acquisition. It pulls **live data from the cloud API** but renders gracefully even when the API is offline.
+
+### Quick Start — Website Dev
+
+```bash
+# Terminal 1: Cloud API server (provides data)
+cd cloud/
+PYTHONPATH="$PWD:$PWD/src" python3 -m cloud.main
+# → serves on http://localhost:8800
+
+# Terminal 2: Website (static file server)
+cd website/
+python3 -m http.server 4180 --directory .
+# → open http://localhost:4180/tour.html
+#   or just http://localhost:4180 (if index.html points to tour.html)
+```
+
+### What the Site Shows
+
+| Section | Data source | Fallback |
+|---------|-------------|----------|
+| **Founding seats** (7 / 100) | `/api/v1/network/status` → `founded_member_count` | Static "07 / 100" |
+| **Online nodes** | `/api/v1/network/status` → `nodes_online` | "7 online" |
+| **AAVSO submissions** | `/api/v1/network/status` → `aavso_submitted` | "—" |
+| **Network reliability** | `/api/v1/network/status` → highest `reliability_score` | Sensible defaults |
+| **Live example** (SS Cygni) | `/api/v1/lightcurves/SS_Cyg` → recent observations | Empty chart |
+| **Network map dots** | `/api/v1/network/status` → node locations | No pins shown |
+| **Sky background** | Aladin Lite + RA/Dec per section | Star field rendered |
+
+### Architecture
+
+```
+tour.html
+├─ Embedded CSS (glassmorphism, dark theme, responsive)
+├─ Aladin Lite integration (CDN, sky visualization per scroll section)
+├─ API calls (fetch from cloud server, graceful fallback if offline)
+├─ Canvas visualization (Earth globe rotation, observer animations)
+└─ Email signup form + donation flow (JavaScript state, no backend)
+```
+
+**Browser compatibility:** Modern browsers (Chrome 90+, Firefox 88+, Safari 14+). Fallback text renders on older clients.
+
+### Seeding Demo Data
+
+The site looks better with realistic stats. Populate the database once:
+
+```bash
+python3 scripts/seed_demo.py --wipe
+# Creates 23 nodes across 14 countries + light curve for SS Cyg
+# Nodes are "online" for 15 minutes after seeding — re-run to refresh
+```
+
+Then refresh your browser and watch the stats, map, and light curve populate.
 
 ---
 
@@ -906,7 +975,8 @@ Non-fatal — no cover calibrator device is configured at ALPACA index 0. Suppre
 | Member auth | PBKDF2-SHA256 + bearer tokens | 260K rounds, per-user salt, hashed token storage |
 | Sleep prevention | OS-native APIs | `SetThreadExecutionState` (Win), `caffeinate` (Mac), `systemd-inhibit` (Linux) |
 | Packaging | PyInstaller one-file | NSIS (Win), pkgbuild/productbuild (Mac), systemd install.sh (Linux) |
-| Member portal | HTML/CSS/JavaScript (Phase 1) | Single-page app; code in `website/` directory |
+| Marketing site | HTML/CSS/JavaScript (static) | `tour.html` — interactive scrollytelling, Aladin Lite sky vis, live API data |
+| Member portal | Flutter + HTML/CSS/JS (Phase 2) | Phase 1 scaffolding in `website/future/`; accessibility-first design |
 
 ---
 
