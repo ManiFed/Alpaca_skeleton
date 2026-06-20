@@ -37,13 +37,17 @@ class AlpacaClient:
             f"http://{host}:{port}/api/v{api_version}/{device_type}/{device_number}"
         )
         self.session = requests.Session()
+        # Separate session reserved for the safety watchdog's heartbeat so its
+        # polling never contends with in-flight device traffic on the main
+        # session's connection pool (requests.Session is not thread-safe).
+        self._ping_session: Any = None
         self._client_id = id(self) & 0xFFFF
 
-    def _get(self, attribute: str, **params) -> Any:
+    def _get(self, attribute: str, timeout: float = 10, **params) -> Any:
         url = f"{self.base_url}/{attribute}"
         params["ClientID"] = self._client_id
         params["ClientTransactionID"] = _next_transaction_id()
-        response = self.session.get(url, params=params, timeout=10)
+        response = self.session.get(url, params=params, timeout=timeout)
         response.raise_for_status()
         body = response.json()
         self._check_error(attribute, body)
@@ -66,6 +70,26 @@ class AlpacaClient:
 
     def connected(self) -> bool:
         return self._get("connected")
+
+    def ping(self, timeout: float = 5.0) -> bool:
+        """Lightweight liveness check on a dedicated session.
+
+        Mirrors GET /connected but uses a separate requests.Session so a
+        background watchdog can poll the device without colliding with the
+        main session's in-flight requests from another thread.
+        """
+        sess = self._ping_session
+        if sess is None:
+            sess = self._ping_session = requests.Session()
+        params = {
+            "ClientID": self._client_id,
+            "ClientTransactionID": _next_transaction_id(),
+        }
+        response = sess.get(f"{self.base_url}/connected", params=params, timeout=timeout)
+        response.raise_for_status()
+        body = response.json()
+        self._check_error("connected", body)
+        return bool(body["Value"])
 
     def connect(self) -> None:
         logger.debug("%s: connecting", self.base_url)

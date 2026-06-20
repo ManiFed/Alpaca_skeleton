@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "venv/bin/python3",
+      "runtimeArgs": ["src/dashboard.py"],
+      "port": 5173
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4187", "--directory", "website"],
+      "port": 4187
+    },
+    {
+      "name": "cloud-api",
+      "runtimeExecutable": "venv/bin/python3",
+      "runtimeArgs": ["-m", "cloud.main"],
+      "port": 8800
+    }
+  ]
+}

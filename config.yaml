@@ -1,8 +1,10 @@
 alpaca:
-  discovery_port: 32227        # UDP broadcast port defined by ALPACA spec
-  discovery_timeout: 5         # seconds to wait for discovery responses
+  discovery_port: 32227
+  discovery_timeout: 5
   api_version: 1
-
+  default_server:
+    address: 172.22.6.32
+    port: 32323
 devices:
   telescope:
     enabled: true
@@ -16,16 +18,123 @@ devices:
   filterwheel:
     enabled: false
     device_number: 0
-
+  covercalibrator:
+    enabled: true
+    device_number: 0
 telescope:
-  slew_ra: 23.6833             # RA in decimal hours  (example: Andromeda)
-  slew_dec: 80.2692            # Dec in decimal degrees
-  tracking_rate: 0             # 0=Sidereal, 1=Lunar, 2=Solar, 3=King
-
+  slew_ra: 23.6833
+  slew_dec: 80.2692
+  tracking_rate: 0
 camera:
-  exposure_duration: 1.0       # seconds
+  exposure_duration: 1.0
   binning: 1
-
+autofocus:
+  exposure_s: 2.0          # short exposure per focus sample
+  step_size: 50            # focuser steps between samples
+  steps_per_side: 5        # sweep visits 2*steps_per_side + 1 positions
+  settle_s: 1.0            # vibration settle after each move
+  samples_per_point: 1     # frames median-combined per position (>1 fights noise)
+  min_position: null       # hard focuser travel floor (null = none)
+  max_position: null       # hard focuser travel ceiling (null = none)
+centering:
+  exposure_s: 3.0          # exposure per plate-solve frame
+  tolerance_arcmin: 3.0    # stop once target is within this of frame centre
+  max_iterations: 4        # give up after this many solve attempts
+  settle_s: 2.0            # vibration settle after each slew
+stacking:
+  frames: 20               # number of sub-frames to capture and stack
+  exposure_s: 10.0         # per sub-frame exposure
+  preview_every: 1         # re-render the live preview every N stacked frames
 logging:
   level: INFO
-  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  format: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+pier_cam:
+  enabled: false
+  device_index: 0
+  sdk_lib: ''
+  exposure_ms: 80
+  gain: 200
+  bin: 2
+  target_fps: 10
+  jpeg_quality: 75
+image_watcher:
+  enabled: false
+  watch_path: /mnt/seestar
+  debounce_delay: 2.0
+observatory:
+  name: ''
+  latitude: null
+  longitude: null
+  elevation: 0.0
+  telescope: ZWO Seestar S50
+  instrument: ZWO Seestar S50 IMX462
+  observer: ''
+photometry:
+  enabled: true
+  node_id: seestar-live-001
+  filter_name: CV
+  gain: 1.0
+  read_noise: 5.0
+  target:
+    name: 'Z Cam'
+    ra_deg: 126.30492
+    dec_deg: 73.11086
+  # Plate solving. solver: "astap" or "astrometry" (Astrometry.net solve-field).
+  # force_plate_solve re-solves every stack from scratch, discarding the Seestar's
+  # onboard WCS so its alt-az pointing error can't leak into the cross-match.
+  solver: astrometry
+  astap_path: astap
+  solve_field_path: /opt/homebrew/bin/solve-field
+  force_plate_solve: true
+  # pixel_scale is also required for the pointing-WCS fallback (_inject_pointing_wcs)
+  # used when ASTAP is unavailable. Alt-az mounts (e.g. Seestar S50) must set this
+  # or the pipeline will abort with "cannot construct fallback WCS".
+  pixel_scale: 2.4          # arcsec/px — Seestar S50 IMX462 at 250mm focal length
+  astap_search_radius: 10
+  aperture_factor: 1.5
+  annulus_inner: 4.0
+  annulus_outer: 6.0
+  field_radius: 0.5
+  mag_min: 10.0             # skip stars brighter than this — likely saturated on 30s Seestar frames
+  mag_limit: 15.0
+  # Comparison-star catalogs, queried in order until comparison_target_count is
+  # reached. APASS gives Johnson V directly; ATLAS reaches fainter; Gaia backstops.
+  comparison_catalogs: [aavso, apass, gaia]
+  comparison_target_count: 8
+  min_comparison_stars: 3
+  snr_threshold: 20
+  max_uncertainty: 0.3
+  max_airmass: 3.0
+  fits_export:
+    enabled: true
+    export_dir: fits_export
+aavso:
+  observer_code: 'EGBA'
+  username: '${AAVSO_USERNAME}'
+  password: '${AAVSO_PASSWORD}'
+  api_key: '${AAVSO_API_KEY}'
+  audit_dir: aavso_submissions
+  dry_run: false
+  submit_poor_quality: false
+  chart_id: ''
+cloud:
+  enabled: true
+  url: 'http://localhost:8800'  # local cloud for testing
+  activation_code: ''          # BS-YYYY-XXXXXXXX from your account page; used once on first boot
+  node_id: 'seestar-live-001'
+  api_key: '${CLOUD_NODE_API_KEY}'
+  heartbeat_interval: 60       # seconds between heartbeats (with conditions)
+  plan_poll_interval: 300      # seconds between observation-plan polls
+  auto_run_plans: false        # execute cloud plans automatically when idle
+  upload_images: false         # also upload raw FITS after each measurement
+safety:
+  enabled: true
+  disconnect_timeout: 600
+  heartbeat_interval: 30
+  reconnect_attempts: 3
+  reconnect_delay: 10
+  park_at_dawn: true
+  dawn_type: astronomical
+  observer:
+    latitude: 0.0
+    longitude: 0.0

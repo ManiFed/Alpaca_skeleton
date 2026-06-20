@@ -1,0 +1,43 @@
+[Unit]
+Description=Boundless Skies Node Agent
+Documentation=https://boundlessskies.org/setup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Run as a dedicated low-privilege user (created by the installer)
+User=boundlessskies
+Group=boundlessskies
+
+# Working directory — config.yaml and data/ live here
+WorkingDirectory=/var/lib/boundlessskies/nodeagent
+
+# Main command
+ExecStart=/opt/boundlessskies/nodeagent/BoundlessSkiesNode \
+    --no-browser \
+    --data-dir /var/lib/boundlessskies/nodeagent
+
+# Restart policy: always restart, 5-second cooldown
+Restart=always
+RestartSec=5
+
+# Logging — journald captures stdout/stderr automatically
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=boundlessskies-node
+
+# Prevent idle sleep while the service is running
+# (the Python sleep_prevention module also does this; belt-and-suspenders)
+ExecStartPost=/bin/bash -c 'systemd-inhibit --what=idle:sleep --who="Boundless Skies Node Agent" --why="Overnight telescope observation" --mode=block sleep infinity &'
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=256
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

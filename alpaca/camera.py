@@ -7,10 +7,15 @@ a single exposure.
 
 import logging
 import time
+from typing import Callable, Optional
 
 from .client import AlpacaClient
 
 logger = logging.getLogger(__name__)
+
+
+class ExposureCancelled(Exception):
+    """Raised when an exposure is aborted via its cancel_check callback."""
 
 # CameraState enum values from the ALPACA spec
 _STATE_IDLE = 0
@@ -58,12 +63,62 @@ class Camera:
 
     # --- commands ------------------------------------------------------------
 
+    def gain(self) -> int:
+        return int(self._c._get("gain"))
+
+    def set_gain(self, gain: int) -> None:
+        self._c._put("gain", Gain=gain)
+        logger.info("Camera gain set to %d", gain)
+
+    def offset(self) -> int:
+        return int(self._c._get("offset"))
+
+    def set_offset(self, offset: int) -> None:
+        self._c._put("offset", Offset=offset)
+        logger.info("Camera offset set to %d", offset)
+
+    def ccd_temperature(self) -> float:
+        return float(self._c._get("ccdtemperature"))
+
+    def cooler_target(self) -> float:
+        return float(self._c._get("setccdtemperature"))
+
+    def set_cooler_target(self, temp: float) -> None:
+        self._c._put("setccdtemperature", SetCCDTemperature=temp)
+        logger.info("Camera cooler target set to %.1f °C", temp)
+
+    def cooler_on(self) -> bool:
+        return bool(self._c._get("cooleron"))
+
+    def set_cooler(self, enabled: bool) -> None:
+        self._c._put("cooleron", CoolerOn=enabled)
+        logger.info("Camera cooler %s", "enabled" if enabled else "disabled")
+
     def set_binning(self, bin_x: int, bin_y: int | None = None) -> None:
         bin_y = bin_y if bin_y is not None else bin_x
         self._c._put("binx", BinX=bin_x)
         self._c._put("biny", BinY=bin_y)
 
-    def expose(self, duration: float, light: bool = True, readout_timeout: float = 120.0) -> None:
+    def set_roi(self, start_x: int, start_y: int, num_x: int, num_y: int) -> None:
+        self._c._put("startx", StartX=start_x)
+        self._c._put("starty", StartY=start_y)
+        self._c._put("numx", NumX=num_x)
+        self._c._put("numy", NumY=num_y)
+        logger.info("Camera ROI set: origin=(%d,%d) size=%dx%d", start_x, start_y, num_x, num_y)
+
+    def reset_roi(self) -> None:
+        w = int(self._c._get("cameraxsize"))
+        h = int(self._c._get("cameraysize"))
+        self.set_roi(0, 0, w, h)
+        logger.info("Camera ROI reset to full frame %dx%d", w, h)
+
+    def expose(
+        self,
+        duration: float,
+        light: bool = True,
+        readout_timeout: float = 120.0,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> None:
         """
         Start an exposure and wait until the image is ready in the download buffer.
 
@@ -72,6 +127,9 @@ class Camera:
         readout_timeout – extra seconds beyond *duration* to allow for sensor
                           readout and ALPACA transfer (default 120 s; raise for
                           large/slow sensors or a slow network link)
+        cancel_check    – optional zero-arg callable polled during the wait; if
+                          it returns True the exposure is aborted on the camera
+                          and ExposureCancelled is raised.
         """
         logger.info("Starting %.2f s %s exposure", duration, "light" if light else "dark")
         self._c._put("startexposure", Duration=duration, Light=light)
@@ -82,6 +140,9 @@ class Camera:
         # requiring IDLE would miss that window entirely.
         deadline = time.monotonic() + duration + readout_timeout
         while time.monotonic() < deadline:
+            if cancel_check is not None and cancel_check():
+                self.abort_exposure()
+                raise ExposureCancelled("Exposure cancelled")
             state = self.camera_state()
             if state == _STATE_ERROR:
                 raise RuntimeError("Camera entered error state during exposure")
@@ -99,9 +160,9 @@ class Camera:
         self._c._put("abortexposure")
         logger.warning("Exposure aborted")
 
-    def image_array(self) -> list:
+    def image_array(self, timeout: float = 300.0) -> list:
         """Return the last image as a nested list (row-major). Large frames will be slow over HTTP."""
         logger.info("Downloading image array…")
-        data = self._c._get("imagearray")
+        data = self._c._get("imagearray", timeout=timeout)
         logger.info("Image array received")
         return data

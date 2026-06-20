@@ -1,0 +1,97 @@
+server:
+  host: 0.0.0.0
+  port: 8800
+  admin_key: '${CLOUD_ADMIN_KEY}'  # local test admin key
+
+database:
+  url: 'postgresql://boundless@/boundless?host=/tmp'  # local Homebrew PostgreSQL
+
+light_pollution:
+  api_key: ''              # lightpollutionmap.info key; blank = default 20.0 mpsas
+
+alerts:
+  interval_minutes: 60
+  expire_days: 45          # deactivate transients unseen by any source this long
+  alerce:
+    enabled: true
+    mag_limit: 16.0
+    days_back: 14
+  gaia:
+    enabled: true
+    mag_limit: 16.0
+    days_back: 30
+  tns:
+    enabled: true          # silently skipped until api_key + bot_id are set
+    api_key: ''
+    bot_id: ''
+    bot_name: ''
+    mag_limit: 16.5
+    days_back: 7
+  atlas:
+    enabled: true
+    mag_limit: 16.5
+    username: ''          # register free at https://star.pst.qub.ac.uk/sne/atlas4/
+    password: ''          # skipped automatically when blank
+  asassn:
+    enabled: true
+    mag_limit: 16.5
+    api_key: ''           # register free at https://asas-sn.osu.edu/sky-patrol/
+                          # skipped automatically when blank
+  aavso:
+    enabled: true
+    default_watchlist: true
+    vsx_names: []          # extra VSX identifiers to keep on the programme
+
+scoring:
+  weights:                 # relative importance of composite components
+    brightness: 0.20
+    science: 0.25
+    time: 0.15
+    coverage: 0.15
+    observe: 0.25
+  observability_weights:   # seed only — auto-tuned live values live in the DB
+    light_pollution: 0.20
+    weather: 0.25
+    moon: 0.15
+    airmass: 0.15
+    window: 0.15
+    telescope: 0.10
+
+tuning:
+  # Nightly Claude monitor that reviews observing outcomes and adjusts the six
+  # observability_weights above. The hot path (ingestion, scoring, scheduling)
+  # stays 100% procedural; Claude is advisory only. Ships OFF — behavior is
+  # unchanged until an operator opts in. See cloud/tuning.py.
+  enabled: false
+  api_key: ''                # blank → falls back to ANTHROPIC_API_KEY env var
+  model: claude-opus-4-8     # latest Opus; set claude-sonnet-4-6 to cut cost
+  lookback_nights: 14        # how many nights of outcomes to summarize
+  max_delta: 0.05            # hard cap on per-run change to any single weight
+  min_nights_data: 7         # don't tune until this many nights of data exist
+  min_measurements: 30       # ...and not until this many measurements exist
+  min_change: 0.005          # skip apply/notify if no weight moves more than this
+
+scheduler:
+  replan_interval_minutes: 120
+  min_score: 0.25          # targets below this never get scheduled
+  max_targets_per_night: 12
+  sun_altitude_limit: -12  # nautical darkness
+
+aavso:
+  observer_code: 'EGBA'
+  username: '${AAVSO_USERNAME}'
+  password: '${AAVSO_PASSWORD}'
+  chart_id: ''
+  dry_run: true            # format + save batches without POSTing until ready
+  batch_interval_minutes: 360
+  single_node_holdback_hours: 6
+  audit_dir: cloud_data/aavso_batches
+
+storage:
+  raw_image_dir: cloud_data/raw_images
+  raw_image_retention_days: 14
+  max_image_mb: 64
+
+logging:
+  level: INFO
+  format: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
