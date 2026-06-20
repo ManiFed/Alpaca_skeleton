@@ -652,17 +652,21 @@
   }
 
   /* hover-zoom: slowly widen FOV while mouse rests over open sky (not a panel) */
-  var skyHover=false, hoverZoom=1.0;
-  var HOVER_MAX=3.0, HOVER_RATE=0.018, HOVER_RESET=0.035;
+  var skyHover=false, hoverZoom=1.0, scrolling=false, scrollTimer=null;
+  var HOVER_MAX=3.0, HOVER_RATE=0.005, HOVER_RESET=0.01;
   document.addEventListener('mousemove',function(e){
     var el=e.target, over=false;
     while(el){
       if(el.classList&&(el.classList.contains('glass')||el.classList.contains('btn')||el.tagName==='BUTTON'||el.tagName==='A'||el.tagName==='INPUT')){over=true;break;}
       el=el.parentElement;
     }
-    skyHover=!over;
+    skyHover=!over&&!scrolling;
   },{passive:true});
   document.addEventListener('mouseleave',function(){skyHover=false;});
+  addEventListener('scroll',function(){
+    scrolling=true; skyHover=false;
+    clearTimeout(scrollTimer); scrollTimer=setTimeout(function(){scrolling=false;},200);
+  },{passive:true});
 
   function start(aladin){
     var cur={ra:stops[0].cra,dec:stops[0].cdec,fov:stops[0].fov};
@@ -692,10 +696,6 @@
       cur.ra=lerp(cur.ra,tgt.ra,0.05); cur.dec=lerp(cur.dec,tgt.dec,0.05); cur.fov=lerp(cur.fov,tgt.fov*hoverZoom,0.05);
       aladin.gotoRaDec(cur.ra,cur.dec); aladin.setFov(cur.fov); requestAnimationFrame(tick);
     })();
-    addEventListener('scroll', function(){
-      cur.ra=lerp(cur.ra,tgt.ra,0.12); cur.dec=lerp(cur.dec,tgt.dec,0.12); cur.fov=lerp(cur.fov,tgt.fov,0.12);
-      aladin.gotoRaDec(cur.ra,cur.dec); aladin.setFov(cur.fov);
-    }, {passive:true});
   }
 
   function boot(){
