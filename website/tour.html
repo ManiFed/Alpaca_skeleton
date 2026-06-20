@@ -160,8 +160,21 @@
   .email-row input[type=email]:focus{ border-color:var(--accent); background:rgba(143,217,255,.10); }
   .email-row input[type=email]::placeholder{ color:rgba(242,245,255,.35); }
   .join-success{ margin-top:28px; font-size:15px; color:var(--accent); letter-spacing:.01em; }
-  .join-sub-link{ margin-top:20px; font-size:13.5px; color:var(--ink-3); }
-  .join-sub-link a{ color:var(--ink-2); text-decoration:underline; text-underline-offset:3px; }
+  .fund-form{ margin-top:32px; width:100%; }
+  .fund-label{ font-size:14px; color:var(--ink-2); }
+  .fund-chips{ display:flex; gap:9px; margin-top:16px; flex-wrap:wrap; justify-content:center; }
+  .fund-chip input[type=radio]{ display:none; }
+  .fund-chip span{
+    display:block; padding:10px 20px; border-radius:100px; cursor:pointer;
+    font-size:14px; font-weight:450; color:var(--ink-2);
+    background:rgba(170,195,245,.07); border:1px solid var(--glass-bd);
+    backdrop-filter:blur(10px); transition:background .2s, border-color .2s, color .2s, box-shadow .2s;
+  }
+  .fund-chip span:hover{ background:rgba(170,195,245,.14); color:var(--ink); }
+  .fund-chip input:checked + span{
+    color:var(--accent); background:rgba(143,217,255,.12);
+    border-color:rgba(143,217,255,.45); box-shadow:0 0 18px rgba(143,217,255,.14);
+  }
 </style>
 </head>
 <body>
@@ -306,7 +319,19 @@
           <input type="email" placeholder="your@email.com" required autocomplete="email" aria-label="Email address" />
           <button class="btn btn-p" type="submit">I'm in — claim spot #<span id="next-spot">008</span> →</button>
         </form>
-        <p class="join-sub-link">Need a telescope? <a href="mailto:info@boundlessskies.org?subject=Help%20me%20get%20a%20telescope%20funded">We'll help you get one funded.</a></p>
+        <form class="fund-form" id="fund-form" novalidate>
+          <p class="fund-label">Not sure how to get started? Tell us where you're at.</p>
+          <div class="fund-chips" role="group" aria-label="Your equipment">
+            <label class="fund-chip"><input type="radio" name="equipment" value="seestar" /><span>I have a Seestar</span></label>
+            <label class="fund-chip"><input type="radio" name="equipment" value="other_scope" /><span>I have another telescope</span></label>
+            <label class="fund-chip"><input type="radio" name="equipment" value="none" /><span>No telescope yet</span></label>
+            <label class="fund-chip"><input type="radio" name="equipment" value="fund" /><span>I need one funded</span></label>
+          </div>
+          <div class="email-row" style="margin-top:14px">
+            <input type="email" placeholder="your@email.com" required autocomplete="email" aria-label="Your email" />
+            <button class="btn btn-g" type="submit">Get started →</button>
+          </div>
+        </form>
         <p style="margin-top:46px; font-size:11.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); font-weight:500">Boundless Skies · registered charity · the night sky belongs to everyone</p>
       </div></div>
     </section>
@@ -326,9 +351,13 @@
   ];
   var phases=nodeData.map(function(){return{beam:Math.random()*Math.PI*2,led:Math.random()*Math.PI*2};});
   var starField=(function(){
-    var a=[];
-    for(var i=0;i<500;i++) a.push({x:Math.random(),y:Math.pow(Math.random(),1.25),r:Math.random()*1.3+0.18,hero:false});
-    for(var j=0;j<9;j++) a.push({x:Math.random(),y:Math.random()*.62,r:1.8+Math.random()*1.4,hero:true});
+    var a=[], rng=Math.random;
+    // realistic spectral tints: mostly white, some blue (B), some warm (K/M)
+    var cols=['255,255,255','230,240,255','255,248,232','255,230,200','210,225,255'];
+    var cw=[0.50,0.20,0.16,0.07,0.07];
+    function pick(){var r=rng(),s=0;for(var i=0;i<cols.length;i++){s+=cw[i];if(r<s)return cols[i];}return cols[0];}
+    for(var i=0;i<560;i++) a.push({x:rng(),y:Math.pow(rng(),1.2),r:rng()*1.2+0.14,c:pick(),hero:false});
+    for(var j=0;j<10;j++) a.push({x:rng(),y:rng()*.65,r:1.6+rng()*1.5,c:pick(),hero:true});
     return a;
   })();
   var W=innerWidth,H=innerHeight,hz,gh;
@@ -394,27 +423,33 @@
   function drawFrame(t){
     if(ec.width!==W*EDPR||ec.height!==H*EDPR){ec.width=W*EDPR;ec.height=H*EDPR;ex.setTransform(EDPR,0,0,EDPR,0,0);}
     ex.clearRect(0,0,W,H);
-    // SKY — deep purple-indigo, warming toward horizon
+    // SKY — true dark: near-black at zenith, subtle blue-grey, slight warmth toward horizon
     var g=ex.createLinearGradient(0,0,0,hz);
-    g.addColorStop(0,'#020409'); g.addColorStop(.35,'#06091C');
-    g.addColorStop(.68,'#0E0B2E'); g.addColorStop(.85,'#180A22'); g.addColorStop(1,'#26101A');
+    g.addColorStop(0,'#010306'); g.addColorStop(.40,'#030810');
+    g.addColorStop(.75,'#070C1A'); g.addColorStop(.92,'#0E0C18'); g.addColorStop(1,'#180C12');
     ex.fillStyle=g; ex.fillRect(0,0,W,hz);
-    // Milky Way — prominent real diagonal band
+    // Milky Way — warm galactic core + cooler outer arms
     ex.save();
-    var mw=ex.createLinearGradient(W*.04,hz*.02,W*.82,hz*.90);
-    mw.addColorStop(0,'rgba(180,185,240,0)'); mw.addColorStop(.22,'rgba(170,180,230,.07)');
-    mw.addColorStop(.44,'rgba(195,198,248,.24)'); mw.addColorStop(.56,'rgba(190,194,244,.22)');
-    mw.addColorStop(.76,'rgba(170,178,228,.07)'); mw.addColorStop(1,'rgba(160,175,230,0)');
-    ex.fillStyle=mw; ex.fillRect(0,0,W,hz); ex.restore();
-    // stars — some with glow halos
+    var mw=ex.createLinearGradient(W*.06,hz*.04,W*.80,hz*.88);
+    mw.addColorStop(0,'rgba(160,165,210,0)'); mw.addColorStop(.18,'rgba(155,165,215,.06)');
+    mw.addColorStop(.40,'rgba(180,178,228,.19)'); mw.addColorStop(.50,'rgba(210,195,200,.22)');
+    mw.addColorStop(.60,'rgba(180,170,215,.17)'); mw.addColorStop(.80,'rgba(155,162,210,.05)');
+    mw.addColorStop(1,'rgba(150,160,205,0)');
+    ex.fillStyle=mw; ex.fillRect(0,0,W,hz);
+    // galactic core — warm yellow-orange glow slightly off-center
+    var core=ex.createRadialGradient(W*.48,hz*.72,0,W*.48,hz*.72,W*.22);
+    core.addColorStop(0,'rgba(220,200,150,.09)'); core.addColorStop(.5,'rgba(200,175,120,.05)'); core.addColorStop(1,'rgba(180,155,100,0)');
+    ex.fillStyle=core; ex.fillRect(0,0,W,hz);
+    ex.restore();
+    // stars — spectral colors, bright ones with diffraction halos
     starField.forEach(function(s){
-      var yp=s.y*hz, a=(1-yp/hz)*.86+.10;
+      var yp=s.y*hz, a=(1-yp/hz)*.82+.12;
       if(s.hero){
-        var hl=ex.createRadialGradient(s.x*W,yp,0,s.x*W,yp,s.r*5.5);
-        hl.addColorStop(0,'rgba(220,235,255,.40)'); hl.addColorStop(1,'rgba(220,235,255,0)');
-        ex.fillStyle=hl; ex.beginPath(); ex.arc(s.x*W,yp,s.r*5.5,0,6.28); ex.fill();
+        var hl=ex.createRadialGradient(s.x*W,yp,0,s.x*W,yp,s.r*6);
+        hl.addColorStop(0,'rgba('+s.c+','+(a*.38).toFixed(2)+')'); hl.addColorStop(1,'rgba('+s.c+',0)');
+        ex.fillStyle=hl; ex.beginPath(); ex.arc(s.x*W,yp,s.r*6,0,6.28); ex.fill();
       }
-      ex.fillStyle='rgba(255,255,255,'+a.toFixed(2)+')'; ex.beginPath(); ex.arc(s.x*W,yp,s.r,0,6.28); ex.fill();
+      ex.fillStyle='rgba('+s.c+','+a.toFixed(2)+')'; ex.beginPath(); ex.arc(s.x*W,yp,s.r,0,6.28); ex.fill();
     });
     // aurora borealis — two slow wavy bands of green near the horizon
     (function(){
@@ -451,16 +486,15 @@
         return true;
       });
     })();
-    // WARM HORIZON GLOW — cinematic key light
-    var hg=ex.createLinearGradient(0,hz-260,0,hz);
-    hg.addColorStop(0,'rgba(180,55,15,0)'); hg.addColorStop(.40,'rgba(205,75,22,.05)');
-    hg.addColorStop(.72,'rgba(238,105,30,.16)'); hg.addColorStop(1,'rgba(255,138,48,.58)');
-    ex.fillStyle=hg; ex.fillRect(0,hz-260,W,260);
-    ex.fillStyle='rgba(255,175,70,.70)'; ex.fillRect(0,hz-1.5,W,1);
-    ex.fillStyle='rgba(255,210,120,.32)'; ex.fillRect(0,hz-2.5,W,1);
-    // GROUND — warm dark desert sand
+    // HORIZON GLOW — sodium light pollution, muted and natural
+    var hg=ex.createLinearGradient(0,hz-200,0,hz);
+    hg.addColorStop(0,'rgba(140,70,20,0)'); hg.addColorStop(.50,'rgba(175,88,26,.04)');
+    hg.addColorStop(.80,'rgba(208,108,36,.09)'); hg.addColorStop(1,'rgba(230,126,48,.26)');
+    ex.fillStyle=hg; ex.fillRect(0,hz-200,W,200);
+    ex.fillStyle='rgba(200,135,50,.34)'; ex.fillRect(0,hz-1.2,W,0.8);
+    // GROUND — dark desert at night, near-black with faint glow near horizon
     var gr=ex.createLinearGradient(0,hz,0,H);
-    gr.addColorStop(0,'#2E1E10'); gr.addColorStop(.22,'#1E1208'); gr.addColorStop(.55,'#120D05'); gr.addColorStop(1,'#080604');
+    gr.addColorStop(0,'#1A1008'); gr.addColorStop(.18,'#100A04'); gr.addColorStop(.50,'#090603'); gr.addColorStop(1,'#050402');
     ex.fillStyle=gr; ex.fillRect(0,hz,W,H-hz);
     // dune ridges — warm lit edges
     function ridge(base,amp,ph,fill,lit){
@@ -471,8 +505,8 @@
       for(var x2=0;x2<=W;x2+=12) ex.lineTo(x2,base+Math.sin(x2*.0055+ph)*amp+Math.sin(x2*.017+ph)*amp*.35);
       ex.strokeStyle=lit; ex.lineWidth=1.2; ex.stroke();
     }
-    ridge(hz+26,11,1.0,'#1C1208','rgba(255,155,60,.28)');
-    ridge(hz+80,17,3.4,'#100A04','rgba(200,115,45,.14)');
+    ridge(hz+26,11,1.0,'#110E08','rgba(210,130,46,.16)');
+    ridge(hz+80,17,3.4,'#0B0906','rgba(168,100,34,.08)');
     // node array — all beams on, animated; cursor proximity boosts beam
     nodeData.forEach(function(n,i){
       var nx=n[0]*W, ny=hz+n[1]*gh;
@@ -514,19 +548,42 @@
 
   /* ---------- email capture ---------- */
   (function(){
-    var form=document.getElementById('join-form'); if(!form) return;
-    form.addEventListener('submit',function(e){
+    var API='http://'+location.hostname+':8800';
+    function wireForm(id, source, successMsg, fallbackSubject) {
+      var form=document.getElementById(id); if(!form) return;
+      form.addEventListener('submit',function(e){
+        e.preventDefault();
+        var input=form.querySelector('input[type=email]');
+        var email=input?input.value.trim():''; if(!email) return;
+        fetch(API+'/api/v1/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,source:source})})
+          .then(function(r){if(r&&r.ok) throw 'ok'; throw 'fallback';})
+          .catch(function(reason){
+            if(reason==='ok'){
+              form.outerHTML='<p class="join-success">'+successMsg+'</p>';
+            } else {
+              window.location.href='mailto:info@boundlessskies.org?subject='+encodeURIComponent(fallbackSubject)+'&body=My%20email%3A%20'+encodeURIComponent(email);
+            }
+          });
+      });
+    }
+    wireForm('join-form', 'tour', '✓ Spot held — check your inbox for next steps.', 'I want to join the founding network');
+
+    // fund form also captures equipment selection
+    var fundForm=document.getElementById('fund-form');
+    if(fundForm) fundForm.addEventListener('submit',function(e){
       e.preventDefault();
-      var input=form.querySelector('input[type=email]');
+      var input=fundForm.querySelector('input[type=email]');
       var email=input?input.value.trim():''; if(!email) return;
-      var API='http://'+location.hostname+':8800';
-      fetch(API+'/api/v1/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,source:'tour'})})
+      var eq=fundForm.querySelector('input[name=equipment]:checked');
+      var equipment=eq?eq.value:'unspecified';
+      fetch(API+'/api/v1/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,source:'onboarding',equipment:equipment})})
         .then(function(r){if(r&&r.ok) throw 'ok'; throw 'fallback';})
         .catch(function(reason){
           if(reason==='ok'){
-            form.outerHTML='<p class="join-success">✓ Spot held — check your inbox for next steps.</p>';
+            fundForm.outerHTML='<p class="join-success">✓ Got it — we\'ll be in touch about next steps.</p>';
           } else {
-            window.location.href='mailto:info@boundlessskies.org?subject=I%20want%20to%20join%20the%20founding%20network&body=My%20email%3A%20'+encodeURIComponent(email);
+            var sub=equipment==='fund'?'Help me get a telescope funded':'Getting started with Boundless Skies';
+            window.location.href='mailto:info@boundlessskies.org?subject='+encodeURIComponent(sub)+'&body=My%20email%3A%20'+encodeURIComponent(email)+'%0AEquipment%3A%20'+encodeURIComponent(equipment);
           }
         });
     });
@@ -596,7 +653,7 @@
 
   /* hover-zoom: slowly widen FOV while mouse rests over open sky (not a panel) */
   var skyHover=false, hoverZoom=1.0;
-  var HOVER_MAX=1.85, HOVER_RATE=0.00065, HOVER_RESET=0.0013;
+  var HOVER_MAX=3.0, HOVER_RATE=0.018, HOVER_RESET=0.035;
   document.addEventListener('mousemove',function(e){
     var el=e.target, over=false;
     while(el){
