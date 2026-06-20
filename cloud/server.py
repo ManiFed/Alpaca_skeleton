@@ -59,7 +59,7 @@ def create_app(config: dict) -> Flask:
 
 @app.route("/")
 def serve_index():
-    return send_from_directory(_WEBSITE_DIR, "index.html")
+    return send_from_directory(_WEBSITE_DIR, "tour.html")
 
 
 @app.route("/<path:filename>")
@@ -67,7 +67,7 @@ def serve_website(filename):
     full = os.path.join(_WEBSITE_DIR, filename)
     if os.path.isfile(full):
         return send_from_directory(_WEBSITE_DIR, filename)
-    return send_from_directory(_WEBSITE_DIR, "index.html")
+    return send_from_directory(_WEBSITE_DIR, "tour.html")
 
 
 @app.after_request
