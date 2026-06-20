@@ -14,6 +14,8 @@ astropy, or anything heavy — both sides can import this for free.
     Measurement       — one photometry result (photometry.run_pipeline format)
 """
 
+import os
+import re
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
 
@@ -22,6 +24,22 @@ def _from_dict(cls, data: dict):
     """Build a dataclass from a dict, ignoring unknown keys."""
     known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
     return cls(**{k: v for k, v in (data or {}).items() if k in known})
+
+
+_ENV_RE = re.compile(r"\$\{(\w+)\}")
+
+
+def expand_env(value: Any) -> Any:
+    """Resolve ${VAR} references in a config string against the environment.
+
+    Secrets (AAVSO password, cloud API key, …) live in the environment, not in
+    the tracked config file, so config values like ``${AAVSO_PASSWORD}`` are
+    expanded here at the point of use.  Non-strings pass through unchanged, and
+    an unset variable expands to "" so callers fall back to their own defaults.
+    """
+    if isinstance(value, str):
+        return _ENV_RE.sub(lambda m: os.environ.get(m.group(1), ""), value)
+    return value
 
 
 # ── Node registry ──────────────────────────────────────────────────────────────

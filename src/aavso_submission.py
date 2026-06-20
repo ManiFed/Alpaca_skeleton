@@ -44,6 +44,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from src.shared_models import expand_env
+
 logger = logging.getLogger("aavso_submission")
 
 _WEBOBS_URL  = "https://www.aavso.org/apps/webobs/submit/"
@@ -61,12 +63,20 @@ def submit(measurement: dict, config: dict) -> dict:
     """
     aavso_cfg     = config.get("aavso", {})
     observer_code = aavso_cfg.get("observer_code", "").upper().strip()
-    username      = aavso_cfg.get("username", "")
-    password      = aavso_cfg.get("password", "")
+    username      = expand_env(aavso_cfg.get("username", ""))
+    password      = expand_env(aavso_cfg.get("password", ""))
     audit_dir     = Path(aavso_cfg.get("audit_dir", "aavso_submissions"))
     dry_run       = bool(aavso_cfg.get("dry_run", False))
     submit_poor   = bool(aavso_cfg.get("submit_poor_quality", False))
     submit_url    = aavso_cfg.get("submit_url", _WEBOBS_URL)
+
+    # When the cloud is enabled it owns AAVSO submission (one network batch under
+    # a single OBSCODE), so the node must not also POST — that would send every
+    # observation to WebObs twice.  The node still formats and saves the file for
+    # the local audit trail and uploads it to the cloud.  submit_from_node
+    # defaults to True only for a standalone node with no cloud.
+    cloud_enabled    = bool(config.get("cloud", {}).get("enabled", False))
+    submit_from_node = bool(aavso_cfg.get("submit_from_node", not cloud_enabled))
 
     if not observer_code:
         logger.error("aavso.observer_code not set in config — cannot submit")
@@ -118,6 +128,11 @@ def submit(measurement: dict, config: dict) -> dict:
     if dry_run:
         logger.info("Dry run — skipping POST to WebObs")
         result = _make_result("dry_run", 0, 0, str(file_path), None, "dry_run: file saved, no POST")
+
+    elif not submit_from_node:
+        logger.info("Cloud owns AAVSO submission — node saved audit file only, no POST")
+        result = _make_result("audit", 0, 0, str(file_path), None,
+                              "cloud owns submission; node saved audit file only")
 
     elif not username or not password:
         logger.warning("aavso.username/password not configured — file saved but not submitted")

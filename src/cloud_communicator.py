@@ -34,6 +34,8 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from src.shared_models import expand_env
+
 logger = logging.getLogger("cloud_communicator")
 
 def _utc_offset_hours() -> float:
@@ -72,7 +74,10 @@ class CloudCommunicator:
         self._on_interrupt = on_interrupt
 
         self._node_id = str(cloud_cfg.get("node_id", "") or "")
-        self._api_key = str(cloud_cfg.get("api_key", "") or "")
+        # api_key is a secret: config carries a ${CLOUD_NODE_API_KEY} placeholder
+        # that resolves from the environment.  An unset var expands to "" so the
+        # node falls through to auto-registration as if no key were configured.
+        self._api_key = str(expand_env(cloud_cfg.get("api_key", "")) or "")
         self._load_state()
 
         self._stop = threading.Event()

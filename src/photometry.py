@@ -80,9 +80,14 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
         logger.error("FITS file has no image data: %s", fits_path)
         return None
 
-    # Handle 3-D cubes (C, H, W) → (H, W) by taking first plane
+    # Collapse one-shot-colour cubes to a 2-D luminance image by averaging the
+    # colour planes.  Taking a single plane (the old behaviour took plane 0 = the
+    # red channel) measures the target in a bandpass far from the Johnson V of the
+    # comparison stars, injecting a systematic colour error into the zero point.
+    # Averaging the planes matches the luminance image the live stacker builds.
     if data.ndim == 3:
-        data = data[0]
+        caxis = int(np.argmin(data.shape))   # colour axis is the shortest one
+        data = data.mean(axis=caxis)
     if data.ndim != 2:
         logger.error("Unexpected data shape %s in %s", data.shape, fits_path)
         return None
@@ -241,9 +246,10 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
     from photutils.centroids import centroid_sources
     from astropy.stats import sigma_clipped_stats as _scs
 
-    _, bkg_med, _ = _scs(data, sigma=3.0)
+    _, bkg_med, bkg_std = _scs(data, sigma=3.0)
     bkg_sub = data - bkg_med
     search_r = int(max(15, fwhm_px * 3))
+    peak_threshold = 5.0 * bkg_std   # a real source must rise this far above sky
 
     raw_positions = [(tx, ty)] + [(cs["x_px"], cs["y_px"]) for cs in comp_in_field]
     refined = []
@@ -257,6 +263,15 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
             dx, dy = cx - rx, cy - ry
             if abs(dx) > search_r or abs(dy) > search_r:
                 raise ValueError("centroid drifted out of search box")
+            # Guard against the centroid snapping onto noise or a hot pixel: the
+            # local peak around the refined position must be a significant source.
+            # If not, keep the WCS position rather than measure a phantom star.
+            iy, ix = int(round(cy)), int(round(cx))
+            y0, y1 = max(0, iy - 3), min(data.shape[0], iy + 4)
+            x0, x1 = max(0, ix - 3), min(data.shape[1], ix + 4)
+            local_peak = float(bkg_sub[y0:y1, x0:x1].max()) if (y1 > y0 and x1 > x0) else 0.0
+            if local_peak < peak_threshold:
+                raise ValueError(f"no significant source at centroid (peak {local_peak:.1f} < {peak_threshold:.1f})")
             refined.append((float(cx), float(cy)))
         except Exception as exc:
             logger.debug("Centroid refinement failed for (%.1f, %.1f): %s", rx, ry, exc)
@@ -305,7 +320,14 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
             sigma_instr = 1.0857 * (comp_flux_errors[i] / comp_fluxes[i])
         else:
             sigma_instr = 0.05
-        weight = 1.0 / max(sigma_instr ** 2, 1e-6)
+        # The per-star ZP uncertainty is the instrumental (Poisson) error in
+        # quadrature with the *catalog* uncertainty on the reference magnitude.
+        # Without the catalog term a noisy Gaia G→V star (mag_err up to ~0.2)
+        # would be weighted the same as a curated AAVSO sequence star (~0.01),
+        # biasing the ensemble zero point toward the less reliable catalog.
+        cat_err  = float(cs.get("mag_err") or 0.05)
+        sigma_zp = math.sqrt(sigma_instr ** 2 + cat_err ** 2)
+        weight   = 1.0 / max(sigma_zp ** 2, 1e-6)
         zero_points.append(zp)
         zp_weights.append(weight)
 
@@ -339,7 +361,7 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
     # ── Step 7: Ancillary quantities ──────────────────────────────────────────
     snr     = float(target_flux / target_flux_err) if target_flux_err > 0 else 0.0
     airmass = _compute_airmass(header, config)
-    bjd     = _compute_bjd(header)
+    bjd     = _compute_bjd(header, ra_deg, dec_deg, config)
 
     # ── Step 8: Quality flag ──────────────────────────────────────────────────
     n_comp_used    = len(zero_points)
@@ -1184,29 +1206,78 @@ def _aperture_photometry(
 
 # ── Helper: BJD ───────────────────────────────────────────────────────────────
 
-def _compute_bjd(header: dict) -> float:
+def _compute_bjd(header: dict, ra_deg: float, dec_deg: float, config: dict) -> float:
     """
-    Return Barycentric Julian Date (BJD_TCB) from FITS header DATE-OBS.
-    Falls back to current time if the header entry is missing or unparseable.
+    Return Barycentric Julian Date (BJD_TDB) for the exposure mid-point.
+
+    Two steps are required for a real BJD, and the previous implementation did
+    only the first:
+      1. Convert the UTC timestamp to the TDB time scale.
+      2. Add the light-travel time from the observatory to the solar-system
+         barycenter for the target's direction (Time.light_travel_time).  This
+         Rømer term is up to ±8.3 minutes and is what distinguishes BJD from a
+         plain geocentric/topocentric JD.
+
+    The observer's position on Earth contributes ≤21 ms to the correction, so
+    when the observatory location is unknown we evaluate it at the geocenter —
+    still far better than omitting the barycentric term entirely.  Falls back to
+    JD(TDB) at the observer if the correction itself fails.
     """
     date_obs = header.get("DATE-OBS", "")
-    if not date_obs:
-        logger.debug("DATE-OBS missing — using current time for BJD")
-        return float(Time.now().tcb.jd)
-    # Try multiple formats: "fits" handles timezone offsets, "isot" handles
-    # the common ISO-8601 without timezone, "iso" catches the rest.
-    for fmt in ("fits", "isot", "iso"):
-        try:
-            # Strip timezone suffix for isot/iso (astropy expects bare UTC)
-            s = date_obs
-            if fmt in ("isot", "iso") and (s.endswith("Z") or "+" in s[10:] or s[19:].startswith("-")):
-                s = s[:19]
-            t = Time(s, format=fmt, scale="utc")
-            return float(t.tcb.jd)
-        except Exception:
-            continue
-    logger.warning("Could not parse DATE-OBS '%s' — using current time", date_obs)
-    return float(Time.now().tcb.jd)
+    t = None
+    if date_obs:
+        # Try multiple formats: "fits" handles timezone offsets, "isot" handles
+        # the common ISO-8601 without timezone, "iso" catches the rest.
+        for fmt in ("fits", "isot", "iso"):
+            try:
+                s = date_obs
+                if fmt in ("isot", "iso") and (s.endswith("Z") or "+" in s[10:] or s[19:].startswith("-")):
+                    s = s[:19]
+                t = Time(s, format=fmt, scale="utc")
+                break
+            except Exception:
+                continue
+    if t is None:
+        if date_obs:
+            logger.warning("Could not parse DATE-OBS '%s' — using current time", date_obs)
+        else:
+            logger.debug("DATE-OBS missing — using current time for BJD")
+        t = Time.now()
+
+    location = _observer_location(config)
+    try:
+        coord = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg)
+        ltt = t.light_travel_time(coord, kind="barycentric", location=location)
+        return float((t.tdb + ltt).jd)
+    except Exception as exc:
+        logger.warning("Barycentric correction failed (%s) — using JD(TDB) without it", exc)
+        return float(t.tdb.jd)
+
+
+def _observer_location(config: dict) -> EarthLocation:
+    """Observer EarthLocation from config, defaulting to the geocenter.
+
+    Prefers observatory lat/lon (filled by geolocation enrichment), then
+    safety.observer.  The barycentric Rømer term is dominated by Earth's
+    position relative to the barycenter, so the geocenter fallback loses only
+    the sub-21 ms observer-on-Earth contribution.
+    """
+    obs = config.get("observatory", {}) or {}
+    lat = obs.get("latitude")
+    lon = obs.get("longitude")
+    if lat is None or lon is None:
+        so = config.get("safety", {}).get("observer", {}) or {}
+        lat = so.get("latitude")
+        lon = so.get("longitude")
+    try:
+        lat = float(lat)
+        lon = float(lon)
+        if lat == 0.0 and lon == 0.0:
+            raise ValueError("unset location")
+        return EarthLocation(lat=lat * u.deg, lon=lon * u.deg,
+                             height=float(obs.get("elevation", 0.0) or 0.0) * u.m)
+    except (TypeError, ValueError):
+        return EarthLocation.from_geocentric(0.0 * u.m, 0.0 * u.m, 0.0 * u.m)
 
 
 # ── Helper: airmass ────────────────────────────────────────────────────────────

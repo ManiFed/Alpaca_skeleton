@@ -148,6 +148,20 @@
     .stop.center h1{ font-size:clamp(34px,8.6vw,50px); }
     .stop.center .sub{ font-size:16px; }
   }
+
+  /* email form in the join section */
+  .email-row{ display:flex; gap:10px; margin-top:34px; justify-content:center; flex-wrap:wrap; }
+  .email-row input[type=email]{
+    flex:1; min-width:220px; max-width:340px; padding:15px 20px;
+    background:rgba(180,210,255,.07); border:1px solid var(--glass-bd);
+    border-radius:100px; color:var(--ink); font-size:15px; font-family:var(--font);
+    outline:none; backdrop-filter:blur(10px); transition:border-color .2s, background .2s;
+  }
+  .email-row input[type=email]:focus{ border-color:var(--accent); background:rgba(143,217,255,.10); }
+  .email-row input[type=email]::placeholder{ color:rgba(242,245,255,.35); }
+  .join-success{ margin-top:28px; font-size:15px; color:var(--accent); letter-spacing:.01em; }
+  .join-sub-link{ margin-top:20px; font-size:13.5px; color:var(--ink-3); }
+  .join-sub-link a{ color:var(--ink-2); text-decoration:underline; text-underline-offset:3px; }
 </style>
 </head>
 <body>
@@ -288,10 +302,11 @@
         <span class="kicker">Ready to start?</span>
         <h1 style="font-size:clamp(42px,6vw,78px); margin-top:18px; letter-spacing:-.045em">Take your founding spot.</h1>
         <p class="sub" style="margin:24px auto 0; max-width:42ch; font-size:19px; color:var(--ink-2)">Tell us you're in and we'll walk you through it — whether you already have a telescope, want to buy one, or need help getting one funded. No payment to hold your spot.</p>
-        <div class="cta-row" style="justify-content:center; margin-top:34px">
-          <a class="btn btn-p" href="mailto:info@boundlessskies.org?subject=I%20want%20to%20join%20the%20founding%20network">I'm in — claim spot #008</a>
-          <a class="btn btn-g" href="mailto:info@boundlessskies.org?subject=Help%20me%20get%20a%20telescope%20funded">Help me get a telescope</a>
-        </div>
+        <form class="email-row" id="join-form" novalidate>
+          <input type="email" placeholder="your@email.com" required autocomplete="email" aria-label="Email address" />
+          <button class="btn btn-p" type="submit">I'm in — claim spot #<span id="next-spot">008</span> →</button>
+        </form>
+        <p class="join-sub-link">Need a telescope? <a href="mailto:info@boundlessskies.org?subject=Help%20me%20get%20a%20telescope%20funded">We'll help you get one funded.</a></p>
         <p style="margin-top:46px; font-size:11.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); font-weight:500">Boundless Skies · registered charity · the night sky belongs to everyone</p>
       </div></div>
     </section>
@@ -300,71 +315,222 @@
 <script src="https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
 <script>
 (function(){
-  /* ---------- the ground: a desert node array, drawn once ---------- */
-  var ec=document.getElementById('earth'), ex=ec.getContext('2d'), EW,EH,EDPR=Math.min(devicePixelRatio||1,2);
-  function node(x,y,s,beam){
+  /* ---------- the ground: animated telescope array ---------- */
+  var ec=document.getElementById('earth'), ex=ec.getContext('2d'), EDPR=Math.min(devicePixelRatio||1,2);
+  // back/mid/front rows + one hero telescope front-center
+  var nodeData=[
+    [0.20,.08,.44],[0.38,.06,.40],[0.60,.07,.42],[0.78,.09,.46],
+    [0.13,.24,.70],[0.32,.21,.65],[0.50,.19,.62],[0.70,.22,.68],[0.87,.25,.73],
+    [0.08,.48,1.25],[0.28,.55,1.55],[0.78,.55,1.60],[0.93,.50,1.30],
+    [0.53,.68,3.80]
+  ];
+  var phases=nodeData.map(function(){return{beam:Math.random()*Math.PI*2,led:Math.random()*Math.PI*2};});
+  var starField=(function(){
+    var a=[];
+    for(var i=0;i<500;i++) a.push({x:Math.random(),y:Math.pow(Math.random(),1.25),r:Math.random()*1.3+0.18,hero:false});
+    for(var j=0;j<9;j++) a.push({x:Math.random(),y:Math.random()*.62,r:1.8+Math.random()*1.4,hero:true});
+    return a;
+  })();
+  var W=innerWidth,H=innerHeight,hz,gh;
+  function onResize(){W=innerWidth;H=innerHeight;hz=Math.round(H*(W<=860?.60:.66));gh=H-hz;}
+  onResize();
+
+  /* shooting stars */
+  var meteors=[], nextMeteorIn=7000+Math.random()*6000, meteorClock=0, prevT=0;
+  function spawnMeteor(){
+    var spd=(380+Math.random()*280); // px/s
+    var ang=(18+Math.random()*28)*Math.PI/180;
+    meteors.push({x:W*(0.25+Math.random()*0.55), y:hz*(0.06+Math.random()*0.32),
+      vx:-spd*Math.cos(ang), vy:spd*Math.sin(ang),
+      life:1, trail:(70+Math.random()*90)});
+    nextMeteorIn=9000+Math.random()*10000; meteorClock=0;
+  }
+
+  /* mouse position for node hover glow */
+  var mouseX=-9999,mouseY=-9999;
+  document.addEventListener('mousemove',function(e){mouseX=e.clientX;mouseY=e.clientY;},{passive:true});
+
+  function drawNode(x,y,s,t,ph,hover){
+    var bA=(0.52+0.32*Math.sin(t*.72+ph.beam))*(1+(hover||0)*0.6), lA=0.88+0.12*Math.sin(t*1.5+ph.led);
     ex.save(); ex.translate(x,y); ex.scale(s,s);
-    // thin alignment beam into the sky — reads instantly as "telescope scanning"
-    if(beam){
-      var bg=ex.createLinearGradient(0,-24,0,-180); bg.addColorStop(0,'rgba(140,217,255,.34)'); bg.addColorStop(1,'rgba(140,217,255,0)');
-      ex.fillStyle=bg; ex.beginPath(); ex.moveTo(-2,-22); ex.lineTo(2,-22); ex.lineTo(7,-180); ex.lineTo(-7,-180); ex.closePath(); ex.fill();
-    }
-    // glow pool under the node
-    ex.fillStyle='rgba(95,227,155,.10)'; ex.beginPath(); ex.ellipse(0,16,22,5,0,0,6.28); ex.fill();
-    ex.fillStyle='rgba(0,0,0,.55)'; ex.beginPath(); ex.ellipse(0,17,13,3.2,0,0,6.28); ex.fill();
-    // tripod — dark silhouette
-    ex.strokeStyle='#090d15'; ex.lineWidth=2.8; ex.lineCap='round';
-    ex.beginPath(); ex.moveTo(-6,0); ex.lineTo(-12,16); ex.moveTo(6,0); ex.lineTo(12,16); ex.moveTo(0,2); ex.lineTo(0,17); ex.stroke();
-    // body — dark silhouette against the lit ground, with a cool rim from the horizon glow
-    ex.fillStyle='#090d15'; ex.beginPath(); ex.moveTo(-7,2); ex.lineTo(-7,-18); ex.quadraticCurveTo(-7,-25,0,-25); ex.quadraticCurveTo(7,-25,7,-18); ex.lineTo(7,2); ex.closePath(); ex.fill();
-    ex.strokeStyle='rgba(170,205,245,.7)'; ex.lineWidth=1.3; ex.beginPath(); ex.moveTo(-7,2); ex.lineTo(-7,-18); ex.quadraticCurveTo(-7,-25,0,-25); ex.stroke();
-    // objective lens
-    ex.fillStyle='#0a1422'; ex.beginPath(); ex.arc(0,-15,4.8,0,6.28); ex.fill();
-    ex.fillStyle='rgba(170,220,255,.75)'; ex.beginPath(); ex.arc(-1.4,-16.4,1.9,0,6.28); ex.fill();
-    // green status LED + glow
-    ex.fillStyle='rgba(95,227,155,.45)'; ex.beginPath(); ex.arc(4.6,-4,4,0,6.28); ex.fill();
-    ex.fillStyle='#8CFFC8'; ex.beginPath(); ex.arc(4.6,-4,1.7,0,6.28); ex.fill();
+    var bh=280;
+    // core beam — wide, vivid
+    var bg=ex.createLinearGradient(0,-28,0,-bh);
+    bg.addColorStop(0,'rgba(160,224,255,'+bA.toFixed(2)+')');
+    bg.addColorStop(.18,'rgba(143,217,255,'+(bA*.58).toFixed(2)+')');
+    bg.addColorStop(.60,'rgba(130,210,255,'+(bA*.18).toFixed(2)+')');
+    bg.addColorStop(1,'rgba(130,210,255,0)');
+    ex.fillStyle=bg; ex.beginPath(); ex.moveTo(-4,-26); ex.lineTo(4,-26); ex.lineTo(17,-bh); ex.lineTo(-17,-bh); ex.closePath(); ex.fill();
+    // outer bloom
+    var bg2=ex.createLinearGradient(0,-26,0,-bh*.52);
+    bg2.addColorStop(0,'rgba(143,217,255,'+(bA*.24).toFixed(2)+')'); bg2.addColorStop(1,'rgba(143,217,255,0)');
+    ex.fillStyle=bg2; ex.beginPath(); ex.moveTo(-15,-26); ex.lineTo(15,-26); ex.lineTo(50,-bh*.52); ex.lineTo(-50,-bh*.52); ex.closePath(); ex.fill();
+    // lens flare at objective
+    ex.fillStyle='rgba(200,235,255,'+(bA*.60).toFixed(2)+')'; ex.beginPath(); ex.arc(0,-15,7.5,0,6.28); ex.fill();
+    // ground glow (warm) + shadow
+    ex.fillStyle='rgba(255,150,50,.12)'; ex.beginPath(); ex.ellipse(0,16,28,6,0,0,6.28); ex.fill();
+    ex.fillStyle='rgba(0,0,0,.68)'; ex.beginPath(); ex.ellipse(0,18,16,4,0,0,6.28); ex.fill();
+    // tripod
+    ex.strokeStyle='#0c1018'; ex.lineWidth=3.2; ex.lineCap='round';
+    ex.beginPath(); ex.moveTo(-6,0); ex.lineTo(-14,18); ex.moveTo(6,0); ex.lineTo(14,18); ex.moveTo(0,2); ex.lineTo(0,19); ex.stroke();
+    // body
+    ex.fillStyle='#0c1018';
+    ex.beginPath(); ex.moveTo(-7,2); ex.lineTo(-7,-18); ex.quadraticCurveTo(-7,-26,0,-26); ex.quadraticCurveTo(7,-26,7,-18); ex.lineTo(7,2); ex.closePath(); ex.fill();
+    // cool blue rim (left — sky light)
+    ex.strokeStyle='rgba(160,210,255,.72)'; ex.lineWidth=1.4;
+    ex.beginPath(); ex.moveTo(-7,2); ex.lineTo(-7,-18); ex.quadraticCurveTo(-7,-26,0,-26); ex.stroke();
+    // warm amber rim (right — horizon glow)
+    ex.strokeStyle='rgba(255,155,55,.55)'; ex.lineWidth=1.2;
+    ex.beginPath(); ex.moveTo(7,2); ex.lineTo(7,-18); ex.quadraticCurveTo(7,-26,0,-26); ex.stroke();
+    // lens
+    ex.fillStyle='#081020'; ex.beginPath(); ex.arc(0,-15,5,0,6.28); ex.fill();
+    ex.fillStyle='rgba(180,228,255,.88)'; ex.beginPath(); ex.arc(-1.6,-16.8,2.2,0,6.28); ex.fill();
+    // LED — bright, pulsing
+    ex.fillStyle='rgba(95,240,155,'+(0.44*lA).toFixed(2)+')'; ex.beginPath(); ex.arc(4.8,-4,5,0,6.28); ex.fill();
+    ex.fillStyle='rgba(160,255,210,'+lA.toFixed(2)+')'; ex.beginPath(); ex.arc(4.8,-4,(1.9+.3*lA),0,6.28); ex.fill();
     ex.restore();
   }
-  function drawEarth(){
-    EW=ec.width=innerWidth*EDPR; EH=ec.height=innerHeight*EDPR; ex.setTransform(EDPR,0,0,EDPR,0,0);
-    var W=innerWidth,H=innerHeight, hz=Math.round(H*(W<=860?0.60:0.66));
-    // sky — deep at top, lifting to a faint glow at the horizon
+
+  function drawFrame(t){
+    if(ec.width!==W*EDPR||ec.height!==H*EDPR){ec.width=W*EDPR;ec.height=H*EDPR;ex.setTransform(EDPR,0,0,EDPR,0,0);}
+    ex.clearRect(0,0,W,H);
+    // SKY — deep purple-indigo, warming toward horizon
     var g=ex.createLinearGradient(0,0,0,hz);
-    g.addColorStop(0,'#05080f'); g.addColorStop(.6,'#0a1326'); g.addColorStop(.88,'#16294a'); g.addColorStop(1,'#284d72');
+    g.addColorStop(0,'#020409'); g.addColorStop(.35,'#06091C');
+    g.addColorStop(.68,'#0E0B2E'); g.addColorStop(.85,'#180A22'); g.addColorStop(1,'#26101A');
     ex.fillStyle=g; ex.fillRect(0,0,W,hz);
-    // stars (denser up high)
-    for(var i=0;i<320;i++){ var sy=Math.pow(Math.random(),1.4)*hz, a=(1-sy/hz)*0.85+0.12;
-      ex.fillStyle='rgba(255,255,255,'+a.toFixed(2)+')'; ex.beginPath(); ex.arc(Math.random()*W, sy, Math.random()*1.3+0.25, 0,6.28); ex.fill(); }
-    // milky-way band
-    ex.save(); var mw=ex.createLinearGradient(W*0.15,0,W*0.7,hz);
-    mw.addColorStop(0,'rgba(150,175,235,0)'); mw.addColorStop(.5,'rgba(165,190,240,.14)'); mw.addColorStop(1,'rgba(150,175,235,0)');
+    // Milky Way — prominent real diagonal band
+    ex.save();
+    var mw=ex.createLinearGradient(W*.04,hz*.02,W*.82,hz*.90);
+    mw.addColorStop(0,'rgba(180,185,240,0)'); mw.addColorStop(.22,'rgba(170,180,230,.07)');
+    mw.addColorStop(.44,'rgba(195,198,248,.24)'); mw.addColorStop(.56,'rgba(190,194,244,.22)');
+    mw.addColorStop(.76,'rgba(170,178,228,.07)'); mw.addColorStop(1,'rgba(160,175,230,0)');
     ex.fillStyle=mw; ex.fillRect(0,0,W,hz); ex.restore();
-    // airglow right at the horizon — brighter band so the silhouettes pop
-    var ag=ex.createLinearGradient(0,hz-150,0,hz); ag.addColorStop(0,'rgba(70,130,185,0)'); ag.addColorStop(.7,'rgba(110,175,215,.18)'); ag.addColorStop(1,'rgba(150,205,235,.46)');
-    ex.fillStyle=ag; ex.fillRect(0,hz-150,W,150);
-    ex.fillStyle='rgba(190,225,250,.5)'; ex.fillRect(0,hz-1,W,1.4);                 // crisp horizon line
-    // ground plane — dim starlit sand, clearly lighter than the sky
-    var gr=ex.createLinearGradient(0,hz,0,H); gr.addColorStop(0,'#2a313e'); gr.addColorStop(.5,'#1a2030'); gr.addColorStop(1,'#0c0f18');
+    // stars — some with glow halos
+    starField.forEach(function(s){
+      var yp=s.y*hz, a=(1-yp/hz)*.86+.10;
+      if(s.hero){
+        var hl=ex.createRadialGradient(s.x*W,yp,0,s.x*W,yp,s.r*5.5);
+        hl.addColorStop(0,'rgba(220,235,255,.40)'); hl.addColorStop(1,'rgba(220,235,255,0)');
+        ex.fillStyle=hl; ex.beginPath(); ex.arc(s.x*W,yp,s.r*5.5,0,6.28); ex.fill();
+      }
+      ex.fillStyle='rgba(255,255,255,'+a.toFixed(2)+')'; ex.beginPath(); ex.arc(s.x*W,yp,s.r,0,6.28); ex.fill();
+    });
+    // aurora borealis — two slow wavy bands of green near the horizon
+    (function(){
+      var bands=[{yf:.62,amp:14,spd:.28,ph:0},{yf:.74,amp:10,spd:.19,ph:2.1}];
+      bands.forEach(function(b){
+        var yb=hz*b.yf, al=0.055+0.030*Math.sin(t*b.spd+b.ph);
+        var ag2=ex.createLinearGradient(0,yb-36,0,yb+36);
+        ag2.addColorStop(0,'rgba(95,227,155,0)');
+        ag2.addColorStop(.5,'rgba(95,227,155,'+al.toFixed(3)+')');
+        ag2.addColorStop(1,'rgba(95,227,155,0)');
+        ex.save(); ex.beginPath(); ex.moveTo(0,yb);
+        for(var xi=0;xi<=W;xi+=10)
+          ex.lineTo(xi, yb+Math.sin(xi*.0055+t*b.spd*2.2+b.ph)*b.amp+Math.sin(xi*.014+t*b.spd+b.ph)*b.amp*.4);
+        ex.lineTo(W,yb+72); ex.lineTo(0,yb+72); ex.closePath();
+        ex.fillStyle=ag2; ex.fill(); ex.restore();
+      });
+    })();
+    // shooting stars
+    (function(){
+      var dt=Math.min(t-prevT, 0.08); prevT=t;
+      meteorClock+=dt*1000;
+      if(meteorClock>nextMeteorIn) spawnMeteor();
+      meteors=meteors.filter(function(m){
+        m.x+=m.vx*dt; m.y+=m.vy*dt; m.life-=dt/1.5;
+        if(m.life<=0||m.y>hz||m.x<-80) return false;
+        var len=m.trail*m.life, ang=Math.atan2(m.vy,m.vx);
+        var tx=m.x-Math.cos(ang)*len, ty=m.y-Math.sin(ang)*len;
+        var gr=ex.createLinearGradient(tx,ty,m.x,m.y);
+        gr.addColorStop(0,'rgba(255,255,255,0)');
+        gr.addColorStop(.7,'rgba(200,230,255,'+(m.life*.25).toFixed(2)+')');
+        gr.addColorStop(1,'rgba(255,255,255,'+(m.life*.7).toFixed(2)+')');
+        ex.strokeStyle=gr; ex.lineWidth=1.6; ex.lineCap='round';
+        ex.beginPath(); ex.moveTo(tx,ty); ex.lineTo(m.x,m.y); ex.stroke();
+        return true;
+      });
+    })();
+    // WARM HORIZON GLOW — cinematic key light
+    var hg=ex.createLinearGradient(0,hz-260,0,hz);
+    hg.addColorStop(0,'rgba(180,55,15,0)'); hg.addColorStop(.40,'rgba(205,75,22,.05)');
+    hg.addColorStop(.72,'rgba(238,105,30,.16)'); hg.addColorStop(1,'rgba(255,138,48,.58)');
+    ex.fillStyle=hg; ex.fillRect(0,hz-260,W,260);
+    ex.fillStyle='rgba(255,175,70,.70)'; ex.fillRect(0,hz-1.5,W,1);
+    ex.fillStyle='rgba(255,210,120,.32)'; ex.fillRect(0,hz-2.5,W,1);
+    // GROUND — warm dark desert sand
+    var gr=ex.createLinearGradient(0,hz,0,H);
+    gr.addColorStop(0,'#2E1E10'); gr.addColorStop(.22,'#1E1208'); gr.addColorStop(.55,'#120D05'); gr.addColorStop(1,'#080604');
     ex.fillStyle=gr; ex.fillRect(0,hz,W,H-hz);
-    // dune ridges — darker silhouettes layered over the lit ground
+    // dune ridges — warm lit edges
     function ridge(base,amp,ph,fill,lit){
       ex.beginPath(); ex.moveTo(0,base);
-      for(var x=0;x<=W;x+=12){ ex.lineTo(x, base + Math.sin(x*0.0055+ph)*amp + Math.sin(x*0.017+ph)*amp*0.35); }
+      for(var x=0;x<=W;x+=12) ex.lineTo(x,base+Math.sin(x*.0055+ph)*amp+Math.sin(x*.017+ph)*amp*.35);
       ex.lineTo(W,H); ex.lineTo(0,H); ex.closePath(); ex.fillStyle=fill; ex.fill();
       ex.beginPath(); ex.moveTo(0,base);
-      for(var x2=0;x2<=W;x2+=12){ ex.lineTo(x2, base + Math.sin(x2*0.0055+ph)*amp + Math.sin(x2*0.017+ph)*amp*0.35); }
+      for(var x2=0;x2<=W;x2+=12) ex.lineTo(x2,base+Math.sin(x2*.0055+ph)*amp+Math.sin(x2*.017+ph)*amp*.35);
       ex.strokeStyle=lit; ex.lineWidth=1.2; ex.stroke();
     }
-    ridge(hz+34, 13, 1.0, '#141a28', 'rgba(160,200,235,.45)');
-    ridge(hz+96, 20, 3.4, '#0a0e18', 'rgba(120,160,200,.28)');
-    // the node array — bigger up front, smaller toward the horizon
-    var gh=H-hz;     // ground height
-    var nodes=[[0.14,.20,.9,0],[0.29,.28,1.1,1],[0.45,.18,.85,0],[0.6,.30,1.25,0],[0.74,.22,1.0,1],[0.87,.27,1.05,0],
-               [0.34,.55,1.8,1],[0.63,.66,2.2,0],[0.19,.5,1.5,0],[0.83,.58,1.7,1]];
-    nodes.forEach(function(n){ node(n[0]*W, hz + n[1]*gh, n[2], n[3]); });
+    ridge(hz+26,11,1.0,'#1C1208','rgba(255,155,60,.28)');
+    ridge(hz+80,17,3.4,'#100A04','rgba(200,115,45,.14)');
+    // node array — all beams on, animated; cursor proximity boosts beam
+    nodeData.forEach(function(n,i){
+      var nx=n[0]*W, ny=hz+n[1]*gh;
+      var dx=mouseX-nx, dy=mouseY-ny;
+      var hover=Math.max(0,1-Math.sqrt(dx*dx+dy*dy)/180);
+      drawNode(nx,ny,n[2],t,phases[i],hover);
+    });
   }
-  drawEarth(); addEventListener('resize', drawEarth);
+
+  var T0=performance.now(),resizePending=false;
+  (function loop(){
+    if(resizePending){onResize();resizePending=false;}
+    var t=(performance.now()-T0)/1000;
+    drawFrame(t);
+    requestAnimationFrame(loop);
+  })();
+  addEventListener('resize',function(){resizePending=true;});
+
+  /* ---------- live API data ---------- */
+  (function(){
+    var API='http://'+location.hostname+':8800';
+    fetch(API+'/api/v1/network/status',{mode:'cors'})
+      .then(function(r){return r.ok?r.json():null;}).then(function(s){
+        if(!s) return;
+        var cap=document.getElementById('earthcap');
+        if(cap) cap.innerHTML='<span class="l"></span> Autonomous node array \xb7 on watch \xb7 '+(s.nodes_online||0)+' online';
+        var flag=document.querySelector('.seatflag');
+        if(flag) flag.innerHTML='founding seats \xb7 <b>'+String(s.nodes_total||7).padStart(2,'0')+' / 100</b>';
+        var fill=document.querySelector('.seat .fill');
+        if(fill) fill.style.width=Math.min(100,((s.nodes_total||7)/100*100)).toFixed(1)+'%';
+        var bigNums=document.querySelectorAll('.seat .big .n');
+        if(bigNums[0]) bigNums[0].innerHTML=(s.nodes_total||7)+'<small>joined</small>';
+        var nextSpot=document.getElementById('next-spot');
+        if(nextSpot) nextSpot.textContent=String((s.nodes_total||7)+1).padStart(3,'0');
+        var youEl=document.querySelector('.seat .you');
+        if(youEl) youEl.innerHTML="You'd be member <b>#"+String((s.nodes_total||7)+1).padStart(3,'0')+"</b> — we hold your spot for 48 hours, no payment.";
+      }).catch(function(){});
+  })();
+
+  /* ---------- email capture ---------- */
+  (function(){
+    var form=document.getElementById('join-form'); if(!form) return;
+    form.addEventListener('submit',function(e){
+      e.preventDefault();
+      var input=form.querySelector('input[type=email]');
+      var email=input?input.value.trim():''; if(!email) return;
+      var API='http://'+location.hostname+':8800';
+      fetch(API+'/api/v1/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,source:'tour'})})
+        .then(function(r){if(r&&r.ok) throw 'ok'; throw 'fallback';})
+        .catch(function(reason){
+          if(reason==='ok'){
+            form.outerHTML='<p class="join-success">✓ Spot held — check your inbox for next steps.</p>';
+          } else {
+            window.location.href='mailto:info@boundlessskies.org?subject=I%20want%20to%20join%20the%20founding%20network&body=My%20email%3A%20'+encodeURIComponent(email);
+          }
+        });
+    });
+  })();
 
   /* ---------- the sky tour ---------- */
   var els=[].slice.call(document.querySelectorAll('.stop'));

@@ -247,15 +247,22 @@ def _post_batch(text: str, username: str, password: str, url: str) -> tuple:
     if resp.status_code != 200:
         return "error", 0, 0, f"HTTP {resp.status_code}"
 
+    # A success is only recognised from the explicit "N observation(s)" token.
+    # An HTTP 200 with no such token is NOT assumed to be a success: the
+    # apps.aavso.org stack (Auth0 + AWS WAF) returns 200 challenge/login pages
+    # that contain none of the error keywords, and counting those as accepted
+    # would mark the batch submitted (aavso_submitted=1) while it never reached
+    # AAVSO.  Mirrors aavso_submission._parse_webobs_response on the node.
     m = re.search(r"(\d+)\s+observation", resp.text, re.IGNORECASE)
     accepted = int(m.group(1)) if m else 0
     has_error = bool(re.search(r"\b(error|reject|invalid|fail)\b",
                                resp.text, re.IGNORECASE))
-    if has_error and accepted == 0:
+    if accepted > 0:
+        return "accepted", accepted, 0, f"accepted={accepted}"
+    if has_error:
         return "rejected", 0, 1, "WebObs reported errors"
-    if accepted == 0:
-        accepted = 1   # HTTP 200, no error keywords — assume accepted
-    return "accepted", accepted, 0, f"accepted={accepted}"
+    logger.warning("Unrecognised WebObs response — treating as error. Raw: %.300s", resp.text)
+    return "error", 0, 0, "unrecognised WebObs response (no success token)"
 
 
 # ── Raw image storage ──────────────────────────────────────────────────────────
