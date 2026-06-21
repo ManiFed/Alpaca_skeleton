@@ -235,7 +235,7 @@
   <div id="earthcap"><span class="l"></span> Autonomous node array · on watch · 7 online</div>
 
   <div class="brandmark">Boundless Skies</div>
-  <div class="seatflag">founding seats · <b>07 / 100</b></div>
+  <div class="seatflag">founding network</div>
   <div class="progress" id="progress"></div>
   <div class="utcclock" id="utcclock"></div>
   <div class="clock" id="clock"></div>
@@ -252,13 +252,12 @@
             <a class="btn btn-p" href="#join">Join the founding network</a>
             <a class="btn btn-g" href="#why">Watch the sky lift off ↓</a>
           </div>
-          <p style="margin-top:16px; font-size:12.5px; color:var(--ink-3)"><span id="hero-joined">7</span> people have joined · no payment needed to reserve your spot</p>
+          <p style="margin-top:16px; font-size:12.5px; color:var(--ink-3)">A handful of people are already on watch · join them at the very start</p>
         </div>
         <div class="seat glass">
-          <div class="top"><span class="lab">Founding members</span><span class="lab">First cohort</span></div>
-          <div class="big"><span class="n">07<small>joined</small></span><span class="n">100<small>spots</small></span></div>
-          <div class="bar"><div class="fill"></div></div>
-          <div class="you">You'd be member <b>#008</b> — we hold your spot for 48 hours, no payment.</div>
+          <div class="top"><span class="lab">Founding network</span></div>
+          <div style="margin-top:14px; font-size:15px; line-height:1.6; color:var(--ink-2)">We're at the very beginning — a small group of people already running their telescopes every night. You'd be joining before this is anything other than a handful of us pointing at the sky.</div>
+          <div class="readout" style="margin-top:20px"><span class="live cy"></span> A few members on watch right now</div>
         </div>
       </div></div>
       <div class="cue"><span>scroll to lift off</span><span class="ln"></span></div>
@@ -386,20 +385,10 @@
         <div></div>
         <div class="panel glass">
           <span class="kicker">Why join now</span>
-          <h2>Be one of the first hundred.</h2>
-          <p class="lead">We're just getting started. The first hundred members are the founding network — your name goes on the founding charter, and your telescope helps shape how the whole thing works.</p>
-          <p>We've marked the founders on this star cluster: seven so far, and one open spot glowing amber. That eighth one could be you.</p>
-          <div style="margin-top:22px; display:flex; gap:10px; flex-wrap:wrap">
-            <div style="flex:1; min-width:120px; padding:14px 16px; border-radius:14px; background:rgba(143,217,255,.06); border:1px solid rgba(143,217,255,.12); text-align:center">
-              <div style="font-size:28px; font-weight:600; color:var(--accent); font-feature-settings:'tnum' 1" id="founding-count">7</div>
-              <div style="font-size:11px; color:var(--ink-3); margin-top:2px; letter-spacing:.06em; text-transform:uppercase">founders joined</div>
-            </div>
-            <div style="flex:1; min-width:120px; padding:14px 16px; border-radius:14px; background:rgba(255,192,122,.06); border:1px solid rgba(255,192,122,.18); text-align:center">
-              <div style="font-size:28px; font-weight:600; color:var(--warm); font-feature-settings:'tnum' 1" id="founding-remain">93</div>
-              <div style="font-size:11px; color:var(--ink-3); margin-top:2px; letter-spacing:.06em; text-transform:uppercase">spots remaining</div>
-            </div>
-          </div>
-          <div class="readout" style="margin-top:16px"><span class="live"></span> Member #<span id="found-next">008</span> — open right now →</div>
+          <h2>Join before this is anything.</h2>
+          <p class="lead">We're just getting started. The people who join now are the founding network — your name goes on the founding charter, and your telescope helps shape how the whole thing works.</p>
+          <p>There are only a few of us right now. That's the point. You'd be one of the people who were there at the beginning, before anyone had heard of this.</p>
+          <div class="readout" style="margin-top:22px"><span class="live cy"></span> A few founders on watch right now</div>
         </div>
       </div></div>
     </section>
@@ -408,15 +397,11 @@
     <section class="stop center" id="join" data-ra="266.4" data-dec="-29.0" data-fov="11" data-side="0" data-time="">
       <div class="sticky"><div class="wrap">
         <span class="kicker">Ready to start?</span>
-        <h1 style="font-size:clamp(42px,6vw,78px); margin-top:18px; letter-spacing:-.045em">Take your founding spot.</h1>
-        <div id="scarcity-bar" style="display:none; margin:18px auto 0; padding:10px 18px; border-radius:100px; background:rgba(255,192,122,.10); border:1px solid rgba(255,192,122,.28); font-size:13px; color:var(--warm); font-weight:500; letter-spacing:.01em">
-          <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--warm); margin-right:8px; animation:livepulse 1.8s ease-in-out infinite; vertical-align:middle"></span>
-          <span id="scarcity-text">93 founding spots remaining</span>
-        </div>
-        <p class="sub" style="margin:24px auto 0; max-width:42ch; font-size:19px; color:var(--ink-2)">Tell us you're in and we'll walk you through it — whether you already have a telescope, want to buy one, or need help getting one funded. No payment to hold your spot.</p>
+        <h1 style="font-size:clamp(42px,6vw,78px); margin-top:18px; letter-spacing:-.045em">Join the founding network.</h1>
+        <p class="sub" style="margin:24px auto 0; max-width:42ch; font-size:19px; color:var(--ink-2)">Tell us you're in and we'll walk you through it — whether you already have a telescope, want to buy one, or need help getting one funded.</p>
         <form class="email-row" id="join-form" novalidate>
           <input type="email" placeholder="your@email.com" required autocomplete="email" aria-label="Email address" />
-          <button class="btn btn-p" type="submit">I'm in — claim spot #<span id="next-spot">008</span> →</button>
+          <button class="btn btn-p" type="submit">I'm in →</button>
         </form>
         <form class="fund-form" id="fund-form" novalidate>
           <p class="fund-label">Not sure how to get started? Tell us where you're at.</p>
@@ -954,11 +939,6 @@
   })();
   addEventListener('resize',function(){resizePending=true;});
 
-  /* ---------- founding bar count-up on load ---------- */
-  (function(){
-    var fill=document.querySelector('.seat .fill');
-    if(fill) setTimeout(function(){ fill.style.width='7%'; }, 500);
-  })();
 
   /* ---------- live API data ---------- */
   (function(){
@@ -968,31 +948,10 @@
         if(!s) return;
         var cap=document.getElementById('earthcap');
         if(cap) cap.innerHTML='<span class="l"></span> Autonomous node array \xb7 on watch \xb7 '+(s.nodes_online||0)+' online';
-        var flag=document.querySelector('.seatflag');
-        if(flag) flag.innerHTML='founding seats \xb7 <b>'+String(s.nodes_total||7).padStart(2,'0')+' / 100</b>';
-        var fill=document.querySelector('.seat .fill');
-        if(fill) fill.style.width=Math.min(100,((s.nodes_total||7)/100*100)).toFixed(1)+'%';
-        var bigNums=document.querySelectorAll('.seat .big .n');
-        if(bigNums[0]) bigNums[0].innerHTML=(s.nodes_total||7)+'<small>joined</small>';
         var liveCount=document.getElementById('live-count');
         if(liveCount) liveCount.textContent=(s.nodes_online||7)+' members';
         var statNodes=document.getElementById('stat-nodes');
         if(statNodes) statNodes.textContent=s.nodes_total||7;
-        var heroJoined=document.getElementById('hero-joined');
-        if(heroJoined) heroJoined.textContent=(s.nodes_total||7);
-        var nextSpot=document.getElementById('next-spot');
-        if(nextSpot) nextSpot.textContent=String((s.nodes_total||7)+1).padStart(3,'0');
-        var foundNext=document.getElementById('found-next');
-        if(foundNext) foundNext.textContent=String((s.nodes_total||7)+1).padStart(3,'0');
-        var fCount=document.getElementById('founding-count');
-        if(fCount) fCount.textContent=s.nodes_total||7;
-        var fRemain=document.getElementById('founding-remain');
-        if(fRemain) fRemain.textContent=100-(s.nodes_total||7);
-        var sBar=document.getElementById('scarcity-bar'), sTxt=document.getElementById('scarcity-text');
-        var remain=100-(s.nodes_total||7);
-        if(sBar&&remain<=30){ sBar.style.display='block'; if(sTxt) sTxt.textContent='Only '+remain+' founding spots remaining'; }
-        var youEl=document.querySelector('.seat .you');
-        if(youEl) youEl.innerHTML="You'd be member <b>#"+String((s.nodes_total||7)+1).padStart(3,'0')+"</b> — we hold your spot for 48 hours, no payment.";
       }).catch(function(){});
   })();
 
