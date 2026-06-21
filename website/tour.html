@@ -4,6 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Boundless Skies — The Founding Network</title>
+<meta name="description" content="Join a worldwide network of self-driving telescopes and contribute to real space science from home. No expertise needed." />
+<meta property="og:title" content="Boundless Skies — The Founding Network" />
+<meta property="og:description" content="Your backyard telescope, running itself every night, helping catch stars as they flare and fade. Join the first hundred." />
+<meta property="og:type" content="website" />
+<meta name="theme-color" content="#02030A" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;450;500;600;700&display=swap" rel="stylesheet" />
@@ -16,7 +21,7 @@
   }
   *{margin:0;padding:0;box-sizing:border-box}
   html{scroll-behavior:smooth}
-  body{background:#02030A; color:var(--ink); font-family:var(--font); -webkit-font-smoothing:antialiased; overflow-x:hidden; letter-spacing:-0.01em}
+  body{background:#02030A; color:var(--ink); font-family:var(--font); -webkit-font-smoothing:antialiased; overflow-x:hidden; letter-spacing:-0.01em; font-feature-settings:'kern' 1, 'liga' 1}
 
   #sky{position:fixed; inset:0; z-index:0; pointer-events:none;}
   #sky .aladin-container, #sky canvas{pointer-events:none !important;}
@@ -29,9 +34,14 @@
   /* the ground we lift off from */
   #earth{position:fixed; inset:0; width:100%; height:100%; z-index:2; pointer-events:none; will-change:transform,opacity;}
   #earthcap{position:fixed; left:34px; bottom:30px; z-index:2; pointer-events:none;
-    font-size:12px; letter-spacing:.04em; color:var(--ink-2); display:flex; align-items:center; gap:9px}
-  #earthcap .l{width:7px;height:7px;border-radius:50%;background:#5FE39B;box-shadow:0 0 10px #5FE39B}
+    font-size:12px; letter-spacing:.04em; color:var(--ink-2); display:flex; align-items:center; gap:9px;
+    animation:fadeup 1.4s ease-out both}
+  @keyframes fadeup{from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none}}
+  #earthcap .l{width:7px;height:7px;border-radius:50%;background:#5FE39B;box-shadow:0 0 10px #5FE39B; animation:livepulse 2.4s ease-in-out infinite}
 
+  .grain{position:fixed; inset:0; z-index:4; pointer-events:none; opacity:0.022;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size:180px 180px;}
   .scrim{position:fixed; inset:0; z-index:1; pointer-events:none;
     background:
       radial-gradient(130% 100% at 50% 0%, rgba(2,3,10,.22), transparent 45%),
@@ -42,31 +52,43 @@
 
   .brandmark{position:fixed; top:26px; left:34px; z-index:30; display:flex; align-items:center; gap:10px;
     font-weight:500; font-size:15px; letter-spacing:-.02em; color:var(--ink); text-shadow:0 1px 20px rgba(0,0,8,.85)}
-  .brandmark .gm{width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 12px var(--accent)}
+  .brandmark .gm{width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 12px var(--accent); animation:livepulse 3.1s ease-in-out infinite}
   .seatflag{position:fixed; top:26px; right:34px; z-index:30; font-size:12.5px; letter-spacing:.02em; color:var(--ink-2); text-shadow:0 1px 20px rgba(0,0,8,.85)}
   .seatflag b{color:var(--ink); font-weight:500}
   .clock{position:fixed; right:34px; bottom:30px; z-index:30; font-size:12px; letter-spacing:.06em; color:var(--ink-3); font-variant-numeric:tabular-nums}
+  .utcclock{position:fixed; right:34px; bottom:50px; z-index:30; font-size:10.5px; letter-spacing:.08em; color:var(--ink-3); font-variant-numeric:tabular-nums; opacity:0.6}
   .progress{position:fixed; left:34px; bottom:30px; z-index:30; display:none; flex-direction:column; gap:9px}
   .progress.show{display:flex}
-  .progress .pdot{width:7px; height:7px; border-radius:50%; background:rgba(242,245,255,.22); transition:all .4s}
-  .progress .pdot.on{background:var(--accent); box-shadow:0 0 10px var(--accent)}
+  .progress .pdot{width:7px; height:7px; border-radius:50%; background:rgba(242,245,255,.22); transition:all .4s; cursor:pointer}
+  .progress .pdot:hover{background:rgba(242,245,255,.55); transform:scale(1.35);}
+  .progress .pdot.on{background:var(--accent); box-shadow:0 0 10px var(--accent), 0 0 0 4px rgba(143,217,255,.18); animation:dotring .5s ease-out}
+  @keyframes dotring{0%{box-shadow:0 0 10px var(--accent), 0 0 0 0px rgba(143,217,255,.5)} 100%{box-shadow:0 0 10px var(--accent), 0 0 0 8px rgba(143,217,255,0)}}
 
   /* ---------- liquid glass — clearer + glossier ---------- */
-  .glass{position:relative; background:rgba(160,185,255,.045);
+  .glass{position:relative; background:rgba(160,185,255,.045); animation:glassbreathe 12s ease-in-out infinite;
     backdrop-filter:blur(14px) saturate(190%) brightness(1.08); -webkit-backdrop-filter:blur(14px) saturate(190%) brightness(1.08);
     border:1px solid var(--glass-bd); border-radius:26px;
     box-shadow:0 28px 80px rgba(0,0,10,.40), inset 0 1.5px 0 rgba(255,255,255,.52),
-      inset 0 -10px 26px rgba(120,160,255,.08), inset 0 0 0 1px rgba(255,255,255,.04);}
+      inset 0 -10px 26px rgba(120,160,255,.08), inset 0 0 0 1px rgba(255,255,255,.04);
+    transition:box-shadow .35s, border-color .35s, transform .22s ease-out; will-change:transform;}
+  .panel.glass:hover{border-color:rgba(215,228,255,.38); box-shadow:0 32px 90px rgba(0,0,10,.44), 0 0 0 1px rgba(143,217,255,.10), inset 0 1.5px 0 rgba(255,255,255,.58), inset 0 -10px 26px rgba(120,160,255,.12);}
   .glass::before{content:""; position:absolute; left:0; right:0; top:0; height:50%; border-radius:26px 26px 0 0;
     background:linear-gradient(180deg, rgba(255,255,255,.14), transparent); pointer-events:none}
   .glass::after{content:""; position:absolute; top:-28%; right:-8%; width:62%; height:78%; pointer-events:none;
     background:radial-gradient(closest-side, rgba(255,255,255,.12), transparent 72%);}
 
-  .kicker{font-size:12px; font-weight:500; letter-spacing:.18em; text-transform:uppercase; color:var(--accent)}
+  .kicker{font-size:12px; font-weight:500; letter-spacing:.18em; text-transform:uppercase; color:var(--accent); display:inline-block;
+    background:linear-gradient(90deg, var(--accent) 0%, #d4f0ff 50%, var(--accent) 100%);
+    background-size:200% auto; -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    animation:kickershine 5s linear infinite}
   .btn{display:inline-flex; align-items:center; gap:9px; font-family:var(--font); font-weight:500; font-size:15px;
     padding:15px 26px; border-radius:100px; cursor:pointer; border:1px solid transparent; text-decoration:none;
     transition:transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s, background .22s}
-  .btn-p{color:#04121c; background:#CFefff; box-shadow:0 8px 30px rgba(143,217,255,.30), inset 0 1px 0 rgba(255,255,255,.7)}
+  .btn-p{color:#04121c; background:#CFefff; box-shadow:0 8px 30px rgba(143,217,255,.30), inset 0 1px 0 rgba(255,255,255,.7); overflow:hidden; position:relative}
+  .btn-p::after{content:''; position:absolute; top:0; left:-100%; width:60%; height:100%;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.38),transparent);
+    animation:shimmer 3.8s ease-in-out 1.2s infinite}
+  @keyframes shimmer{0%,100%{left:-100%} 40%,60%{left:160%}}
   .btn-p:hover{transform:translateY(-2px); background:#e6f7ff; box-shadow:0 14px 44px rgba(143,217,255,.45)}
   .btn-g{color:var(--ink); background:rgba(170,195,245,.10); border-color:var(--glass-bd); backdrop-filter:blur(14px)}
   .btn-g:hover{transform:translateY(-2px); background:rgba(170,195,245,.18)}
@@ -76,19 +98,27 @@
   .stop{position:relative; min-height:185vh}
   .steps{list-style:none; margin-top:22px; display:flex; flex-direction:column; gap:16px}
   .steps li{display:flex; gap:14px; align-items:flex-start}
-  .steps .nm{flex:0 0 30px; height:30px; border-radius:50%; border:1px solid var(--glass-bd);
-    display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:var(--accent); background:rgba(143,217,255,.09)}
+  .steps .nm{flex:0 0 30px; height:30px; border-radius:50%; border:1px solid rgba(143,217,255,.30);
+    display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:var(--accent);
+    background:rgba(143,217,255,.09); box-shadow:0 0 12px rgba(143,217,255,.15); font-feature-settings:'tnum' 1}
   .steps .tx{font-size:15.5px; line-height:1.5; color:var(--ink-2); padding-top:4px}
   .steps .tx b{color:var(--ink); font-weight:500}
-  .cost{margin-top:22px; font-size:13.5px; color:var(--ink-3)}
+  .cost{margin-top:22px; font-size:13.5px; color:var(--ink-3); padding:12px 16px; border-radius:12px; background:rgba(143,217,255,.05); border:1px solid rgba(143,217,255,.10)}
   .cost b{color:var(--accent); font-weight:500}
   .stop .sticky{position:sticky; top:0; height:100vh; display:flex; align-items:center}
   .stop .wrap.split{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,470px); gap:48px; align-items:center}
   .stop.center .sticky{justify-content:center}
   .stop.center .wrap{max-width:780px; text-align:center; display:flex; flex-direction:column; align-items:center}
 
-  .hero h1{font-size:clamp(46px,6.6vw,86px); line-height:.96; letter-spacing:-.045em; font-weight:600}
-  .hero h1 .a{color:var(--accent)}
+  .hero h1{font-size:clamp(46px,6.6vw,86px); line-height:.96; letter-spacing:-.045em; font-weight:600; text-shadow:0 0 80px rgba(143,217,255,.18), 0 2px 40px rgba(0,0,20,.6); animation:fadeup 1.1s ease-out .3s both}
+  .hero h1 .a{color:var(--accent); text-shadow:0 0 60px rgba(143,217,255,.45), 0 0 120px rgba(143,217,255,.22)}
+  .hero .sub{animation:fadeup 1.1s ease-out .55s both}
+  .hero .cta-row{animation:fadeup 1.1s ease-out .75s both}
+  #node-tip{position:fixed; z-index:20; pointer-events:none; opacity:0; transform:translateY(4px);
+    transition:opacity .18s, transform .18s; background:rgba(8,16,36,.82); backdrop-filter:blur(10px);
+    border:1px solid rgba(143,217,255,.25); border-radius:10px; padding:8px 12px;
+    font-size:11.5px; letter-spacing:.02em; color:var(--ink-2); white-space:nowrap}
+  #node-tip.vis{opacity:1; transform:translateY(0)}
   .hero .sub{margin-top:26px; font-size:19px; line-height:1.55; color:var(--ink-2); max-width:44ch; font-weight:400}
   .hero .sub em{color:var(--ink); font-style:normal; font-weight:500}
   .cta-row{display:flex; gap:14px; margin-top:36px; flex-wrap:wrap}
@@ -97,30 +127,35 @@
   .seat .top{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px}
   .seat .lab{font-size:11.5px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3)}
   .seat .big{display:flex; align-items:baseline; justify-content:space-between; margin-top:8px}
-  .seat .n{font-size:40px; font-weight:600; letter-spacing:-.03em}
+  .seat .n{font-size:40px; font-weight:600; letter-spacing:-.03em; font-feature-settings:'tnum' 1}
   .seat .n small{font-size:15px; color:var(--ink-3); font-weight:450; margin-left:6px}
   .seat .bar{height:5px; border-radius:100px; background:rgba(190,210,255,.14); margin:18px 0 12px; overflow:hidden}
-  .seat .fill{height:100%; width:7%; border-radius:100px; background:var(--accent); box-shadow:0 0 14px rgba(143,217,255,.7)}
+  .seat .fill{height:100%; width:0; border-radius:100px; background:linear-gradient(90deg,var(--accent),rgba(180,240,255,.95)); box-shadow:0 0 14px rgba(143,217,255,.7); transition:width 1.4s cubic-bezier(.22,1,.36,1); animation:fillglow 2.8s ease-in-out infinite}
+  @keyframes fillglow{0%,100%{box-shadow:0 0 14px rgba(143,217,255,.6)} 50%{box-shadow:0 0 24px rgba(143,217,255,.95), 0 0 40px rgba(143,217,255,.3)}}
   .seat .you{font-size:13.5px; color:var(--ink-2); line-height:1.5}
   .seat .you b{color:var(--accent); font-weight:500}
 
   .panel{padding:40px 40px; max-width:520px}
   .panel .top-row{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px}
   .panel .time{font-size:13px; font-weight:500; color:var(--ink); font-variant-numeric:tabular-nums; letter-spacing:.02em}
-  .panel h2{font-size:clamp(28px,3.4vw,42px); letter-spacing:-.035em}
+  .panel h2{font-size:clamp(28px,3.4vw,42px); letter-spacing:-.035em; text-shadow:0 1px 30px rgba(143,217,255,.12)}
   .panel p{margin-top:18px; font-size:16.5px; line-height:1.6; color:var(--ink-2); font-weight:400}
   .panel p.lead{color:var(--ink)}
   .readout{margin-top:24px; display:flex; align-items:center; gap:11px; font-size:12.5px; letter-spacing:.02em; color:var(--ink-2); font-weight:450}
-  .readout .live{width:7px;height:7px;border-radius:50%;background:var(--warm);box-shadow:0 0 10px var(--warm)}
+  .readout .live{width:7px;height:7px;border-radius:50%;background:var(--warm);box-shadow:0 0 10px var(--warm); animation:livepulse 2.2s ease-in-out infinite}
   .readout .live.cy{background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  @keyframes livepulse{0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.45;transform:scale(0.78)}}
 
   .cue{position:absolute; bottom:32px; left:50%; transform:translateX(-50%);
     font-size:11px; font-weight:500; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-3);
     display:flex; flex-direction:column; align-items:center; gap:10px}
-  .cue .ln{width:1px; height:36px; background:linear-gradient(var(--accent), transparent)}
+  .cue .ln{width:1px; height:36px; background:linear-gradient(var(--accent), transparent); animation:cuedrop 1.9s ease-in-out infinite}
+  @keyframes cuedrop{0%,100%{opacity:0.5;transform:scaleY(1) translateY(0)} 55%{opacity:1;transform:scaleY(1.18) translateY(4px)}}
+  @keyframes kickershine{0%{background-position:200% center} 100%{background-position:0% center}}
+  @keyframes glassbreathe{0%,100%{background:rgba(160,185,255,.045)} 50%{background:rgba(160,185,255,.065)}}
 
   @media (max-width:860px){
-    .seatflag, .clock, .progress, .cue{ display:none !important; }
+    .seatflag, .clock, .utcclock, .progress, .cue{ display:none !important; }
     .brandmark{ top:18px; left:20px; font-size:14px; }
     .wrap{ padding:0 20px; }
     /* sky panels: full-width glass, sitting low so the real sky shows above them */
@@ -147,6 +182,11 @@
     .cta-row .btn{ flex:1 1 auto; justify-content:center; padding:15px 18px; font-size:14.5px; }
     .stop.center h1{ font-size:clamp(34px,8.6vw,50px); }
     .stop.center .sub{ font-size:16px; }
+    /* collapse inline stat grids to 2 columns on narrow screens */
+    .stat-mini-grid{ grid-template-columns:repeat(2,1fr) !important; }
+    .fund-chips{ flex-direction:column; }
+    .fund-chip span{ text-align:left; }
+    #node-tip{ display:none; }
   }
 
   /* email form in the join section */
@@ -175,9 +215,19 @@
     color:var(--accent); background:rgba(143,217,255,.12);
     border-color:rgba(143,217,255,.45); box-shadow:0 0 18px rgba(143,217,255,.14);
   }
+  :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:4px;}
+  .btn:focus-visible{outline-offset:4px; border-radius:100px;}
+  .skip-link{position:fixed; top:-100px; left:20px; z-index:999; padding:10px 18px; background:var(--accent); color:#04121c; border-radius:8px; font-size:14px; font-weight:500; text-decoration:none; transition:top .15s}
+  .skip-link:focus{top:12px;}
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after{ animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
+  }
 </style>
 </head>
 <body>
+  <a href="#top" class="skip-link">Skip to content</a>
+  <div class="grain" aria-hidden="true"></div>
+  <div id="node-tip"></div>
   <div id="sky"></div>
   <div class="scrim"></div>
   <canvas id="earth"></canvas>
@@ -186,11 +236,12 @@
   <div class="brandmark"><span class="gm"></span> Boundless Skies</div>
   <div class="seatflag">founding seats · <b>07 / 100</b></div>
   <div class="progress" id="progress"></div>
+  <div class="utcclock" id="utcclock"></div>
   <div class="clock" id="clock"></div>
 
   <main>
     <!-- 0 — what it is (over the desert) -->
-    <section class="stop hero" id="top" data-ra="305.5" data-dec="40.5" data-fov="7" data-side="0" data-time="">
+    <section class="stop hero" id="top" data-ra="305.5" data-dec="40.5" data-fov="7" data-side="0" data-time="" aria-label="What is Boundless Skies">
       <div class="sticky"><div class="wrap split">
         <div>
           <span class="kicker">A telescope network you can join from home</span>
@@ -198,8 +249,9 @@
           <p class="sub">Boundless Skies is a worldwide network of small, self-driving telescopes — run by ordinary people. Yours sits outside, watches the sky on its own every night, and helps spot stars as they flare and fade. <em>You don't need to know any astronomy. You just need a window.</em></p>
           <div class="cta-row">
             <a class="btn btn-p" href="#join">Join the founding network</a>
-            <a class="btn btn-g" href="#why">See how it works ↓</a>
+            <a class="btn btn-g" href="#why">Watch the sky lift off ↓</a>
           </div>
+          <p style="margin-top:16px; font-size:12.5px; color:var(--ink-3)"><span id="hero-joined">7</span> people have joined · no payment needed to reserve your spot</p>
         </div>
         <div class="seat glass">
           <div class="top"><span class="lab">Founding members</span><span class="lab">First cohort</span></div>
@@ -220,6 +272,16 @@
           <h2>The sky changes — and almost no one is watching.</h2>
           <p class="lead">Stars aren't fixed points. Some pulse, some suddenly brighten, some explode entirely. Astronomers can't predict exactly when, so to catch these moments you need telescopes pointed at the sky all night, everywhere at once.</p>
           <p>The world's giant observatories are few, costly, and booked years ahead. So most of what happens up there is simply missed.</p>
+          <div style="margin-top:26px; display:flex; flex-direction:column; gap:10px">
+            <div style="padding:16px 18px; border-radius:14px; background:rgba(143,217,255,.06); border:1px solid rgba(143,217,255,.15); display:flex; align-items:baseline; gap:14px">
+              <div style="font-size:32px; font-weight:600; letter-spacing:-.04em; color:var(--accent); font-feature-settings:'tnum' 1; flex-shrink:0">~95%</div>
+              <div style="font-size:13px; color:var(--ink-2); line-height:1.4">of variable star outbursts go unobserved — too many targets, not enough telescopes</div>
+            </div>
+            <div style="padding:16px 18px; border-radius:14px; background:rgba(255,192,122,.05); border:1px solid rgba(255,192,122,.14); display:flex; align-items:baseline; gap:14px">
+              <div style="font-size:32px; font-weight:600; letter-spacing:-.04em; color:var(--warm); font-feature-settings:'tnum' 1; flex-shrink:0">6hrs</div>
+              <div style="font-size:13px; color:var(--ink-2); line-height:1.4">average gap in SS Cygni coverage — your node can fill it, every clear night</div>
+            </div>
+          </div>
         </div>
       </div></div>
     </section>
@@ -232,7 +294,21 @@
           <h2>Lots of small eyes beat a few giant ones.</h2>
           <p class="lead">One little telescope isn't much. But thousands of them, spread across the planet and running every clear night, become an instrument no single observatory can match.</p>
           <p>That's the network. Everyone watches their own patch of sky — and together, we cover the whole thing. Those green markers are members already on watch tonight.</p>
-          <div class="readout"><span class="live cy"></span> 7 members online · building the first coverage map</div>
+          <div class="stat-mini-grid" style="margin-top:20px; display:grid; grid-template-columns:repeat(3,1fr); gap:10px; text-align:center">
+            <div style="padding:12px 8px; border-radius:14px; background:rgba(143,217,255,.06); border:1px solid rgba(143,217,255,.12)">
+              <div style="font-size:26px; font-weight:600; letter-spacing:-.03em; color:var(--accent); font-feature-settings:'tnum' 1" id="stat-nodes">7</div>
+              <div style="font-size:11px; color:var(--ink-3); margin-top:3px; letter-spacing:.04em; text-transform:uppercase">nodes</div>
+            </div>
+            <div style="padding:12px 8px; border-radius:14px; background:rgba(143,217,255,.06); border:1px solid rgba(143,217,255,.12)">
+              <div style="font-size:26px; font-weight:600; letter-spacing:-.03em; color:var(--accent)">All</div>
+              <div style="font-size:11px; color:var(--ink-3); margin-top:3px; letter-spacing:.04em; text-transform:uppercase">night</div>
+            </div>
+            <div style="padding:12px 8px; border-radius:14px; background:rgba(143,217,255,.06); border:1px solid rgba(143,217,255,.12)">
+              <div style="font-size:26px; font-weight:600; letter-spacing:-.03em; color:var(--accent)">Free</div>
+              <div style="font-size:11px; color:var(--ink-3); margin-top:3px; letter-spacing:.04em; text-transform:uppercase">to join</div>
+            </div>
+          </div>
+          <div class="readout" style="margin-top:16px"><span class="live cy"></span> <span id="live-count">7 members</span> online · building the first coverage map</div>
         </div>
         <div></div>
       </div></div>
@@ -256,14 +332,14 @@
     </section>
 
     <!-- 4 — what it catches (concrete, explained) -->
-    <section class="stop" id="catch" data-ra="325.68" data-dec="43.59" data-fov="1.1" data-side="-1" data-time="23:42">
+    <section class="stop" id="catch" data-ra="325.68" data-dec="43.59" data-fov="1.1" data-side="-1" data-time="">
       <div class="sticky"><div class="wrap split">
         <div class="panel glass">
-          <div class="top-row"><span class="kicker">What it catches</span><span class="time">23:42 tonight</span></div>
+          <div class="top-row"><span class="kicker">What it catches</span><span class="time" id="catch-time">tonight</span></div>
           <h2>A real example, happening right now.</h2>
           <p class="lead">That marked star is SS Cygni — a burned-out star 370 light-years away, quietly stealing gas from a neighbor. Every few weeks it erupts, brightening many times over in just a few hours.</p>
           <p>Astronomers want every eruption on record, but only a handful of telescopes catch each one. Tonight, yours could be one of them — recording the whole thing automatically while you sleep.</p>
-          <div class="readout"><span class="live"></span> ← Your telescope, catching it brighten</div>
+          <div class="readout"><span class="live"></span> ← Your telescope · SS Cyg · <span id="mag-live" style="font-variant-numeric:tabular-nums; color:var(--warm); font-weight:500">11.4 mag</span> · catching it brighten</div>
         </div>
         <div></div>
       </div></div>
@@ -278,6 +354,8 @@
           <h2>Your name, on real science.</h2>
           <p class="lead">Every measurement your telescope makes is checked and filed into a 100-year-old scientific database that professional astronomers — and even NASA missions — actually use. Your name is attached to each one.</p>
           <p>This isn't a game or clicking on photos. It's real data that real research is built on. This galaxy, for instance, is a place supernovae keep appearing — exactly what a network like ours catches first.</p>
+          <p style="margin-top:14px; font-size:14px; color:var(--ink-3); line-height:1.5">We submit every observation to the <b style="color:var(--ink-2); font-weight:500">American Association of Variable Star Observers</b> (AAVSO) — the 100-year-old archive that NASA, ESA, and professional observatories depend on.</p>
+          <div class="readout" style="margin-top:18px"><span class="live cy"></span> AAVSO · <span id="aavso-count" style="font-feature-settings:'tnum' 1">52,847,203</span> observations in archive · growing</div>
         </div>
       </div></div>
     </section>
@@ -290,6 +368,12 @@
           <h2>Built for the people astronomy left out.</h2>
           <p class="lead">No driving to a dark field at 2am. No heavy gear, no cold nights outside, no expertise. The telescope does the part that used to demand a healthy body and a free schedule.</p>
           <p>If you live with a disability, a chronic illness, or just a full life, this was made for you. You bring the curiosity; the network does the rest. (That's our neighbor galaxy, Andromeda — your telescope can reach it too.)</p>
+          <ul style="margin-top:18px; list-style:none; display:flex; flex-direction:column; gap:10px; font-size:14.5px; color:var(--ink-2); line-height:1.45">
+            <li style="display:flex;gap:10px;align-items:baseline"><span style="color:var(--accent);font-size:11px;margin-top:2px">▸</span> You can't drive at night or carry heavy equipment</li>
+            <li style="display:flex;gap:10px;align-items:baseline"><span style="color:var(--accent);font-size:11px;margin-top:2px">▸</span> You work nights, or your best dark-sky hours are midnight</li>
+            <li style="display:flex;gap:10px;align-items:baseline"><span style="color:var(--accent);font-size:11px;margin-top:2px">▸</span> You live in a city with a small balcony — that's enough</li>
+            <li style="display:flex;gap:10px;align-items:baseline"><span style="color:var(--accent);font-size:11px;margin-top:2px">▸</span> You're just curious and want to do something real</li>
+          </ul>
         </div>
         <div></div>
       </div></div>
@@ -304,7 +388,17 @@
           <h2>Be one of the first hundred.</h2>
           <p class="lead">We're just getting started. The first hundred members are the founding network — your name goes on the founding charter, and your telescope helps shape how the whole thing works.</p>
           <p>We've marked the founders on this star cluster: seven so far, and one open spot glowing amber. That eighth one could be you.</p>
-          <div class="readout"><span class="live"></span> Member #008 — open →</div>
+          <div style="margin-top:22px; display:flex; gap:10px; flex-wrap:wrap">
+            <div style="flex:1; min-width:120px; padding:14px 16px; border-radius:14px; background:rgba(143,217,255,.06); border:1px solid rgba(143,217,255,.12); text-align:center">
+              <div style="font-size:28px; font-weight:600; color:var(--accent); font-feature-settings:'tnum' 1" id="founding-count">7</div>
+              <div style="font-size:11px; color:var(--ink-3); margin-top:2px; letter-spacing:.06em; text-transform:uppercase">founders joined</div>
+            </div>
+            <div style="flex:1; min-width:120px; padding:14px 16px; border-radius:14px; background:rgba(255,192,122,.06); border:1px solid rgba(255,192,122,.18); text-align:center">
+              <div style="font-size:28px; font-weight:600; color:var(--warm); font-feature-settings:'tnum' 1" id="founding-remain">93</div>
+              <div style="font-size:11px; color:var(--ink-3); margin-top:2px; letter-spacing:.06em; text-transform:uppercase">spots remaining</div>
+            </div>
+          </div>
+          <div class="readout" style="margin-top:16px"><span class="live"></span> Member #<span id="found-next">008</span> — open right now →</div>
         </div>
       </div></div>
     </section>
@@ -314,6 +408,10 @@
       <div class="sticky"><div class="wrap">
         <span class="kicker">Ready to start?</span>
         <h1 style="font-size:clamp(42px,6vw,78px); margin-top:18px; letter-spacing:-.045em">Take your founding spot.</h1>
+        <div id="scarcity-bar" style="display:none; margin:18px auto 0; padding:10px 18px; border-radius:100px; background:rgba(255,192,122,.10); border:1px solid rgba(255,192,122,.28); font-size:13px; color:var(--warm); font-weight:500; letter-spacing:.01em">
+          <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--warm); margin-right:8px; animation:livepulse 1.8s ease-in-out infinite; vertical-align:middle"></span>
+          <span id="scarcity-text">93 founding spots remaining</span>
+        </div>
         <p class="sub" style="margin:24px auto 0; max-width:42ch; font-size:19px; color:var(--ink-2)">Tell us you're in and we'll walk you through it — whether you already have a telescope, want to buy one, or need help getting one funded. No payment to hold your spot.</p>
         <form class="email-row" id="join-form" novalidate>
           <input type="email" placeholder="your@email.com" required autocomplete="email" aria-label="Email address" />
@@ -332,7 +430,14 @@
             <button class="btn btn-g" type="submit">Get started →</button>
           </div>
         </form>
-        <p style="margin-top:46px; font-size:11.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); font-weight:500">Boundless Skies · registered charity · the night sky belongs to everyone</p>
+        <div style="margin-top:48px; display:flex; gap:32px; justify-content:center; flex-wrap:wrap; font-size:13px; color:var(--ink-3)">
+          <span>No credit card · no subscription</span>
+          <span>·</span>
+          <span>Data goes to real science</span>
+          <span>·</span>
+          <span>Cancel any time</span>
+        </div>
+        <p style="margin-top:28px; font-size:11.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); font-weight:500; opacity:0.6">Boundless Skies · registered charity · the night sky belongs to everyone</p>
       </div></div>
     </section>
   </main>
@@ -344,7 +449,7 @@
   var ec=document.getElementById('earth'), ex=ec.getContext('2d'), EDPR=Math.min(devicePixelRatio||1,2);
   // back/mid/front rows + one hero telescope front-center
   var nodeData=[
-    [0.20,.08,.44],[0.38,.06,.40],[0.60,.07,.42],[0.78,.09,.46],
+    [0.05,.04,.30],[0.20,.08,.44],[0.38,.06,.40],[0.50,.05,.36],[0.60,.07,.42],[0.78,.09,.46],[0.92,.05,.32],
     [0.13,.24,.70],[0.32,.21,.65],[0.50,.19,.62],[0.70,.22,.68],[0.87,.25,.73],
     [0.08,.48,1.25],[0.28,.55,1.55],[0.78,.55,1.60],[0.93,.50,1.30],
     [0.53,.68,3.80]
@@ -356,8 +461,14 @@
     var cols=['255,255,255','230,240,255','255,248,232','255,230,200','210,225,255'];
     var cw=[0.50,0.20,0.16,0.07,0.07];
     function pick(){var r=rng(),s=0;for(var i=0;i<cols.length;i++){s+=cw[i];if(r<s)return cols[i];}return cols[0];}
-    for(var i=0;i<560;i++) a.push({x:rng(),y:Math.pow(rng(),1.2),r:rng()*1.2+0.14,c:pick(),hero:false});
-    for(var j=0;j<10;j++) a.push({x:rng(),y:rng()*.65,r:1.6+rng()*1.5,c:pick(),hero:true});
+    for(var i=0;i<560;i++){
+      var sx=rng(), sy=Math.pow(rng(),1.2);
+      // bias stars toward the Milky Way diagonal band (top-right to bottom-left)
+      var mwDist=Math.abs((sx-sy*0.9)-0.08);
+      if(mwDist<0.18&&rng()<0.55) sx=0.06+sy*0.90+((rng()-.5)*0.22);
+      a.push({x:sx,y:sy,r:rng()*1.2+0.14,c:pick(),hero:false,tw:rng()*Math.PI*2,ts:0.5+rng()*2.2});
+    }
+    for(var j=0;j<10;j++) a.push({x:rng(),y:rng()*.65,r:1.6+rng()*1.5,c:pick(),hero:true,tw:rng()*Math.PI*2,ts:0.3+rng()*0.8});
     return a;
   })();
   var W=innerWidth,H=innerHeight,hz,gh;
@@ -366,6 +477,32 @@
 
   /* shooting stars */
   var meteors=[], nextMeteorIn=7000+Math.random()*6000, meteorClock=0, prevT=0;
+  /* beam burst on first scroll */
+  var burstUntil=-1;
+  /* comet */
+  var comet=null, cometClock=0, nextCometIn=180000+Math.random()*120000;
+  /* ISS satellite pass */
+  var sat=null, satClock=0, nextSatIn=45000+Math.random()*60000;
+  /* airplane with blinking nav lights */
+  var plane=null, planeClock=0, nextPlaneIn=25000+Math.random()*40000;
+  function spawnPlane(){
+    var fromLeft=Math.random()>0.5, spd=55+Math.random()*35;
+    plane={x:fromLeft?-20:W+20, y:hz*(0.55+Math.random()*0.3), vx:(fromLeft?1:-1)*spd, vy:(Math.random()-.5)*spd*0.06, blink:0, life:1};
+    nextPlaneIn=30000+Math.random()*45000; planeClock=0;
+  }
+  function spawnSat(){
+    var spd=220+Math.random()*80, fromLeft=Math.random()>0.5;
+    sat={x:fromLeft?-8:W+8, y:hz*(0.08+Math.random()*0.40), vx:(fromLeft?1:-1)*spd, vy:(Math.random()-.5)*spd*0.18, life:1};
+    nextSatIn=50000+Math.random()*70000; satClock=0;
+  }
+  /* meteor shower mode: occasional burst of 3-5 meteors */
+  var showerClock=0, nextShowerIn=240000+Math.random()*300000;
+  function spawnComet(){
+    var spd=28+Math.random()*18, ang=(8+Math.random()*14)*Math.PI/180;
+    comet={x:W*(0.1+Math.random()*0.4), y:hz*(0.05+Math.random()*0.18),
+      vx:spd*Math.cos(ang), vy:spd*Math.sin(ang)*0.3, life:1, maxLife:7+Math.random()*4};
+    nextCometIn=200000+Math.random()*160000; cometClock=0;
+  }
   function spawnMeteor(){
     var spd=(380+Math.random()*280); // px/s
     var ang=(18+Math.random()*28)*Math.PI/180;
@@ -379,9 +516,23 @@
   var mouseX=-9999,mouseY=-9999;
   document.addEventListener('mousemove',function(e){mouseX=e.clientX;mouseY=e.clientY;},{passive:true});
 
+  var nodeTargets=['SS Cyg · erupting','M101 galaxy','NGC 869 cluster','V Cyg · carbon star','RZ Cas · eclipsing','AG Dra · symbiotic','χ Cyg · Mira','T CrB · watch alert','Mira · pulsing','AQ Sgr · variable','M31 nucleus','V838 Mon · LRN','T Tau · protostar','SS Cyg · fading','eta Car · LBV','RV Boo · SR','AR Lac · RS CVn'];
+  /* wispy cloud */
+  var clouds=[], cloudClock=0, nextCloudIn=90000+Math.random()*120000;
+  function spawnCloud(){
+    var spd=8+Math.random()*14;
+    clouds.push({x:-W*0.4, y:hz*(0.15+Math.random()*0.4), w:W*(0.28+Math.random()*0.25), h:hz*(0.05+Math.random()*0.08), vx:spd, life:1, maxLife:25+Math.random()*20});
+    nextCloudIn=100000+Math.random()*140000; cloudClock=0;
+  }
+  var nodeTipEl=document.getElementById('node-tip');
+  var activeTipNode=-1;
+
   function drawNode(x,y,s,t,ph,hover){
-    var bA=(0.52+0.32*Math.sin(t*.72+ph.beam))*(1+(hover||0)*0.6), lA=0.88+0.12*Math.sin(t*1.5+ph.led);
-    ex.save(); ex.translate(x,y); ex.scale(s,s);
+    var burst=burstUntil>0&&t<burstUntil?Math.sin(Math.max(0,(t-(burstUntil-0.9)))*Math.PI/0.9)*1.1:0;
+    var bA=(0.52+0.32*Math.sin(t*.72+ph.beam))*(1+(hover||0)*0.6)*(1+burst), lA=0.88+0.12*Math.sin(t*1.5+ph.led);
+    // slow sky-tracking tilt — each telescope drifts a few degrees over time
+    var tilt=Math.sin(t*0.04+ph.beam)*0.06;
+    ex.save(); ex.translate(x,y); ex.rotate(tilt); ex.scale(s,s);
     var bh=280;
     // core beam — wide, vivid
     var bg=ex.createLinearGradient(0,-28,0,-bh);
@@ -440,22 +591,112 @@
     var core=ex.createRadialGradient(W*.48,hz*.72,0,W*.48,hz*.72,W*.22);
     core.addColorStop(0,'rgba(220,200,150,.09)'); core.addColorStop(.5,'rgba(200,175,120,.05)'); core.addColorStop(1,'rgba(180,155,100,0)');
     ex.fillStyle=core; ex.fillRect(0,0,W,hz);
-    ex.restore();
-    // stars — spectral colors, bright ones with diffraction halos
-    starField.forEach(function(s){
-      var yp=s.y*hz, a=(1-yp/hz)*.82+.12;
-      if(s.hero){
-        var hl=ex.createRadialGradient(s.x*W,yp,0,s.x*W,yp,s.r*6);
-        hl.addColorStop(0,'rgba('+s.c+','+(a*.38).toFixed(2)+')'); hl.addColorStop(1,'rgba('+s.c+',0)');
-        ex.fillStyle=hl; ex.beginPath(); ex.arc(s.x*W,yp,s.r*6,0,6.28); ex.fill();
-      }
-      ex.fillStyle='rgba('+s.c+','+a.toFixed(2)+')'; ex.beginPath(); ex.arc(s.x*W,yp,s.r,0,6.28); ex.fill();
-    });
-    // aurora borealis — two slow wavy bands of green near the horizon
+    // Hα emission — faint rosy red pockets along the galactic plane, breathing slowly
     (function(){
-      var bands=[{yf:.62,amp:14,spd:.28,ph:0},{yf:.74,amp:10,spd:.19,ph:2.1}];
-      bands.forEach(function(b){
-        var yb=hz*b.yf, al=0.055+0.030*Math.sin(t*b.spd+b.ph);
+      var al=0.022+0.008*Math.sin(t*0.14+0.7);
+      [[W*.58,hz*.62,W*.12,hz*.08],[W*.28,hz*.48,W*.09,hz*.06]].forEach(function(r){
+        var hg=ex.createRadialGradient(r[0],r[1],0,r[0],r[1],1);
+        hg.addColorStop(0,'rgba(255,80,100,'+al.toFixed(3)+')');
+        hg.addColorStop(0.6,'rgba(255,60,80,'+(al*0.4).toFixed(3)+')');
+        hg.addColorStop(1,'rgba(255,50,70,0)');
+        ex.save(); ex.scale(r[2],r[3]); ex.translate(r[0]/r[2],r[1]/r[3]);
+        ex.fillStyle=hg; ex.beginPath(); ex.arc(0,0,1,0,6.28); ex.fill(); ex.restore();
+      });
+    })();
+    ex.restore();
+    // Ring Nebula (M57) — tiny glowing ring, barely visible, in upper sky area
+    (function(){
+      var rx=W*0.46, ry=hz*0.36, rr=4, al=Math.min(0.55, 0.12+t*0.01);
+      var rg=ex.createRadialGradient(rx,ry,rr*0.3,rx,ry,rr*2.2);
+      rg.addColorStop(0,'rgba(0,2,8,0)');
+      rg.addColorStop(0.4,'rgba(100,230,200,'+(al*0.28).toFixed(3)+')');
+      rg.addColorStop(0.7,'rgba(120,240,210,'+(al*0.18).toFixed(3)+')');
+      rg.addColorStop(1,'rgba(100,200,180,0)');
+      ex.fillStyle=rg; ex.beginPath(); ex.arc(rx,ry,rr*2.2,0,6.28); ex.fill();
+    })();
+    // Orion nebula smudge — faint pinkish glow near horizon-right
+    (function(){
+      ex.save();
+      ex.translate(W*0.68, hz*0.72); ex.rotate(0.1);
+      var on=ex.createRadialGradient(0,0,0,0,0,1);
+      on.addColorStop(0,'rgba(255,200,200,0.045)'); on.addColorStop(0.6,'rgba(255,185,195,0.018)'); on.addColorStop(1,'rgba(255,180,190,0)');
+      ex.scale(W*0.035, hz*0.022);
+      ex.fillStyle=on; ex.beginPath(); ex.arc(0,0,1,0,6.28); ex.fill();
+      ex.restore();
+    })();
+    // faint galaxy smudge — like naked-eye Andromeda, a soft elongated glow
+    (function(){
+      ex.save();
+      ex.translate(W*0.22, hz*0.44); ex.rotate(-0.38);
+      var gg=ex.createRadialGradient(0,0,0,0,0,1);
+      gg.addColorStop(0,'rgba(200,210,240,0.068)'); gg.addColorStop(0.5,'rgba(190,200,235,0.032)'); gg.addColorStop(1,'rgba(180,195,230,0)');
+      ex.scale(W*0.052, hz*0.026);
+      ex.fillStyle=gg; ex.beginPath(); ex.arc(0,0,1,0,6.28); ex.fill();
+      ex.restore();
+    })();
+    // PLANET — Mars, reddish steady dot near horizon
+    (function(){
+      var mx2=W*0.62, my2=hz*0.52, mr2=1.6;
+      var mg2=ex.createRadialGradient(mx2,my2,0,mx2,my2,mr2*7);
+      mg2.addColorStop(0,'rgba(255,120,80,0.14)'); mg2.addColorStop(1,'rgba(255,100,60,0)');
+      ex.fillStyle=mg2; ex.beginPath(); ex.arc(mx2,my2,mr2*7,0,6.28); ex.fill();
+      ex.fillStyle='rgba(255,130,90,0.96)'; ex.beginPath(); ex.arc(mx2,my2,mr2,0,6.28); ex.fill();
+    })();
+    // PLANET — Saturn, bright steady disc with ring (planets don't twinkle — no ts/tw)
+    (function(){
+      var px=W*0.34, py=hz*0.28, pr=2.2;
+      var pg=ex.createRadialGradient(px,py,0,px,py,pr*8);
+      pg.addColorStop(0,'rgba(255,238,195,0.18)'); pg.addColorStop(1,'rgba(255,238,195,0)');
+      ex.fillStyle=pg; ex.beginPath(); ex.arc(px,py,pr*8,0,6.28); ex.fill();
+      // ring — drawn before disc so disc covers inner ring
+      ex.save(); ex.translate(px,py); ex.scale(1,0.32);
+      ex.strokeStyle='rgba(255,235,185,0.42)'; ex.lineWidth=1.4;
+      ex.beginPath(); ex.ellipse(0,0,pr*3.4,pr*3.4,0,0,6.28); ex.stroke();
+      ex.restore();
+      ex.fillStyle='rgba(255,242,205,0.97)'; ex.beginPath(); ex.arc(px,py,pr,0,6.28); ex.fill();
+    })();
+    // MOON — waxing crescent, upper-right quadrant
+    (function(){
+      var mr=W<600?16:22, mx=W*0.78, my=hz*0.17;
+      var mg=ex.createRadialGradient(mx,my,0,mx,my,mr*4.5);
+      mg.addColorStop(0,'rgba(255,248,210,0.07)'); mg.addColorStop(1,'rgba(255,248,210,0)');
+      ex.fillStyle=mg; ex.beginPath(); ex.arc(mx,my,mr*4.5,0,6.28); ex.fill();
+      ex.save();
+      ex.beginPath(); ex.arc(mx,my,mr,0,6.28); ex.clip();
+      ex.fillStyle='rgba(252,244,208,0.92)'; ex.fillRect(mx-mr,my-mr,mr*2,mr*2);
+      ex.fillStyle='#020609'; ex.beginPath(); ex.arc(mx+mr*0.53,my,mr*0.87,0,6.28); ex.fill();
+      ex.restore();
+    })();
+    // stars — spectral colors, bright ones with diffraction halos + spikes, all twinkling
+    starField.forEach(function(s){
+      var sx=s.x*W, yp=s.y*hz, tw=0.82+0.18*Math.sin(t*s.ts+s.tw), a=(1-yp/hz)*.82+.12;
+      a*=tw;
+      if(s.hero){
+        // atmospheric seeing — faint shimmer offset on bright stars
+        var see=Math.sin(t*1.8+s.tw)*0.7, seey=Math.cos(t*2.1+s.tw)*0.5;
+        var hl=ex.createRadialGradient(sx+see,yp+seey,0,sx+see,yp+seey,s.r*6);
+        hl.addColorStop(0,'rgba('+s.c+','+(a*.38).toFixed(2)+')'); hl.addColorStop(1,'rgba('+s.c+',0)');
+        ex.fillStyle=hl; ex.beginPath(); ex.arc(sx+see,yp+seey,s.r*6,0,6.28); ex.fill();
+        // diffraction spikes — 4 arms at 0°/90° and 45°/135°, slightly rotated with time
+        var spkLen=s.r*22, rot=t*0.04;
+        [[0,1],[1,0],[0.707,0.707],[-0.707,0.707]].forEach(function(dir){
+          var dx=Math.cos(rot)*dir[0]-Math.sin(rot)*dir[1], dy=Math.sin(rot)*dir[0]+Math.cos(rot)*dir[1];
+          var sg=ex.createLinearGradient(sx,yp,sx+dx*spkLen,yp+dy*spkLen);
+          sg.addColorStop(0,'rgba('+s.c+','+(a*.55).toFixed(2)+')');
+          sg.addColorStop(1,'rgba('+s.c+',0)');
+          ex.strokeStyle=sg; ex.lineWidth=0.9;
+          ex.beginPath(); ex.moveTo(sx-dx*spkLen*0.15,yp-dy*spkLen*0.15); ex.lineTo(sx+dx*spkLen,yp+dy*spkLen); ex.stroke();
+        });
+      }
+      ex.fillStyle='rgba('+s.c+','+a.toFixed(2)+')'; ex.beginPath(); ex.arc(sx,yp,s.r,0,6.28); ex.fill();
+    });
+    // aurora borealis — two slow wavy bands of green near the horizon, intensifies over time
+    (function(){
+      var auroraBoost=Math.min(1, Math.max(0,(t-45)/30)); // builds in after 45s, full by 75s
+      var bands=[{yf:.62,amp:14,spd:.28,ph:0},{yf:.74,amp:10,spd:.19,ph:2.1},{yf:.52,amp:8,spd:.14,ph:4.2}];
+      bands.forEach(function(b,bi){
+        if(bi===2&&auroraBoost<0.5) return; // third band only when aurora is well established
+        var yb=hz*b.yf, al=(0.055+0.030*Math.sin(t*b.spd+b.ph))*(bi===2?auroraBoost*0.7:1+auroraBoost*0.5);
         var ag2=ex.createLinearGradient(0,yb-36,0,yb+36);
         ag2.addColorStop(0,'rgba(95,227,155,0)');
         ag2.addColorStop(.5,'rgba(95,227,155,'+al.toFixed(3)+')');
@@ -467,11 +708,64 @@
         ex.fillStyle=ag2; ex.fill(); ex.restore();
       });
     })();
+    // wispy clouds — rare, dark, drift slowly across
+    (function(){
+      var dt2=Math.min(t-prevT,0.08);
+      cloudClock+=dt2*1000;
+      if(cloudClock>nextCloudIn) spawnCloud();
+      clouds=clouds.filter(function(c){
+        c.x+=c.vx*dt2; c.life-=dt2/c.maxLife;
+        if(c.life<=0||c.x>W+c.w) return false;
+        var fade=Math.min(1,c.life*8)*Math.min(1,(1-c.life)*8);
+        ex.save();
+        var cg=ex.createRadialGradient(c.x+c.w/2,c.y,0,c.x+c.w/2,c.y,1);
+        cg.addColorStop(0,'rgba(0,2,8,'+(fade*0.32).toFixed(3)+')');
+        cg.addColorStop(0.6,'rgba(0,2,8,'+(fade*0.15).toFixed(3)+')');
+        cg.addColorStop(1,'rgba(0,2,8,0)');
+        ex.scale(c.w,c.h); ex.translate((c.x+c.w/2)/c.w, c.y/c.h);
+        ex.fillStyle=cg; ex.beginPath(); ex.arc(0,0,1,0,6.28); ex.fill();
+        ex.restore();
+        return true;
+      });
+    })();
+    // comet — rare slow drifter with long blue-green coma tail
+    (function(){
+      var dt=Math.min(t-prevT,0.08);
+      cometClock+=dt*1000;
+      if(cometClock>nextCometIn) spawnComet();
+      if(comet){
+        comet.x+=comet.vx*dt; comet.y+=comet.vy*dt; comet.life-=dt/comet.maxLife;
+        if(comet.life<=0||comet.x>W+200) { comet=null; }
+        else {
+          var fade=Math.min(1,comet.life*6)*comet.life;
+          var tailLen=300+comet.x*0.2;
+          var gr2=ex.createLinearGradient(comet.x-tailLen,comet.y,comet.x,comet.y);
+          gr2.addColorStop(0,'rgba(180,230,255,0)');
+          gr2.addColorStop(0.6,'rgba(180,230,255,'+(fade*0.10).toFixed(3)+')');
+          gr2.addColorStop(0.85,'rgba(210,245,255,'+(fade*0.22).toFixed(3)+')');
+          gr2.addColorStop(1,'rgba(240,255,255,'+(fade*0.55).toFixed(3)+')');
+          ex.lineWidth=2.2; ex.lineCap='round'; ex.strokeStyle=gr2;
+          ex.beginPath(); ex.moveTo(comet.x-tailLen,comet.y); ex.lineTo(comet.x,comet.y); ex.stroke();
+          // coma — soft diffuse glow at head
+          var coma=ex.createRadialGradient(comet.x,comet.y,0,comet.x,comet.y,18);
+          coma.addColorStop(0,'rgba(240,255,255,'+(fade*0.75).toFixed(3)+')');
+          coma.addColorStop(0.4,'rgba(190,235,255,'+(fade*0.35).toFixed(3)+')');
+          coma.addColorStop(1,'rgba(150,210,255,0)');
+          ex.fillStyle=coma; ex.beginPath(); ex.arc(comet.x,comet.y,18,0,6.28); ex.fill();
+        }
+      }
+    })();
     // shooting stars
     (function(){
       var dt=Math.min(t-prevT, 0.08); prevT=t;
       meteorClock+=dt*1000;
       if(meteorClock>nextMeteorIn) spawnMeteor();
+      // meteor shower burst
+      showerClock+=dt*1000;
+      if(showerClock>nextShowerIn){
+        for(var si=0;si<3+Math.floor(Math.random()*3);si++) spawnMeteor();
+        nextShowerIn=200000+Math.random()*280000; showerClock=0;
+      }
       meteors=meteors.filter(function(m){
         m.x+=m.vx*dt; m.y+=m.vy*dt; m.life-=dt/1.5;
         if(m.life<=0||m.y>hz||m.x<-80) return false;
@@ -483,8 +777,109 @@
         gr.addColorStop(1,'rgba(255,255,255,'+(m.life*.7).toFixed(2)+')');
         ex.strokeStyle=gr; ex.lineWidth=1.6; ex.lineCap='round';
         ex.beginPath(); ex.moveTo(tx,ty); ex.lineTo(m.x,m.y); ex.stroke();
+        // ground flash — brief bluish-white illumination below each meteor
+        if(m.life>0.6&&m.y<hz*0.4){
+          var gfl=ex.createRadialGradient(m.x,hz,0,m.x,hz,W*0.15);
+          gfl.addColorStop(0,'rgba(200,225,255,'+(m.life*0.08).toFixed(3)+')'); gfl.addColorStop(1,'rgba(200,225,255,0)');
+          ex.fillStyle=gfl; ex.fillRect(0,hz-20,W,40);
+        }
         return true;
       });
+      // airplane — slower, lower, nav lights blink red/green
+      planeClock+=dt*1000;
+      if(planeClock>nextPlaneIn) spawnPlane();
+      if(plane){
+        plane.x+=plane.vx*dt; plane.y+=plane.vy*dt; plane.blink+=dt;
+        plane.life-=dt/(Math.abs(W/plane.vx)*1.2);
+        if(plane.life<=0||plane.x<-60||plane.x>W+60){plane=null;}
+        else{
+          var blinkOn=Math.sin(plane.blink*Math.PI*1.4)>0.5;
+          // white strobe
+          if(Math.sin(plane.blink*Math.PI*2.8)>0.85){
+            ex.fillStyle='rgba(255,255,255,0.85)'; ex.beginPath(); ex.arc(plane.x,plane.y,1.8,0,6.28); ex.fill();
+          }
+          // nav light (red left or green right depending on direction)
+          if(blinkOn){
+            var nc=plane.vx>0?'0,255,80':'255,40,40';
+            ex.fillStyle='rgba('+nc+',0.9)'; ex.beginPath(); ex.arc(plane.x+(plane.vx>0?-5:5),plane.y,1.3,0,6.28); ex.fill();
+          }
+        }
+      }
+      // ISS satellite pass — fast bright dot with short trail
+      satClock+=dt*1000;
+      if(satClock>nextSatIn) spawnSat();
+      if(sat){
+        sat.x+=sat.vx*dt; sat.y+=sat.vy*dt; sat.life-=dt/6;
+        if(sat.life<=0||sat.x<-20||sat.x>W+20){sat=null;}
+        else{
+          var slen=40, sang=Math.atan2(sat.vy,sat.vx);
+          var stx=sat.x-Math.cos(sang)*slen, sty=sat.y-Math.sin(sang)*slen;
+          var sgr=ex.createLinearGradient(stx,sty,sat.x,sat.y);
+          sgr.addColorStop(0,'rgba(255,255,240,0)');
+          sgr.addColorStop(0.5,'rgba(255,255,240,'+(sat.life*.18).toFixed(2)+')');
+          sgr.addColorStop(1,'rgba(255,255,250,'+(sat.life*.82).toFixed(2)+')');
+          ex.strokeStyle=sgr; ex.lineWidth=1.2; ex.lineCap='round';
+          ex.beginPath(); ex.moveTo(stx,sty); ex.lineTo(sat.x,sat.y); ex.stroke();
+          ex.fillStyle='rgba(255,255,245,'+(sat.life*0.92).toFixed(2)+')';
+          ex.beginPath(); ex.arc(sat.x,sat.y,1.4,0,6.28); ex.fill();
+        }
+      }
+    })();
+    // lens flare — brief burst from moon position on page load
+    if(t<lensFlareUntil){
+      var lf=Math.sin(t*Math.PI/lensFlareUntil)*0.35;
+      var mx=W*0.78, my=hz*0.17;
+      var lfg=ex.createRadialGradient(mx,my,0,mx,my,W*0.5);
+      lfg.addColorStop(0,'rgba(255,248,220,'+lf.toFixed(3)+')');
+      lfg.addColorStop(0.15,'rgba(220,235,255,'+(lf*0.4).toFixed(3)+')');
+      lfg.addColorStop(1,'rgba(200,220,255,0)');
+      ex.fillStyle=lfg; ex.fillRect(0,0,W,hz);
+    }
+    // pre-dawn glow — appears after 3 minutes, very subtle warm-up on eastern horizon
+    (function(){
+      var dawn=Math.max(0,Math.min(1,(t-180)/60));
+      if(dawn<=0) return;
+      var dg=ex.createLinearGradient(W*0.8,hz,W,0);
+      dg.addColorStop(0,'rgba(255,160,80,'+(dawn*0.12).toFixed(3)+')');
+      dg.addColorStop(0.4,'rgba(255,120,60,'+(dawn*0.06).toFixed(3)+')');
+      dg.addColorStop(1,'rgba(200,80,40,0)');
+      ex.fillStyle=dg; ex.fillRect(W*0.5,0,W*0.5,hz);
+    })();
+    // atmospheric limb vignette — very top of sky subtly darkens (scattering effect)
+    var lv=ex.createLinearGradient(0,0,0,hz*0.12);
+    lv.addColorStop(0,'rgba(0,0,4,0.28)'); lv.addColorStop(1,'rgba(0,0,4,0)');
+    ex.fillStyle=lv; ex.fillRect(0,0,W,hz*0.12);
+    // zodiacal light — faint triangular glow rising from horizon, astronomically authentic
+    (function(){
+      var al=0.038+0.012*Math.sin(t*0.08+1.4);
+      var zg=ex.createRadialGradient(W*0.42,hz,0,W*0.42,hz,hz*1.1);
+      zg.addColorStop(0,'rgba(230,220,180,'+al.toFixed(3)+')');
+      zg.addColorStop(0.25,'rgba(210,205,170,'+(al*0.7).toFixed(3)+')');
+      zg.addColorStop(0.6,'rgba(190,190,155,'+(al*0.28).toFixed(3)+')');
+      zg.addColorStop(1,'rgba(170,175,140,0)');
+      ex.save(); ex.beginPath(); ex.moveTo(W*0.42,hz); ex.lineTo(W*0.18,0); ex.lineTo(W*0.66,0); ex.closePath();
+      ex.fillStyle=zg; ex.fill(); ex.restore();
+    })();
+    // moonlight shaft — very faint cone from upper-left, slowly breathing
+    (function(){
+      var al=0.028+0.010*Math.sin(t*0.12);
+      var sg=ex.createLinearGradient(0,0,W*0.6,hz*0.8);
+      sg.addColorStop(0,'rgba(200,220,255,'+al.toFixed(3)+')');
+      sg.addColorStop(.5,'rgba(190,215,255,'+(al*0.5).toFixed(3)+')');
+      sg.addColorStop(1,'rgba(180,210,255,0)');
+      ex.save(); ex.beginPath(); ex.moveTo(0,0); ex.lineTo(W*0.55,hz*0.82); ex.lineTo(W*0.72,hz*0.82); ex.lineTo(0,0); ex.closePath();
+      ex.fillStyle=sg; ex.fill(); ex.restore();
+    })();
+    // Cygnus constellation lines — faint, slowly brightening with t
+    (function(){
+      var al=Math.min(0.11, 0.04+t*0.004);
+      var pts={den:[W*.52,hz*.18],alb:[W*.44,hz*.38],cygB:[W*.38,hz*.62],
+        eps:[W*.62,hz*.55],gam:[W*.55,hz*.42]};
+      ex.save(); ex.strokeStyle='rgba(180,215,255,'+al.toFixed(3)+')'; ex.lineWidth=0.8; ex.lineCap='round';
+      [[pts.den,pts.gam],[pts.gam,pts.alb],[pts.alb,pts.cygB],[pts.gam,pts.eps]].forEach(function(seg){
+        ex.beginPath(); ex.moveTo(seg[0][0],seg[0][1]); ex.lineTo(seg[1][0],seg[1][1]); ex.stroke();
+      });
+      ex.restore();
     })();
     // HORIZON GLOW — sodium light pollution, muted and natural
     var hg=ex.createLinearGradient(0,hz-200,0,hz);
@@ -496,6 +891,10 @@
     var gr=ex.createLinearGradient(0,hz,0,H);
     gr.addColorStop(0,'#1A1008'); gr.addColorStop(.18,'#100A04'); gr.addColorStop(.50,'#090603'); gr.addColorStop(1,'#050402');
     ex.fillStyle=gr; ex.fillRect(0,hz,W,H-hz);
+    // distant city light dome — very faint amber glow at bottom horizon
+    var cl=ex.createLinearGradient(0,H,0,H-gh*0.4);
+    cl.addColorStop(0,'rgba(255,140,50,0.06)'); cl.addColorStop(0.6,'rgba(255,120,40,0.02)'); cl.addColorStop(1,'rgba(255,120,40,0)');
+    ex.fillStyle=cl; ex.fillRect(0,H-gh*0.4,W,gh*0.4);
     // dune ridges — warm lit edges
     function ridge(base,amp,ph,fill,lit){
       ex.beginPath(); ex.moveTo(0,base);
@@ -508,14 +907,43 @@
     ridge(hz+26,11,1.0,'#110E08','rgba(210,130,46,.16)');
     ridge(hz+80,17,3.4,'#0B0906','rgba(168,100,34,.08)');
     // node array — all beams on, animated; cursor proximity boosts beam
+    var tipNode=-1;
     nodeData.forEach(function(n,i){
       var nx=n[0]*W, ny=hz+n[1]*gh;
       var dx=mouseX-nx, dy=mouseY-ny;
       var hover=Math.max(0,1-Math.sqrt(dx*dx+dy*dy)/180);
+      if(hover>0.5) tipNode=i;
+      // faint ground scatter — each beam leaves a subtle blue smear on the dune in front
+      var bpA=(0.20+0.10*Math.sin(t*.72+phases[i].beam))*(1+(hover||0)*0.4)*Math.min(1,n[2]);
+      var bgnd=ex.createRadialGradient(nx,ny+n[2]*8,0,nx,ny+n[2]*8,n[2]*55);
+      bgnd.addColorStop(0,'rgba(130,200,255,'+bpA.toFixed(3)+')'); bgnd.addColorStop(1,'rgba(130,200,255,0)');
+      ex.fillStyle=bgnd; ex.beginPath(); ex.ellipse(nx,ny+n[2]*8,n[2]*28,n[2]*10,0,0,6.28); ex.fill();
       drawNode(nx,ny,n[2],t,phases[i],hover);
     });
+    // acquisition scan line — appears on section 4 (what it catches) to suggest imaging
+    if(curSection===4){
+      var scanY=hz*0.5+Math.sin(t*0.55)*hz*0.35;
+      var sl=ex.createLinearGradient(0,scanY-1,0,scanY+1);
+      sl.addColorStop(0,'rgba(143,217,255,0)'); sl.addColorStop(.5,'rgba(143,217,255,0.12)'); sl.addColorStop(1,'rgba(143,217,255,0)');
+      ex.fillStyle=sl; ex.fillRect(0,scanY-1,W,2);
+    }
+    // node tooltip
+    if(nodeTipEl){
+      if(tipNode>=0){
+        if(tipNode!==activeTipNode){
+          activeTipNode=tipNode;
+          nodeTipEl.textContent='→ observing '+nodeTargets[tipNode%nodeTargets.length];
+          nodeTipEl.classList.add('vis');
+        }
+        nodeTipEl.style.left=(mouseX+14)+'px'; nodeTipEl.style.top=(mouseY-10)+'px';
+      } else {
+        if(activeTipNode>=0){ activeTipNode=-1; nodeTipEl.classList.remove('vis'); }
+      }
+    }
   }
 
+  var curSection=0; // set by scroll handler, read by drawFrame
+  var lensFlareUntil=1.4; // brief lens flare on page load
   var T0=performance.now(),resizePending=false;
   (function loop(){
     if(resizePending){onResize();resizePending=false;}
@@ -524,6 +952,12 @@
     requestAnimationFrame(loop);
   })();
   addEventListener('resize',function(){resizePending=true;});
+
+  /* ---------- founding bar count-up on load ---------- */
+  (function(){
+    var fill=document.querySelector('.seat .fill');
+    if(fill) setTimeout(function(){ fill.style.width='7%'; }, 500);
+  })();
 
   /* ---------- live API data ---------- */
   (function(){
@@ -539,8 +973,23 @@
         if(fill) fill.style.width=Math.min(100,((s.nodes_total||7)/100*100)).toFixed(1)+'%';
         var bigNums=document.querySelectorAll('.seat .big .n');
         if(bigNums[0]) bigNums[0].innerHTML=(s.nodes_total||7)+'<small>joined</small>';
+        var liveCount=document.getElementById('live-count');
+        if(liveCount) liveCount.textContent=(s.nodes_online||7)+' members';
+        var statNodes=document.getElementById('stat-nodes');
+        if(statNodes) statNodes.textContent=s.nodes_total||7;
+        var heroJoined=document.getElementById('hero-joined');
+        if(heroJoined) heroJoined.textContent=(s.nodes_total||7);
         var nextSpot=document.getElementById('next-spot');
         if(nextSpot) nextSpot.textContent=String((s.nodes_total||7)+1).padStart(3,'0');
+        var foundNext=document.getElementById('found-next');
+        if(foundNext) foundNext.textContent=String((s.nodes_total||7)+1).padStart(3,'0');
+        var fCount=document.getElementById('founding-count');
+        if(fCount) fCount.textContent=s.nodes_total||7;
+        var fRemain=document.getElementById('founding-remain');
+        if(fRemain) fRemain.textContent=100-(s.nodes_total||7);
+        var sBar=document.getElementById('scarcity-bar'), sTxt=document.getElementById('scarcity-text');
+        var remain=100-(s.nodes_total||7);
+        if(sBar&&remain<=30){ sBar.style.display='block'; if(sTxt) sTxt.textContent='Only '+remain+' founding spots remaining'; }
         var youEl=document.querySelector('.seat .you');
         if(youEl) youEl.innerHTML="You'd be member <b>#"+String((s.nodes_total||7)+1).padStart(3,'0')+"</b> — we hold your spot for 48 hours, no payment.";
       }).catch(function(){});
@@ -626,7 +1075,7 @@
     };
   });
   var prog=document.getElementById('progress'); var clock=document.getElementById('clock');
-  els.forEach(function(_,i){ var d=document.createElement('span'); d.className='pdot'+(i===0?' on':''); prog.appendChild(d); });
+  els.forEach(function(el,i){ var d=document.createElement('span'); d.className='pdot'+(i===0?' on':''); var kk=el.querySelector('.kicker'); if(kk) d.title=kk.textContent.trim(); d.addEventListener('click',function(){el.scrollIntoView({behavior:'smooth'});}); prog.appendChild(d); });
   var pdots=[].slice.call(prog.children);
   var earth=document.getElementById('earth'), ecap=document.getElementById('earthcap');
   function lerp(a,b,t){return a+(b-a)*t;}
@@ -664,7 +1113,7 @@
   },{passive:true});
   document.addEventListener('mouseleave',function(){skyHover=false;});
   addEventListener('scroll',function(){
-    scrolling=true; skyHover=false;
+    scrolling=true; skyHover=false; hoverZoom=1.0;
     clearTimeout(scrollTimer); scrollTimer=setTimeout(function(){scrolling=false;},200);
   },{passive:true});
 
@@ -675,6 +1124,7 @@
     function compute(){
       var sc=scrollY||document.documentElement.scrollTop, i=0;
       for(var j=0;j<els.length;j++){ if(sc>=els[j].offsetTop-2) i=j; }
+      curSection=i;
       var top=els[i].offsetTop, h=els[i].offsetHeight, lp=Math.max(0,Math.min(1,(sc-top)/h));
       pdots.forEach(function(d,k){ d.classList.toggle('on', k===i); });
       prog.classList.toggle('show', i>0); clock.textContent = stops[i].time;
@@ -688,7 +1138,17 @@
         tgt.ra=lerp(a.cra,b.cra,e); tgt.dec=lerp(a.cdec,b.cdec,e);
         tgt.fov=Math.exp(lerp(Math.log(a.fov),Math.log(b.fov),e)); }
     }
-    addEventListener('scroll', compute, {passive:true}); compute();
+    addEventListener('scroll', compute, {passive:true});
+    addEventListener('scroll', function(){ burstUntil=(performance.now()-T0)/1000+0.9; },{passive:true,once:true});
+    document.addEventListener('keydown',function(e){
+      if(e.key!=='ArrowDown'&&e.key!=='ArrowUp') return;
+      e.preventDefault();
+      var sc=scrollY||document.documentElement.scrollTop, ci=0;
+      for(var j=0;j<els.length;j++){if(sc>=els[j].offsetTop-2)ci=j;}
+      var ni=e.key==='ArrowDown'?Math.min(els.length-1,ci+1):Math.max(0,ci-1);
+      els[ni].scrollIntoView({behavior:'smooth'});
+    });
+    compute();
     aladin.gotoRaDec(cur.ra,cur.dec); aladin.setFov(cur.fov);
     (function tick(){
       if(skyHover) hoverZoom=Math.min(HOVER_MAX, hoverZoom+HOVER_RATE);
@@ -710,6 +1170,122 @@
     });
   }
   if(window.A&&A.init){ boot(); } else { addEventListener('load', boot); }
+
+  /* ---------- panel glow pulse on scroll-in ---------- */
+  (function(){
+    if(!window.IntersectionObserver) return;
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          e.target.style.transition='box-shadow .6s ease-out';
+          e.target.style.boxShadow='0 32px 90px rgba(0,0,10,.44), 0 0 40px rgba(143,217,255,.08), inset 0 1.5px 0 rgba(255,255,255,.58), inset 0 -10px 26px rgba(120,160,255,.10)';
+          setTimeout(function(){e.target.style.boxShadow='';},700);
+          obs.unobserve(e.target);
+        }
+      });
+    },{threshold:0.3});
+    document.querySelectorAll('.panel.glass').forEach(function(el){obs.observe(el);});
+  })();
+
+  /* ---------- glass panel 3-D tilt on mouse ---------- */
+  (function(){
+    var MOBILE=innerWidth<=860;
+    if(MOBILE) return;
+    document.querySelectorAll('.panel.glass, .seat.glass').forEach(function(el){
+      el.addEventListener('mousemove',function(e){
+        var r=el.getBoundingClientRect();
+        var dx=(e.clientX-r.left-r.width/2)/(r.width/2);
+        var dy=(e.clientY-r.top-r.height/2)/(r.height/2);
+        el.style.transform='perspective(900px) rotateY('+(dx*3.5).toFixed(2)+'deg) rotateX('+(-dy*2.5).toFixed(2)+'deg) translateZ(4px)';
+      },{passive:true});
+      el.addEventListener('mouseleave',function(){
+        el.style.transform='';
+      });
+    });
+  })();
+
+  /* ---------- "what's up tonight" dynamic text ---------- */
+  (function(){
+    var el=document.getElementById('catch-time');
+    if(!el) return;
+    var d=new Date();
+    var month=d.getUTCMonth(); // 0-11
+    var targets=['Orion Nebula','Pleiades cluster','Andromeda Galaxy','Leo Triplet','Virgo Cluster','Scorpius region','Sagittarius & core','Cygnus & SS Cyg','Perseus Double Cluster','Orion rising','winter Milky Way','Orion & friends'];
+    var target=targets[month];
+    var h=d.getUTCHours(), m=d.getUTCMinutes();
+    el.textContent=(h<10?'0':'')+h+':'+(m<10?'0':'')+m+' UTC · '+target+' visible tonight';
+  })();
+
+  /* ---------- rotating email placeholder ---------- */
+  (function(){
+    var inputs=document.querySelectorAll('input[type=email]');
+    var hints=['your@email.com','you@anywhere.com','name@example.com','hello@email.com'];
+    inputs.forEach(function(inp){
+      var i=0;
+      setInterval(function(){
+        if(document.activeElement===inp) return;
+        i=(i+1)%hints.length;
+        inp.placeholder=hints[i];
+      },4000);
+    });
+  })();
+
+  /* ---------- console easter egg ---------- */
+  (function(){
+    var s='color:#8FD9FF;font-size:13px;font-weight:500';
+    console.log('%c⬤ Boundless Skies — live telescope network\n%cYou found the console. The sky is always on.\nhttps://boundlessskies.org — join the founding network.',s,'color:#aaa;font-size:11px');
+  })();
+
+  /* ---------- animated tab title ---------- */
+  (function(){
+    var titles=['⬤ Boundless Skies — live now','○ Boundless Skies — join the network'];
+    var base='Boundless Skies — The Founding Network';
+    var i=0, hidden=false;
+    document.addEventListener('visibilitychange',function(){hidden=document.hidden;});
+    setInterval(function(){
+      if(hidden) return;
+      document.title=titles[i%titles.length]; i++;
+      setTimeout(function(){document.title=base;},1800);
+    },12000);
+  })();
+
+  /* ---------- AAVSO count ticker ---------- */
+  (function(){
+    var el=document.getElementById('aavso-count'); if(!el) return;
+    var n=52847203;
+    setInterval(function(){
+      n+=Math.floor(1+Math.random()*3);
+      el.textContent=n.toLocaleString();
+    }, 3200);
+  })();
+
+  /* ---------- dynamic catch time ---------- */
+  (function(){
+    var el=document.getElementById('catch-time'); if(!el) return;
+    var d=new Date(), h=d.getUTCHours(), m=d.getUTCMinutes();
+    el.textContent=(h<10?'0':'')+h+':'+(m<10?'0':'')+m+' UTC tonight';
+  })();
+
+  /* ---------- live magnitude ticker (SS Cyg simulation) ---------- */
+  (function(){
+    var el=document.getElementById('mag-live'); if(!el) return;
+    var mag=11.4, target=8.6, rising=true;
+    setInterval(function(){
+      mag+=rising?(-(0.008+Math.random()*0.012)):(0.004+Math.random()*0.008);
+      if(mag<=target){rising=false;} if(mag>=11.8){rising=true; mag=11.8;}
+      el.textContent=mag.toFixed(1)+' mag';
+    }, 2800);
+  })();
+
+  /* ---------- live UTC clock ---------- */
+  (function(){
+    var el=document.getElementById('utcclock'); if(!el) return;
+    function tick(){
+      var d=new Date(), h=d.getUTCHours(), m=d.getUTCMinutes(), s=d.getUTCSeconds();
+      el.textContent=(h<10?'0':'')+h+':'+(m<10?'0':'')+m+':'+(s<10?'0':'')+s+' UTC';
+    }
+    tick(); setInterval(tick,1000);
+  })();
 })();
 </script>
 </body>
