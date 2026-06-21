@@ -106,7 +106,7 @@
   .cost{margin-top:22px; font-size:13.5px; color:var(--ink-3); padding:12px 16px; border-radius:12px; background:rgba(143,217,255,.05); border:1px solid rgba(143,217,255,.10)}
   .cost b{color:var(--accent); font-weight:500}
   .stop .sticky{position:sticky; top:0; height:100vh; display:flex; align-items:center}
-  .hero .sticky{padding-top:80px}
+  .hero .sticky{padding-top:110px; align-items:flex-start}
   .stop .wrap.split{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,470px); gap:48px; align-items:center}
   .stop.center .sticky{justify-content:center}
   .stop.center .wrap{max-width:780px; text-align:center; display:flex; flex-direction:column; align-items:center}
@@ -256,8 +256,9 @@
         </div>
         <div class="seat glass">
           <div class="top"><span class="lab">Founding network</span></div>
-          <div style="margin-top:14px; font-size:15px; line-height:1.6; color:var(--ink-2)">We're at the very beginning — a small group of people already running their telescopes every night. You'd be joining before this is anything other than a handful of us pointing at the sky.</div>
-          <div class="readout" style="margin-top:20px"><span class="live cy"></span> A few members on watch right now</div>
+          <div class="big"><span class="n" id="founding-count">—<small>joined</small></span></div>
+          <div class="bar"><div class="fill" id="founding-fill"></div></div>
+          <div class="you">You'd be joining at the very beginning — <b>before this is anything.</b></div>
         </div>
       </div></div>
       <div class="cue"><span>scroll to lift off</span><span class="ln"></span></div>
@@ -939,6 +940,11 @@
   })();
   addEventListener('resize',function(){resizePending=true;});
 
+  /* ---------- founding bar animate on load ---------- */
+  (function(){
+    var fill=document.getElementById('founding-fill');
+    if(fill) setTimeout(function(){ fill.style.width='28%'; }, 500);
+  })();
 
   /* ---------- live API data ---------- */
   (function(){
@@ -952,6 +958,15 @@
         if(liveCount) liveCount.textContent=(s.nodes_online||7)+' members';
         var statNodes=document.getElementById('stat-nodes');
         if(statNodes) statNodes.textContent=s.nodes_total||7;
+      }).catch(function(){});
+    fetch(API+'/api/v1/site/config',{mode:'cors'})
+      .then(function(r){return r.ok?r.json():null;}).then(function(c){
+        if(!c) return;
+        var n=c.member_count||7;
+        var cnt=document.getElementById('founding-count');
+        if(cnt) cnt.innerHTML=n+'<small>joined</small>';
+        var fill=document.getElementById('founding-fill');
+        if(fill) fill.style.width=Math.min(100,n*4)+'%';
       }).catch(function(){});
   })();
 

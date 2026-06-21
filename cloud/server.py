@@ -417,6 +417,26 @@ def api_network_status():
     })
 
 
+# ── Site config ────────────────────────────────────────────────────────────────
+
+@app.route("/api/v1/site/config", methods=["GET"])
+def api_site_config():
+    row = db.query_one("SELECT member_count FROM site_config WHERE id = 1") or {"member_count": 7}
+    return jsonify({"member_count": row["member_count"]})
+
+
+@app.route("/api/v1/site/config", methods=["PATCH"])
+@require_admin
+def api_site_config_update():
+    body = request.get_json(silent=True) or {}
+    if "member_count" in body:
+        db.execute(
+            "UPDATE site_config SET member_count = %s, updated_at = %s WHERE id = 1",
+            (int(body["member_count"]), _now()),
+        )
+    return api_site_config()
+
+
 # ── Admin operations ───────────────────────────────────────────────────────────
 
 @app.route("/api/v1/admin/ingest", methods=["POST"])

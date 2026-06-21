@@ -276,6 +276,18 @@ _SCHEMA: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_codes_user ON activation_codes(user_id)",
+    """
+    CREATE TABLE IF NOT EXISTS site_config (
+        id              INTEGER PRIMARY KEY CHECK (id = 1),
+        member_count    INTEGER NOT NULL DEFAULT 7,
+        updated_at      TEXT NOT NULL DEFAULT ''
+    )
+    """,
+]
+
+# Seed statements run once after schema creation (idempotent via ON CONFLICT DO NOTHING).
+_SEEDS: list[str] = [
+    "INSERT INTO site_config (id, member_count, updated_at) VALUES (1, 7, '') ON CONFLICT (id) DO NOTHING",
 ]
 
 # Columns added after initial schema. init() applies these idempotently.
@@ -335,6 +347,8 @@ def init(url: str = "") -> None:
                 if stmt:
                     cur.execute(stmt)
             _run_migrations(conn)
+            for stmt in _SEEDS:
+                cur.execute(stmt)
             conn.commit()
         except Exception:
             conn.rollback()
