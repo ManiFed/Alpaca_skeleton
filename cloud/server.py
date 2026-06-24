@@ -49,6 +49,7 @@ app.config["MAX_CONTENT_LENGTH"] = 128 * 1024 * 1024
 _config: dict = {}   # set by create_app()
 
 _WEBSITE_DIR = os.path.join(os.path.dirname(__file__), "..", "website")
+_DASHBOARD_DIR = os.path.join(_WEBSITE_DIR, "dashboard")
 
 
 def create_app(config: dict) -> Flask:
@@ -60,6 +61,20 @@ def create_app(config: dict) -> Flask:
 @app.route("/")
 def serve_index():
     return send_from_directory(_WEBSITE_DIR, "tour.html")
+
+
+@app.route("/dashboard")
+@app.route("/dashboard/")
+def serve_dashboard():
+    return send_from_directory(_DASHBOARD_DIR, "index.html")
+
+
+@app.route("/dashboard/<path:filename>")
+def serve_dashboard_asset(filename):
+    full = os.path.join(_DASHBOARD_DIR, filename)
+    if os.path.isfile(full):
+        return send_from_directory(_DASHBOARD_DIR, filename)
+    return send_from_directory(_DASHBOARD_DIR, "index.html")
 
 
 @app.route("/<path:filename>")

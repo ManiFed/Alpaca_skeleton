@@ -9,3 +9,6 @@ build/node_agent/
 cloud_data/*.db
 cloud_data/raw_images/
 cloud_data/aavso_files/
+app/.metadata
+app/test/
+website/dashboard/
