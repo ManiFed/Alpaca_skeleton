@@ -146,7 +146,7 @@ class _GlassPanelState extends State<GlassPanel>
           child: BackdropFilter(
             filter: ImageFilter.compose(
               outer: ImageFilter.blur(sigmaX: widget.blur, sigmaY: widget.blur),
-              inner: ColorFilter.matrix(<double>[
+              inner: const ColorFilter.matrix(<double>[
                 // Saturation ×1.9 + brightness ×1.08
                 0.607, 0.513, 0.153, 0, 20,
                 0.175, 1.220, 0.153, 0, 20,

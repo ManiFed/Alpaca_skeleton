@@ -8,7 +8,7 @@ import '../theme.dart';
 import '../widgets/glass.dart';
 
 /// "Tonight" — live mission-control dashboard. No scrolling: a hero stat band
-/// over the Aladin sky, then three floating glass panels that fill the screen.
+/// over the Aladin sky, then an asymmetric two-column glass layout.
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
 
@@ -46,7 +46,6 @@ class _DashboardTabState extends State<DashboardTab> {
   Future<_DashboardData> _load() async {
     final api = context.read<AppState>().api;
 
-    // All four requests fire in parallel.
     final nodesFuture = api.nodes().catchError((_) => <Node>[]);
     final obsFuture =
         api.observations(days: 1, limit: 10).catchError((_) => <Observation>[]);
@@ -103,12 +102,44 @@ class _DashboardTabState extends State<DashboardTab> {
   }
 }
 
-// ── Dashboard view ────────────────────────────────────────────────────────────
+// ── Dashboard view — staggered entrance ──────────────────────────────────────
 
-class _DashboardView extends StatelessWidget {
+class _DashboardView extends StatefulWidget {
   const _DashboardView({required this.data, required this.onRefresh});
   final _DashboardData data;
   final Future<void> Function() onRefresh;
+
+  @override
+  State<_DashboardView> createState() => _DashboardViewState();
+}
+
+class _DashboardViewState extends State<_DashboardView> {
+  static const _delays = [0, 180, 300, 420];
+  final List<bool> _visible = [false, false, false, false];
+
+  @override
+  void initState() {
+    super.initState();
+    for (var i = 0; i < _delays.length; i++) {
+      Future.delayed(Duration(milliseconds: _delays[i]), () {
+        if (mounted) setState(() => _visible[i] = true);
+      });
+    }
+  }
+
+  Widget _fadeUp(int index, Widget child) {
+    return AnimatedOpacity(
+      opacity: _visible[index] ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 700),
+      curve: Curves.easeOutCubic,
+      child: AnimatedSlide(
+        offset: _visible[index] ? Offset.zero : const Offset(0, 0.04),
+        duration: const Duration(milliseconds: 700),
+        curve: Curves.easeOutCubic,
+        child: child,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -118,47 +149,60 @@ class _DashboardView extends StatelessWidget {
       (s) => s.member?.displayName ?? '',
     );
 
-    final online = data.nodes.where((n) => n.online).length;
-    final unread = data.alerts.where((a) => !a.read).length;
+    final online = widget.data.nodes.where((n) => n.online).length;
+    final unread = widget.data.alerts.where((a) => !a.read).length;
 
-    return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        physics: const NeverScrollableScrollPhysics(),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight),
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(14, topPad + 6, 14, bottomPad),
-            child: Column(
+    return Padding(
+      padding: EdgeInsets.fromLTRB(14, topPad + 6, 14, bottomPad),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _fadeUp(
+            0,
+            _Hero(
+              name: name,
+              online: online,
+              totalNodes: widget.data.nodes.length,
+              obs24h: widget.data.recentObs.length,
+              targets: widget.data.targets.length,
+              unread: unread,
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Asymmetric two-column panel layout
+          Expanded(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _Hero(
-                  name: name,
-                  online: online,
-                  totalNodes: data.nodes.length,
-                  obs24h: data.recentObs.length,
-                  targets: data.targets.length,
-                  unread: unread,
+                // Left: activity — visual anchor with full-height sparkline
+                Expanded(
+                  flex: 55,
+                  child: _fadeUp(
+                    1,
+                    _ActivityPanel(obs: widget.data.recentObs),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: (constraints.maxHeight - topPad - bottomPad - 180)
-                      .clamp(360.0, 900.0),
+                const SizedBox(width: 12),
+                // Right: targets + alerts stacked
+                Expanded(
+                  flex: 45,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Expanded(
-                        flex: 30,
-                        child: _ActivityPanel(obs: data.recentObs),
+                        flex: 60,
+                        child: _fadeUp(
+                          2,
+                          _TargetsPanel(targets: widget.data.targets),
+                        ),
                       ),
                       const SizedBox(height: 12),
                       Expanded(
-                        flex: 38,
-                        child: _TargetsPanel(targets: data.targets),
-                      ),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        flex: 28,
-                        child: _AlertsPanel(alerts: data.alerts),
+                        flex: 40,
+                        child: _fadeUp(
+                          3,
+                          _AlertsPanel(alerts: widget.data.alerts),
+                        ),
                       ),
                     ],
                   ),
@@ -166,7 +210,7 @@ class _DashboardView extends StatelessWidget {
               ],
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -242,7 +286,6 @@ class _Hero extends StatelessWidget {
                 ],
               ),
             ),
-            // Network status pill
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
               decoration: BoxDecoration(
@@ -253,7 +296,7 @@ class _Hero extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _LiveDot(color: networkColor),
+                  LiveDot(color: networkColor),
                   const SizedBox(width: 7),
                   Text(
                     totalNodes == 0 ? 'No telescopes' : '$online/$totalNodes live',
@@ -339,17 +382,18 @@ class _ActivityPanel extends StatelessWidget {
             const Expanded(child: _EmptyLine('No observations in the last 24 hours.'))
           else ...[
             const SizedBox(height: 10),
-            Sparkline(values: spark, color: BSTheme.accent, height: 30),
-            const SizedBox(height: 6),
+            // Full-height sparkline — dominant visual in the left column.
             Expanded(
-              child: ClipRect(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children:
-                      obs.take(3).map((o) => _ActivityRow(obs: o)).toList(),
+              child: LayoutBuilder(
+                builder: (_, constraints) => Sparkline(
+                  values: spark,
+                  color: BSTheme.accent,
+                  height: constraints.maxHeight,
                 ),
               ),
             ),
+            const SizedBox(height: 8),
+            ...obs.take(4).map((o) => _ActivityRow(obs: o)),
           ],
         ],
       ),
@@ -371,17 +415,17 @@ class _ActivityRow extends StatelessWidget {
             : BSTheme.ink2;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5.5),
+      padding: const EdgeInsets.symmetric(vertical: 4.5),
       child: Row(
         children: [
           Icon(Icons.star_rounded, size: 13, color: magColor),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               target,
               style: const TextStyle(
                 fontFamily: 'Geist',
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: FontWeight.w500,
                 color: BSTheme.ink,
               ),
@@ -392,22 +436,23 @@ class _ActivityRow extends StatelessWidget {
             obs.magnitude.toStringAsFixed(2),
             style: TextStyle(
               fontFamily: 'Geist',
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w700,
               letterSpacing: -0.3,
+              fontFeatures: const [FontFeature.tabularFigures()],
               color: magColor,
             ),
           ),
           if (obs.filter.isNotEmpty) ...[
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             GlowChip(obs.filter.toUpperCase()),
           ],
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Text(
             _ago(DateTime.tryParse(obs.receivedAt)),
             style: const TextStyle(
               fontFamily: 'Geist',
-              fontSize: 11,
+              fontSize: 10,
               color: BSTheme.ink3,
             ),
           ),
@@ -477,7 +522,7 @@ class _TargetRow extends StatelessWidget {
         target.targetType.isEmpty ? '—' : target.targetType.toUpperCase();
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -488,41 +533,41 @@ class _TargetRow extends StatelessWidget {
                   target.name,
                   style: const TextStyle(
                     fontFamily: 'Geist',
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: BSTheme.ink,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               GlowChip(typeLabel, color: barColor),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Text(
                 '${target.nMeasurements}',
                 style: TextStyle(
                   fontFamily: 'Geist',
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.w700,
                   letterSpacing: -0.3,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   color: barColor,
                 ),
               ),
               const SizedBox(width: 3),
               const Text(
                 'obs',
-                style:
-                    TextStyle(fontFamily: 'Geist', fontSize: 10, color: BSTheme.ink3),
+                style: TextStyle(
+                    fontFamily: 'Geist', fontSize: 9, color: BSTheme.ink3),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          // Animated glowing priority track.
+          const SizedBox(height: 5),
           ClipRRect(
             borderRadius: BorderRadius.circular(2),
             child: Stack(
               children: [
-                Container(height: 4, color: BSTheme.glassBorder),
+                Container(height: 3, color: BSTheme.glassBorder),
                 TweenAnimationBuilder<double>(
                   tween: Tween(begin: 0, end: p),
                   duration: const Duration(milliseconds: 900),
@@ -530,7 +575,7 @@ class _TargetRow extends StatelessWidget {
                   builder: (_, v, __) => FractionallySizedBox(
                     widthFactor: v,
                     child: Container(
-                      height: 4,
+                      height: 3,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(2),
                         gradient: LinearGradient(
@@ -607,7 +652,7 @@ class _AlertRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final unread = !alert.read;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5.5),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         children: [
           Container(
@@ -630,25 +675,25 @@ class _AlertRow extends StatelessWidget {
                   : null,
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               alert.title,
               style: TextStyle(
                 fontFamily: 'Geist',
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: unread ? FontWeight.w500 : FontWeight.w400,
                 color: unread ? BSTheme.ink : BSTheme.ink2,
               ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Text(
             _ago(DateTime.tryParse(alert.sentAt)),
             style: const TextStyle(
               fontFamily: 'Geist',
-              fontSize: 11,
+              fontSize: 10,
               color: BSTheme.ink3,
             ),
           ),
@@ -676,58 +721,6 @@ class _EmptyLine extends StatelessWidget {
           color: BSTheme.ink3,
         ),
       ),
-    );
-  }
-}
-
-class _LiveDot extends StatefulWidget {
-  const _LiveDot({required this.color});
-  final Color color;
-
-  @override
-  State<_LiveDot> createState() => _LiveDotState();
-}
-
-class _LiveDotState extends State<_LiveDot> with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, __) {
-        final v = 0.3 + _ctrl.value * 0.7;
-        return Container(
-          width: 7,
-          height: 7,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: widget.color,
-            boxShadow: [
-              BoxShadow(
-                color: widget.color.withValues(alpha: v * 0.9),
-                blurRadius: v * 8,
-                spreadRadius: v * 1.2,
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }

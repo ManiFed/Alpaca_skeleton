@@ -18,6 +18,12 @@
       "runtimeExecutable": "venv/bin/python3",
       "runtimeArgs": ["-m", "cloud.main"],
       "port": 8800
+    },
+    {
+      "name": "flutter-web",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4188", "--directory", "app/build/web"],
+      "port": 4188
     }
   ]
 }
