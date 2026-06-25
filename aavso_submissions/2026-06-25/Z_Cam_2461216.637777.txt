@@ -1,0 +1,8 @@
+#TYPE=Extended
+#OBSCODE=EGBA
+#SOFTWARE=The Telescope Net Node v1
+#DELIM=,
+#DATE=BJD
+#OBSTYPE=CCD
+#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES
+Z Cam,2461216.637777,11.671,0.125,CV,NO,DIFF,ENSEMBLE,na,na,na,1.50,na,na,fwhm=8.64|snr=47.9|comp=14|zp_scatter=0.123|node=seestar-live-001|quality=good|fits=bs_science_7fvr34jg.fits

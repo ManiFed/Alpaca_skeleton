@@ -267,15 +267,21 @@ _SCHEMA: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_weight_history_time ON weight_history(changed_at)",
     """
     CREATE TABLE IF NOT EXISTS activation_codes (
-        code         TEXT PRIMARY KEY,
-        user_id      TEXT REFERENCES users(user_id),
-        node_id      TEXT DEFAULT '',
-        created_at   TEXT NOT NULL,
-        expires_at   TEXT,
-        used_at      TEXT
+        code             TEXT PRIMARY KEY,
+        user_id          TEXT REFERENCES users(user_id),
+        node_id          TEXT DEFAULT '',
+        created_at       TEXT NOT NULL,
+        expires_at       TEXT,
+        used_at          TEXT,
+        observatory_name TEXT DEFAULT '',
+        latitude         DOUBLE PRECISION,
+        longitude        DOUBLE PRECISION
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_codes_user ON activation_codes(user_id)",
+    "ALTER TABLE activation_codes ADD COLUMN IF NOT EXISTS observatory_name TEXT DEFAULT ''",
+    "ALTER TABLE activation_codes ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION",
+    "ALTER TABLE activation_codes ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION",
     """
     CREATE TABLE IF NOT EXISTS site_config (
         id              INTEGER PRIMARY KEY CHECK (id = 1),

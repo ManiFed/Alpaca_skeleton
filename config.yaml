@@ -26,7 +26,7 @@ telescope:
   slew_dec: 80.2692
   tracking_rate: 0
 camera:
-  exposure_duration: 1.0
+  exposure_duration: 30.0
   binning: 1
 autofocus:
   exposure_s: 2.0          # short exposure per focus sample
@@ -62,10 +62,10 @@ image_watcher:
   watch_path: /mnt/seestar
   debounce_delay: 2.0
 observatory:
-  name: ''
-  latitude: null
-  longitude: null
-  elevation: 0.0
+  name: 'Starfront Observatories, Rockwood TX'
+  latitude: 31.3614
+  longitude: -99.4431
+  elevation: 525.0
   telescope: ZWO Seestar S50
   instrument: ZWO Seestar S50 IMX462
   observer: ''
@@ -123,10 +123,10 @@ aavso:
   chart_id: ''
 cloud:
   enabled: true
-  url: 'http://localhost:8800'  # local cloud for testing
+  url: 'https://network.boundlessskies.org'
   activation_code: ''          # BS-YYYY-XXXXXXXX from your account page; used once on first boot
-  node_id: 'seestar-live-001'
-  api_key: '${CLOUD_NODE_API_KEY}'   # secret — set in the environment, not here
+  node_id: ''
+  api_key: ''
   heartbeat_interval: 60       # seconds between heartbeats (with conditions)
   plan_poll_interval: 300      # seconds between observation-plan polls
   auto_run_plans: false        # execute cloud plans automatically when idle
@@ -140,5 +140,5 @@ safety:
   park_at_dawn: true
   dawn_type: astronomical
   observer:
-    latitude: 0.0
-    longitude: 0.0
+    latitude: 31.3614
+    longitude: -99.4431

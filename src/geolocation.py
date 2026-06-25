@@ -61,14 +61,16 @@ def enrich_config_with_location(config: Dict[str, Any]) -> Dict[str, Any]:
         config = {}
 
     obs_cfg = config.get("observatory", {})
+    safety_obs = config.get("safety", {}).get("observer", {})
 
-    # Check if location is already configured
-    has_lat = obs_cfg.get("latitude") is not None and obs_cfg.get("latitude") != 0.0
-    has_lon = obs_cfg.get("longitude") is not None and obs_cfg.get("longitude") != 0.0
+    # Check if location is already configured (either path wins)
+    lat = obs_cfg.get("latitude") or safety_obs.get("latitude")
+    lon = obs_cfg.get("longitude") or safety_obs.get("longitude")
+    has_lat = lat is not None and lat != 0.0
+    has_lon = lon is not None and lon != 0.0
 
     if has_lat and has_lon:
-        logger.debug("Observatory location already configured: %.4f°, %.4f°",
-                     obs_cfg["latitude"], obs_cfg["longitude"])
+        logger.debug("Observatory location already configured: %.4f°, %.4f°", lat, lon)
         return config
 
     # Try to auto-detect

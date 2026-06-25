@@ -1,0 +1,27 @@
+{
+  "submitted_at": "2026-06-25T03:31:07.264229+00:00",
+  "measurement": {
+    "target_name": "Z Cam",
+    "bjd": 2461216.643812,
+    "magnitude": 11.6461,
+    "uncertainty": 0.1321,
+    "filter": "CV",
+    "airmass": 2.187,
+    "fwhm": 8.36,
+    "snr": 54.7,
+    "comparison_stars": 13,
+    "quality_flag": "good",
+    "node_id": "seestar-live-001",
+    "zero_point": 23.069,
+    "zp_scatter": 0.131,
+    "fits_file": "bs_science_y201rhve.fits"
+  },
+  "observer_code": "EGBA",
+  "dry_run": true,
+  "status": "dry_run",
+  "accepted": 0,
+  "rejected": 0,
+  "message": "dry_run: file saved, no POST",
+  "file_path": "aavso_submissions/2026-06-25/Z_Cam_2461216.643812.txt",
+  "response_path": null
+}

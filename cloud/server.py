@@ -165,6 +165,24 @@ def require_admin(fn):
 
 # ── Node management ────────────────────────────────────────────────────────────
 
+def _geocode_location(name: str) -> tuple[float | None, float | None]:
+    """Resolve a place name to (lat, lon) via Nominatim. Returns (None, None) on failure."""
+    try:
+        import requests as _req
+        resp = _req.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": name, "format": "json", "limit": 1},
+            headers={"User-Agent": "BoundlessSkiesCloud/1.0"},
+            timeout=8,
+        )
+        results = resp.json()
+        if results:
+            return float(results[0]["lat"]), float(results[0]["lon"])
+    except Exception as exc:
+        logger.warning("Geocode failed for '%s': %s", name, exc)
+    return None, None
+
+
 def _generate_activation_code(year: int | None = None) -> str:
     """Generate a unique BS-YYYY-XXXXXXXX activation code."""
     y = year or datetime.now(timezone.utc).year
@@ -198,6 +216,20 @@ def _validate_and_consume_code(code: str, node_id: str) -> str | None:
 def api_register():
     info = request.get_json(force=True, silent=True) or {}
     activation_code = str(info.pop("activation_code", "") or "").strip().upper()
+
+    # If the node hasn't set its own location, pull it from the activation code
+    node_lat = float(info.get("latitude") or 0.0)
+    node_lon = float(info.get("longitude") or 0.0)
+    if activation_code and (node_lat == 0.0 and node_lon == 0.0):
+        code_row = db.query_one(
+            "SELECT latitude, longitude, observatory_name FROM activation_codes WHERE code = %s",
+            (activation_code,),
+        )
+        if code_row and code_row.get("latitude") and code_row.get("longitude"):
+            info["latitude"] = code_row["latitude"]
+            info["longitude"] = code_row["longitude"]
+            if not info.get("owner_name") and code_row.get("observatory_name"):
+                info["owner_name"] = code_row["observatory_name"]
 
     try:
         creds = registry.register_node(
@@ -745,15 +777,30 @@ def api_me_generate_activation_code(user):
     """
     Generate a personal activation code for the logged-in member.
     Used during the installer flow to link a new node to the account.
+
+    Optional body: {"location_name": "Starfront Observatories, Rockwood TX"}
+    The location is geocoded and stored with the code so that the node
+    automatically gets coordinates at registration even if it hasn't set them.
     """
+    body = request.get_json(force=True, silent=True) or {}
+    location_name = str(body.get("location_name") or "").strip()
+
+    lat, lon = None, None
+    if location_name:
+        lat, lon = _geocode_location(location_name)
+        if lat is None:
+            return jsonify({"error": f"Could not find location: {location_name}"}), 400
+
     code = _generate_activation_code()
     expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
     db.execute(
-        "INSERT INTO activation_codes (code, user_id, created_at, expires_at)"
-        " VALUES (%s,%s,%s,%s)",
-        (code, user["user_id"], _now(), expires),
+        "INSERT INTO activation_codes"
+        " (code, user_id, created_at, expires_at, observatory_name, latitude, longitude)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        (code, user["user_id"], _now(), expires, location_name, lat, lon),
     )
-    logger.info("Activation code generated for member %s: %s", user["user_id"], code)
+    logger.info("Activation code generated for member %s: %s (location: %s)",
+                user["user_id"], code, location_name or "not set")
     return jsonify({"code": code, "expires_at": expires})
 
 

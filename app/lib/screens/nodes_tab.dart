@@ -45,26 +45,37 @@ class _NodesTabState extends State<NodesTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: AsyncView<List<Node>>(
-        future: _future,
-        onRefresh: _refresh,
-        isEmpty: (list) => list.isEmpty,
-        emptyMessage: 'No telescopes yet.\nTap + to connect one.',
-        builder: (context, nodes) => ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: nodes.length,
-          itemBuilder: (context, i) => _NodeCard(node: nodes[i]),
+    final top = MediaQuery.of(context).padding.top + kToolbarHeight;
+    final bottom = MediaQuery.of(context).padding.bottom + 64;
+
+    return Stack(
+      children: [
+        AsyncView<List<Node>>(
+          future: _future,
+          onRefresh: _refresh,
+          isEmpty: (list) => list.isEmpty,
+          emptyMessage: 'No telescopes yet.\nTap + to connect one.',
+          builder: (context, nodes) => ListView.builder(
+            padding: EdgeInsets.fromLTRB(16, top + 8, 16, bottom + 80),
+            itemCount: nodes.length,
+            itemBuilder: (context, i) => _NodeCard(node: nodes[i]),
+          ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _claimDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('Connect telescope'),
-      ),
+        Positioned(
+          right: 16,
+          bottom: bottom + 16,
+          child: FloatingActionButton.extended(
+            onPressed: _claimDialog,
+            icon: const Icon(Icons.add),
+            label: const Text('Connect telescope'),
+          ),
+        ),
+      ],
     );
   }
 }
+
+// ── Node card — instrument panel aesthetic ────────────────────────────────────
 
 class _NodeCard extends StatelessWidget {
   const _NodeCard({required this.node});
@@ -74,50 +85,192 @@ class _NodeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final online = node.online;
     final statusColor = online ? BSTheme.success : BSTheme.danger;
-    final statusText = online ? 'Online' : 'Offline';
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(Icons.satellite_alt, size: 34, color: statusColor),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    node.telescopeModel.isEmpty ? 'Telescope' : node.telescopeModel,
-                    style: Theme.of(context).textTheme.titleMedium,
+    final statusLabel = online ? 'ONLINE' : 'OFFLINE';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: BSTheme.glassBg,
+        border: Border.all(
+          color: online
+              ? BSTheme.success.withValues(alpha: 0.28)
+              : BSTheme.glassBorder,
+        ),
+      ),
+      child: Row(
+        children: [
+          // Icon + pulsing status dot
+          Column(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: statusColor.withValues(alpha: 0.10),
+                  border: Border.all(color: statusColor.withValues(alpha: 0.28)),
+                ),
+                child: Icon(Icons.satellite_alt, size: 22, color: statusColor),
+              ),
+              const SizedBox(height: 6),
+              _StatusDot(online: online),
+            ],
+          ),
+          const SizedBox(width: 16),
+          // Details
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  node.telescopeModel.isEmpty
+                      ? 'Telescope'
+                      : node.telescopeModel,
+                  style: const TextStyle(
+                    fontFamily: 'Geist',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.4,
+                    color: BSTheme.ink,
                   ),
-                  const SizedBox(height: 2),
-                  Text(node.location,
-                      style: Theme.of(context).textTheme.bodyMedium),
-                  Text('ID: ${node.nodeId}',
-                      style: Theme.of(context).textTheme.bodySmall),
+                ),
+                if (node.location.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on_outlined,
+                        size: 12,
+                        color: BSTheme.ink3,
+                      ),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          node.location,
+                          style: const TextStyle(
+                            fontFamily: 'Geist',
+                            fontSize: 12,
+                            color: BSTheme.ink3,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(6),
+                    color: const Color(0x0BA0B9FF),
+                    border: Border.all(color: BSTheme.glassBorder),
+                  ),
+                  child: Text(
+                    node.nodeId,
+                    style: const TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.8,
+                      color: BSTheme.ink3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Semantics(
+            label: statusLabel,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: statusColor.withValues(alpha: 0.12),
+                border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                statusLabel,
+                style: TextStyle(
+                  fontFamily: 'Geist',
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                  color: statusColor,
+                ),
               ),
             ),
-            // Status uses an icon + text, never colour alone (accessibility).
-            Semantics(
-              label: statusText,
-              child: Column(
-                children: [
-                  Icon(online ? Icons.check_circle : Icons.cancel,
-                      color: statusColor, size: 20),
-                  const SizedBox(height: 4),
-                  Text(statusText,
-                      style: TextStyle(
-                          color: statusColor, fontWeight: FontWeight.w700)),
-                ],
-              ),
-            ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Tiny dot that pulses when online.
+class _StatusDot extends StatefulWidget {
+  const _StatusDot({required this.online});
+  final bool online;
+
+  @override
+  State<_StatusDot> createState() => _StatusDotState();
+}
+
+class _StatusDotState extends State<_StatusDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    if (widget.online) _ctrl.repeat(reverse: true);
+    _anim = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.online ? BSTheme.success : BSTheme.danger;
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) => Container(
+        width: 6,
+        height: 6,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: color,
+          boxShadow: widget.online
+              ? [
+                  BoxShadow(
+                    color: color.withValues(alpha: _anim.value * 0.9),
+                    blurRadius: _anim.value * 8,
+                    spreadRadius: _anim.value,
+                  ),
+                ]
+              : null,
         ),
       ),
     );
   }
 }
+
+// ── Claim sheet ───────────────────────────────────────────────────────────────
 
 /// Bottom sheet that generates a one-time activation code the member types
 /// into the node installer to link the telescope to their account.
@@ -129,27 +282,46 @@ class _ClaimSheet extends StatefulWidget {
 }
 
 class _ClaimSheetState extends State<_ClaimSheet> {
+  final _locationCtrl = TextEditingController();
   String? _code;
   bool _busy = false;
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-    _generate();
+  void dispose() {
+    _locationCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _generate() async {
+    final location = _locationCtrl.text.trim();
+    if (location.isEmpty) {
+      setState(() => _error = 'Enter the telescope\'s location first.');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
       _code = null;
     });
     try {
-      final code = await context.read<AppState>().api.generateActivationCode();
-      if (mounted) setState(() { _busy = false; _code = code; });
+      final code = await context
+          .read<AppState>()
+          .api
+          .generateActivationCode(locationName: location);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _code = code;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() { _busy = false; _error = '$e'; });
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = '$e';
+        });
+      }
     }
   }
 
@@ -167,33 +339,67 @@ class _ClaimSheetState extends State<_ClaimSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(2),
+                color: BSTheme.glassBorder,
+              ),
+            ),
+          ),
           Text('Connect a telescope', style: tt.headlineSmall),
           const SizedBox(height: 10),
           Text(
-            'During node setup, enter this code when prompted. '
-            'The telescope will appear here automatically once registered.',
+            'Enter the location of the telescope. This is used for scheduling '
+            'and sky conditions — city or observatory name is fine.',
             style: tt.bodyMedium,
           ),
-          const SizedBox(height: 24),
-
+          const SizedBox(height: 20),
+          TextField(
+            controller: _locationCtrl,
+            enabled: !_busy && _code == null,
+            decoration: const InputDecoration(
+              labelText: 'Location',
+              hintText: 'e.g. Starfront Observatories, Rockwood TX',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.location_on_outlined),
+            ),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _generate(),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: const TextStyle(color: BSTheme.danger, fontSize: 13),
+            ),
+          ],
+          const SizedBox(height: 16),
           if (_busy)
             const Center(child: CircularProgressIndicator())
-          else if (_error != null) ...[
-            Text(_error!, style: TextStyle(color: BSTheme.danger)),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
+          else if (_code == null)
+            FilledButton(
               onPressed: _generate,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try again'),
+              child: const Text('Get activation code'),
+            )
+          else ...[
+            Text(
+              'During node setup, enter this code when prompted. '
+              'The telescope will appear here automatically once registered.',
+              style: tt.bodySmall,
             ),
-          ] else if (_code != null) ...[
-            // Code display
+            const SizedBox(height: 16),
             Container(
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(10),
               ),
-              padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
+              padding:
+                  const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
               child: Row(
                 children: [
                   Expanded(
@@ -222,18 +428,21 @@ class _ClaimSheetState extends State<_ClaimSheet> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
               'Valid for 30 days. Once the node registers, '
               'pull to refresh the telescope list.',
               style: tt.bodySmall,
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
             OutlinedButton.icon(
-              onPressed: _generate,
+              onPressed: () => setState(() {
+                _code = null;
+                _error = null;
+              }),
               icon: const Icon(Icons.refresh),
-              label: const Text('Generate new code'),
+              label: const Text('Start over'),
             ),
           ],
           const SizedBox(height: 8),
@@ -241,5 +450,4 @@ class _ClaimSheetState extends State<_ClaimSheet> {
       ),
     );
   }
-
 }

@@ -2961,6 +2961,33 @@ def api_history_patch_metadata(img_id: str):
     return jsonify({"error": "Image not found"}), 404
 
 
+@app.route("/api/geocode", methods=["GET"])
+def api_geocode():
+    """Resolve a place name to lat/lon using OpenStreetMap Nominatim."""
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"error": "q parameter required"}), 400
+    try:
+        import requests as _req
+        resp = _req.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": q, "format": "json", "limit": 1},
+            headers={"User-Agent": "BoundlessSkiesNode/1.0"},
+            timeout=8,
+        )
+        results = resp.json()
+        if not results:
+            return jsonify({"error": f"No results found for '{q}'"}), 404
+        r = results[0]
+        return jsonify({
+            "latitude":    round(float(r["lat"]), 6),
+            "longitude":   round(float(r["lon"]), 6),
+            "display_name": r.get("display_name", q),
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 # ── HTML template ──────────────────────────────────────────────────────────────
 
 _HTML = r"""<!DOCTYPE html>
@@ -4455,13 +4482,21 @@ html[data-night] img, html[data-night] video { filter: none; }
       <div id="cfgPanel_setup" class="cfg-panel">
         <div class="cfg-section-hdr">Observer Location</div>
         <div style="font-size:11px;color:var(--dim);margin-bottom:6px;">Your site coordinates — used for Alt-Az slewing, sun elevation, and dawn time calculations.</div>
+        <div class="inp-group" style="margin-bottom:8px;">
+          <div class="inp-label">Location name <span class="help-tip" data-tip="Type your observatory name, city, or address and click Look up. Coordinates are filled in automatically using OpenStreetMap.">?</span></div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input class="inp" type="text" id="cfgObsLocationName" placeholder="e.g. Starfront Observatories, Rockwood TX" style="flex:1;">
+            <button class="btn btn-sm" onclick="obsLookupLocation()" style="white-space:nowrap;padding:5px 12px;">Look up</button>
+          </div>
+          <div id="cfgObsLookupStatus" style="font-size:11px;color:var(--dim);margin-top:3px;min-height:14px;"></div>
+        </div>
         <div class="cfg-field-grid">
           <div class="inp-group">
-            <div class="inp-label">Latitude (° N) <span class="help-tip" data-tip="Decimal degrees north of the equator. North is positive, South is negative. Example: 51.5074 for London, -33.8688 for Sydney.">?</span></div>
+            <div class="inp-label">Latitude (° N) <span class="help-tip" data-tip="Decimal degrees north of the equator. Filled automatically by Look up, or enter manually. North is positive, South is negative.">?</span></div>
             <input class="inp" type="number" id="cfgObsLat" min="-90" max="90" step="0.0001" placeholder="e.g. 51.5074">
           </div>
           <div class="inp-group">
-            <div class="inp-label">Longitude (° E) <span class="help-tip" data-tip="Decimal degrees east of Greenwich. West is negative. Example: -0.1278 for London, 151.2093 for Sydney.">?</span></div>
+            <div class="inp-label">Longitude (° E) <span class="help-tip" data-tip="Decimal degrees east of Greenwich. Filled automatically by Look up, or enter manually. West is negative.">?</span></div>
             <input class="inp" type="number" id="cfgObsLon" min="-180" max="180" step="0.0001" placeholder="e.g. -0.1278">
           </div>
         </div>
@@ -6820,8 +6855,9 @@ function renderCfgForm(c) {
   const _defSrv = _cfgGet(c, 'alpaca.default_server', null);
   setVal('cfgAlpacaDefaultAddr', _defSrv ? _defSrv.address : '');
   setVal('cfgAlpacaDefaultPort', _defSrv ? _defSrv.port    : '');
-  setVal('cfgObsLat',        _cfgGet(c, 'safety.observer.latitude',  0.0));
-  setVal('cfgObsLon',        _cfgGet(c, 'safety.observer.longitude', 0.0));
+  setVal('cfgObsLocationName', _cfgGet(c, 'observatory.name', ''));
+  setVal('cfgObsLat',        _cfgGet(c, 'safety.observer.latitude',  null) ?? _cfgGet(c, 'observatory.latitude', 0.0));
+  setVal('cfgObsLon',        _cfgGet(c, 'safety.observer.longitude', null) ?? _cfgGet(c, 'observatory.longitude', 0.0));
   setVal('cfgDevTelEnabled', _cfgGet(c, 'devices.telescope.enabled',         false));
   setVal('cfgDevTelNum',     _cfgGet(c, 'devices.telescope.device_number',   0));
   setVal('cfgDevCamEnabled', _cfgGet(c, 'devices.camera.enabled',            false));
@@ -6909,8 +6945,13 @@ function collectCfgForm() {
   const _dAddr = txt('cfgAlpacaDefaultAddr').trim();
   const _dPort = num('cfgAlpacaDefaultPort', true);
   set('alpaca.default_server', _dAddr ? { address: _dAddr, port: _dPort || 11111 } : null);
-  set('safety.observer.latitude',  num('cfgObsLat'));
-  set('safety.observer.longitude', num('cfgObsLon'));
+  const _obsName = txt('cfgObsLocationName').trim();
+  if (_obsName) set('observatory.name', _obsName);
+  const _lat = num('cfgObsLat'), _lon = num('cfgObsLon');
+  set('safety.observer.latitude',  _lat);
+  set('safety.observer.longitude', _lon);
+  set('observatory.latitude',  _lat);
+  set('observatory.longitude', _lon);
   set('devices.telescope.enabled',         chk('cfgDevTelEnabled'));
   set('devices.telescope.device_number',   num('cfgDevTelNum', true));
   set('devices.camera.enabled',            chk('cfgDevCamEnabled'));
@@ -6995,6 +7036,26 @@ async function openConfigModal() {
 
 function closeConfigModal() {
   document.getElementById("cfgModal").classList.add("hidden");
+}
+
+async function obsLookupLocation() {
+  const q = (document.getElementById('cfgObsLocationName')?.value || '').trim();
+  const statusEl = document.getElementById('cfgObsLookupStatus');
+  if (!q) { if (statusEl) statusEl.textContent = 'Enter a location name first.'; return; }
+  if (statusEl) statusEl.textContent = 'Looking up…';
+  try {
+    const r = await fetch('/api/geocode?q=' + encodeURIComponent(q));
+    const d = await r.json();
+    if (!r.ok || d.error) {
+      if (statusEl) statusEl.textContent = d.error || 'Not found.';
+      return;
+    }
+    document.getElementById('cfgObsLat').value = d.latitude;
+    document.getElementById('cfgObsLon').value = d.longitude;
+    if (statusEl) statusEl.textContent = '✓ ' + d.display_name.split(',').slice(0,3).join(',');
+  } catch(e) {
+    if (statusEl) statusEl.textContent = 'Lookup failed: ' + e.message;
+  }
 }
 
 async function toggleCfgView() {

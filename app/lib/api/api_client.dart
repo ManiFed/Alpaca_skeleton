@@ -122,8 +122,11 @@ class ApiClient {
 
   Future<void> markNotificationRead(int id) => _post('/me/notifications/$id/read', {});
 
-  Future<String> generateActivationCode() async {
-    final json = await _post('/me/activation-code', {});
+  Future<String> generateActivationCode({String? locationName}) async {
+    final json = await _post('/me/activation-code', {
+      if (locationName != null && locationName.isNotEmpty)
+        'location_name': locationName,
+    });
     return json['code'] as String;
   }
 
