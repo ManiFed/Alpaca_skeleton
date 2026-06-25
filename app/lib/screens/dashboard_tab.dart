@@ -122,51 +122,48 @@ class _DashboardView extends StatelessWidget {
     final unread = data.alerts.where((a) => !a.read).length;
 
     return LayoutBuilder(
-      builder: (context, constraints) => RefreshIndicator(
-        onRefresh: onRefresh,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(14, topPad + 6, 14, bottomPad),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Hero(
-                    name: name,
-                    online: online,
-                    totalNodes: data.nodes.length,
-                    obs24h: data.recentObs.length,
-                    targets: data.targets.length,
-                    unread: unread,
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(14, topPad + 6, 14, bottomPad),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _Hero(
+                  name: name,
+                  online: online,
+                  totalNodes: data.nodes.length,
+                  obs24h: data.recentObs.length,
+                  targets: data.targets.length,
+                  unread: unread,
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: (constraints.maxHeight - topPad - bottomPad - 180)
+                      .clamp(360.0, 900.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        flex: 30,
+                        child: _ActivityPanel(obs: data.recentObs),
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        flex: 38,
+                        child: _TargetsPanel(targets: data.targets),
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        flex: 28,
+                        child: _AlertsPanel(alerts: data.alerts),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: (constraints.maxHeight - topPad - bottomPad - 180)
-                        .clamp(360.0, 900.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          flex: 30,
-                          child: _ActivityPanel(obs: data.recentObs),
-                        ),
-                        const SizedBox(height: 12),
-                        Expanded(
-                          flex: 38,
-                          child: _TargetsPanel(targets: data.targets),
-                        ),
-                        const SizedBox(height: 12),
-                        Expanded(
-                          flex: 28,
-                          child: _AlertsPanel(alerts: data.alerts),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

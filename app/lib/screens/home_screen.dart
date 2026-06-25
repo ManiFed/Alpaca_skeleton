@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/aladin_sky.dart';
+import '../widgets/glass.dart' show GrainOverlay, LiveDot;
 import 'dashboard_tab.dart';
 import 'me_screen.dart';
 import 'nodes_tab.dart';
@@ -80,6 +81,8 @@ class _HomeScreenState extends State<HomeScreen> {
         Positioned.fill(
           child: Container(color: const Color(0xBB000814)),
         ),
+        // Film grain — organic texture over everything.
+        const Positioned.fill(child: GrainOverlay()),
         Scaffold(
           backgroundColor: Colors.transparent,
           extendBodyBehindAppBar: true,
@@ -105,7 +108,7 @@ class _HomeScreenState extends State<HomeScreen> {
             title: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const _PulseDot(color: BSTheme.accent, size: 7),
+                const LiveDot(color: BSTheme.accent, size: 7),
                 const SizedBox(width: 10),
                 Text(
                   _tabs[_index].title,
@@ -245,62 +248,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
-    );
-  }
-}
-
-// Animated dot in the AppBar indicating live data.
-class _PulseDot extends StatefulWidget {
-  const _PulseDot({required this.color, required this.size});
-  final Color color;
-  final double size;
-
-  @override
-  State<_PulseDot> createState() => _PulseDotState();
-}
-
-class _PulseDotState extends State<_PulseDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<double> _anim;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat(reverse: true);
-    _anim = Tween<double>(begin: 0.3, end: 1.0).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _anim,
-      builder: (_, __) => Container(
-        width: widget.size,
-        height: widget.size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: widget.color,
-          boxShadow: [
-            BoxShadow(
-              color: widget.color.withValues(alpha: _anim.value * 0.9),
-              blurRadius: _anim.value * 10,
-              spreadRadius: _anim.value * 1.5,
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -1,8 +1,10 @@
 // ignore: avoid_web_libraries_in_flutter
+import 'dart:convert';
 import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
@@ -284,6 +286,8 @@ class _ClaimSheet extends StatefulWidget {
   State<_ClaimSheet> createState() => _ClaimSheetState();
 }
 
+enum _LocStep { idle, geocoding, confirming, confirmed }
+
 class _ClaimSheetState extends State<_ClaimSheet> {
   final _locationCtrl = TextEditingController();
   String? _code;
@@ -292,6 +296,14 @@ class _ClaimSheetState extends State<_ClaimSheet> {
   String? _error;
   double? _lat;
   double? _lon;
+  String? _resolvedLocation;
+  _LocStep _step = _LocStep.idle;
+
+  @override
+  void initState() {
+    super.initState();
+    _locationCtrl.addListener(() => setState(() {}));
+  }
 
   @override
   void dispose() {
@@ -299,8 +311,19 @@ class _ClaimSheetState extends State<_ClaimSheet> {
     super.dispose();
   }
 
+  void _resetLocation() {
+    _lat = null;
+    _lon = null;
+    _resolvedLocation = null;
+    _step = _LocStep.idle;
+    _error = null;
+  }
+
   Future<void> _detectLocation() async {
-    setState(() { _locating = true; _error = null; });
+    setState(() {
+      _locating = true;
+      _error = null;
+    });
     try {
       final pos = await html.window.navigator.geolocation.getCurrentPosition(
         enableHighAccuracy: true,
@@ -312,11 +335,11 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           _lat = lat;
           _lon = lon;
           _locating = false;
-          // Pre-fill name field if empty
           if (_locationCtrl.text.trim().isEmpty) {
             _locationCtrl.text =
                 '${lat.toStringAsFixed(4)}°, ${lon.toStringAsFixed(4)}°';
           }
+          _step = _LocStep.confirmed;
         });
       }
     } catch (e) {
@@ -329,12 +352,63 @@ class _ClaimSheetState extends State<_ClaimSheet> {
     }
   }
 
+  Future<void> _lookupLocation() async {
+    final query = _locationCtrl.text.trim();
+    if (query.isEmpty) return;
+    setState(() {
+      _step = _LocStep.geocoding;
+      _error = null;
+    });
+    try {
+      final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+        'q': query,
+        'format': 'json',
+        'limit': '1',
+        'addressdetails': '1',
+      });
+      final resp = await http.get(
+        uri,
+        headers: {'User-Agent': 'BoundlessSkiesApp/1.0'},
+      );
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as List<dynamic>;
+        if (data.isNotEmpty) {
+          final result = data.first as Map<String, dynamic>;
+          final lat = double.tryParse(result['lat'] as String? ?? '');
+          final lon = double.tryParse(result['lon'] as String? ?? '');
+          if (lat != null && lon != null) {
+            setState(() {
+              _lat = lat;
+              _lon = lon;
+              _resolvedLocation = result['display_name'] as String?;
+              _step = _LocStep.confirming;
+            });
+            return;
+          }
+        }
+        setState(() {
+          _step = _LocStep.idle;
+          _error = 'No location found for "$query". Try a more specific name.';
+        });
+      } else {
+        setState(() {
+          _step = _LocStep.idle;
+          _error = 'Location lookup failed. Try again or use the GPS button.';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _step = _LocStep.idle;
+          _error = 'Location lookup failed. Try again or use the GPS button.';
+        });
+      }
+    }
+  }
+
   Future<void> _generate() async {
     final location = _locationCtrl.text.trim();
-    if (_lat == null && location.isEmpty) {
-      setState(() => _error = 'Enter a location or tap the GPS button.');
-      return;
-    }
     setState(() {
       _busy = true;
       _error = null;
@@ -379,7 +453,6 @@ class _ClaimSheetState extends State<_ClaimSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Drag handle
           Center(
             child: Container(
               width: 36,
@@ -393,9 +466,37 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           ),
           Text('Connect a telescope', style: tt.headlineSmall),
           const SizedBox(height: 10),
+          if (_code == null) ..._buildLocationSection(tt),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: const TextStyle(color: BSTheme.danger, fontSize: 13),
+            ),
+          ],
+          const SizedBox(height: 16),
+          if (_code != null)
+            ..._buildCodeSection(tt, context)
+          else if (_busy)
+            const Center(child: CircularProgressIndicator())
+          else if (_step == _LocStep.confirmed)
+            FilledButton(
+              onPressed: _generate,
+              child: const Text('Get activation code'),
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildLocationSection(TextTheme tt) {
+    switch (_step) {
+      case _LocStep.idle:
+        return [
           Text(
-            'Enter the location of the telescope — used for scheduling and sky '
-            'conditions. Tap the GPS button to detect automatically.',
+            'Enter the location of the telescope — used for scheduling and '
+            'sky conditions.',
             style: tt.bodyMedium,
           ),
           const SizedBox(height: 20),
@@ -405,31 +506,23 @@ class _ClaimSheetState extends State<_ClaimSheet> {
               Expanded(
                 child: TextField(
                   controller: _locationCtrl,
-                  enabled: !_busy && _code == null,
-                  decoration: InputDecoration(
+                  enabled: !_locating,
+                  autofocus: true,
+                  decoration: const InputDecoration(
                     labelText: 'Location',
-                    hintText: 'e.g. Starfront Observatories, Rockwood TX',
-                    border: const OutlineInputBorder(),
-                    prefixIcon: const Icon(Icons.location_on_outlined),
-                    suffixIcon: _lat != null
-                        ? const Tooltip(
-                            message: 'GPS coordinates detected',
-                            child: Icon(Icons.gps_fixed,
-                                color: Colors.green, size: 18),
-                          )
-                        : null,
+                    hintText: 'e.g. Larchmont, NY or Dark Sky Ranch, TX',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.location_on_outlined),
                   ),
                   textInputAction: TextInputAction.done,
-                  onSubmitted: (_) => _generate(),
+                  onSubmitted: (_) => _lookupLocation(),
                 ),
               ),
               const SizedBox(width: 8),
               Tooltip(
-                message: 'Detect my location',
+                message: 'Use device GPS instead',
                 child: FilledButton.tonal(
-                  onPressed: (_busy || _code != null || _locating)
-                      ? null
-                      : _detectLocation,
+                  onPressed: _locating ? null : _detectLocation,
                   style: FilledButton.styleFrom(
                     minimumSize: const Size(48, 56),
                     padding: EdgeInsets.zero,
@@ -445,99 +538,214 @@ class _ClaimSheetState extends State<_ClaimSheet> {
               ),
             ],
           ),
-          if (_lat != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              'GPS: ${_lat!.toStringAsFixed(5)}°, ${_lon!.toStringAsFixed(5)}°',
-              style: const TextStyle(fontSize: 11, color: Colors.green),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _locationCtrl.text.trim().isEmpty ? null : _lookupLocation,
+            child: const Text('Confirm location'),
+          ),
+        ];
+
+      case _LocStep.geocoding:
+        return [
+          Text(
+            'Enter the location of the telescope — used for scheduling and '
+            'sky conditions.',
+            style: tt.bodyMedium,
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _locationCtrl,
+            enabled: false,
+            decoration: const InputDecoration(
+              labelText: 'Location',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.location_on_outlined),
             ),
-          ],
-          if (_error != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _error!,
-              style: const TextStyle(color: BSTheme.danger, fontSize: 13),
-            ),
-          ],
+          ),
           const SizedBox(height: 16),
-          if (_busy)
-            const Center(child: CircularProgressIndicator())
-          else if (_code == null)
-            FilledButton(
-              onPressed: _generate,
-              child: const Text('Get activation code'),
-            )
-          else ...[
-            Text(
-              'Enter this code in the node software to activate your telescope:',
-              style: tt.bodySmall,
+          const Center(child: CircularProgressIndicator()),
+          const SizedBox(height: 4),
+        ];
+
+      case _LocStep.confirming:
+        return [
+          Text('Is this the right location?', style: tt.titleMedium),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+            decoration: BoxDecoration(
+              border: Border.all(color: BSTheme.glassBorder),
+              borderRadius: BorderRadius.circular(10),
             ),
-            const SizedBox(height: 6),
-            Text(
-              '1. On the node computer, open a browser to http://localhost:5173\n'
-              '2. Go to Settings → Cloud tab\n'
-              '3. Paste the code and save — the telescope will appear here.',
-              style: tt.bodySmall?.copyWith(
-                fontFamily: 'monospace',
-                height: 1.6,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              padding:
-                  const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _code!,
-                      style: tt.headlineMedium?.copyWith(
-                        fontFamily: 'monospace',
-                        letterSpacing: 2,
-                        fontWeight: FontWeight.w700,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child: Icon(Icons.location_on, size: 16, color: BSTheme.accent),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _resolvedLocation ?? _locationCtrl.text,
+                        style: const TextStyle(
+                          fontFamily: 'Geist',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: BSTheme.ink,
+                        ),
                       ),
-                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.only(left: 24),
+                  child: Text(
+                    '${_lat!.toStringAsFixed(5)}°, ${_lon!.toStringAsFixed(5)}°',
+                    style: const TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 12,
+                      color: BSTheme.ink3,
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Copy',
-                    icon: const Icon(Icons.copy_outlined),
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: _code!));
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Code copied')),
-                        );
-                      }
-                    },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(_resetLocation),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: const Text('Edit'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => setState(() => _step = _LocStep.confirmed),
+                  icon: const Icon(Icons.check, size: 16),
+                  label: const Text('Yes, this is it'),
+                ),
+              ),
+            ],
+          ),
+        ];
+
+      case _LocStep.confirmed:
+        final hasCoords = _lat != null;
+        final coordStr = hasCoords
+            ? '  ·  ${_lat!.toStringAsFixed(4)}°, ${_lon!.toStringAsFixed(4)}°'
+            : '';
+        final label = _resolvedLocation ?? _locationCtrl.text;
+        return [
+          Row(
+            children: [
+              const Icon(Icons.check_circle_outline, size: 18, color: Colors.green),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '$label$coordStr',
+                  style: const TextStyle(
+                    fontFamily: 'Geist',
+                    fontSize: 13,
+                    color: BSTheme.ink,
                   ),
-                ],
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (!_busy)
+                TextButton(
+                  onPressed: () => setState(_resetLocation),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: const Text('Edit'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+        ];
+    }
+  }
+
+  List<Widget> _buildCodeSection(TextTheme tt, BuildContext context) {
+    return [
+      Text(
+        'Enter this code in the node software to activate your telescope:',
+        style: tt.bodySmall,
+      ),
+      const SizedBox(height: 6),
+      Text(
+        '1. On the telescope computer, make sure the node software is running\n'
+        '2. Open a browser on that computer to http://localhost:5173\n'
+        '3. Go to Settings → Cloud tab\n'
+        '4. Paste the code and save — the telescope will appear here.',
+        style: tt.bodySmall?.copyWith(
+          fontFamily: 'monospace',
+          height: 1.6,
+        ),
+      ),
+      const SizedBox(height: 16),
+      Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _code!,
+                style: tt.headlineMedium?.copyWith(
+                  fontFamily: 'monospace',
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.w700,
+                ),
+                textAlign: TextAlign.center,
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Valid for 30 days. Once the node registers, '
-              'pull to refresh the telescope list.',
-              style: tt.bodySmall,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => setState(() {
-                _code = null;
-                _error = null;
-              }),
-              icon: const Icon(Icons.refresh),
-              label: const Text('Start over'),
+            IconButton(
+              tooltip: 'Copy',
+              icon: const Icon(Icons.copy_outlined),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: _code!));
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Code copied')),
+                  );
+                }
+              },
             ),
           ],
-          const SizedBox(height: 8),
-        ],
+        ),
       ),
-    );
+      const SizedBox(height: 8),
+      Text(
+        'Valid for 30 days. Once the node registers, '
+        'pull to refresh the telescope list.',
+        style: tt.bodySmall,
+        textAlign: TextAlign.center,
+      ),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(
+        onPressed: () => setState(() {
+          _code = null;
+          _error = null;
+          _resetLocation();
+          _locationCtrl.clear();
+        }),
+        icon: const Icon(Icons.refresh),
+        label: const Text('Start over'),
+      ),
+    ];
   }
 }
