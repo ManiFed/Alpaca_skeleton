@@ -42,7 +42,7 @@ class _DashboardTabState extends State<DashboardTab> {
       future: _future,
       onRefresh: _refresh,
       builder: (context, stats) => ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
         children: [
           Text('Hello, $name',
               style: Theme.of(context).textTheme.headlineSmall),
@@ -54,39 +54,44 @@ class _DashboardTabState extends State<DashboardTab> {
             style: Theme.of(context).textTheme.bodyLarge,
           ),
           const SizedBox(height: 20),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            childAspectRatio: 1.25,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            children: [
-              _StatCard(
-                label: 'Observations',
-                value: stats.totalObservations,
-                icon: Icons.camera_alt_outlined,
-                color: BSTheme.success,
-              ),
-              _StatCard(
-                label: 'Sent to AAVSO',
-                value: stats.aavsoSubmitted,
-                icon: Icons.send_outlined,
-                color: const Color(0xFF7DA9FF),
-              ),
-              _StatCard(
-                label: 'Stars watched',
-                value: stats.targetsObserved,
-                icon: Icons.star_outline,
-                color: const Color(0xFFFFC857),
-              ),
-              _StatCard(
-                label: 'Clear nights',
-                value: stats.clearNights,
-                icon: Icons.nights_stay_outlined,
-                color: BSTheme.warning,
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final cols = constraints.maxWidth > 500 ? 4 : 2;
+              return GridView.count(
+                crossAxisCount: cols,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                childAspectRatio: cols == 4 ? 1.8 : 1.6,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                children: [
+                  _StatCard(
+                    label: 'Observations',
+                    value: stats.totalObservations,
+                    icon: Icons.camera_alt_outlined,
+                    color: BSTheme.success,
+                  ),
+                  _StatCard(
+                    label: 'Sent to AAVSO',
+                    value: stats.aavsoSubmitted,
+                    icon: Icons.send_outlined,
+                    color: const Color(0xFF7DA9FF),
+                  ),
+                  _StatCard(
+                    label: 'Stars watched',
+                    value: stats.targetsObserved,
+                    icon: Icons.star_outline,
+                    color: const Color(0xFFFFC857),
+                  ),
+                  _StatCard(
+                    label: 'Clear nights',
+                    value: stats.clearNights,
+                    icon: Icons.nights_stay_outlined,
+                    color: BSTheme.warning,
+                  ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 20),
           Card(
@@ -118,23 +123,37 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
     return Semantics(
       label: '$value $label',
       child: Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: color, size: 30),
-              const Spacer(),
-              Text('$value',
-                  style: Theme.of(context)
-                      .textTheme
-                      .displaySmall
-                      ?.copyWith(fontWeight: FontWeight.w800)),
-              Text(label, style: Theme.of(context).textTheme.bodyMedium),
+              Row(
+                children: [
+                  Icon(icon, color: color, size: 18),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: tt.bodySmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '$value',
+                style: tt.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                ),
+              ),
             ],
           ),
         ),

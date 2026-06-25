@@ -187,11 +187,12 @@ def center_on_target(
             return CenterResult(True, target_ra, target_dec, solved_ra, solved_dec,
                                 error, iterations)
 
-        # Apply correction in commanded-space. RA correction is on the sky, so
-        # divide the RA component by cos(dec) to convert sky-degrees → RA-degrees.
+        # Apply correction in commanded-space: command_next = command + (target - solved).
+        # RA and Dec are both in degrees here; the mount takes RA in degrees too,
+        # so no cos(dec) scaling is needed — that would amplify corrections at high
+        # declination and cause divergence.
         d_dec = target_dec - solved_dec
-        cosd = max(math.cos(math.radians(target_dec)), 1e-3)
-        d_ra = (target_ra - solved_ra) / cosd
+        d_ra = target_ra - solved_ra
         # Wrap RA delta into [-180, 180] so a target near 0h/24h corrects the short way.
         d_ra = (d_ra + 180.0) % 360.0 - 180.0
         d_ra = _clamp(d_ra, -max_correction_deg, max_correction_deg)

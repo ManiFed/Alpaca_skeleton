@@ -1,7 +1,8 @@
 # Flutter / Dart
 .dart_tool/
 .packages
-build/
+build/*
+!build/web/
 .flutter-plugins
 .flutter-plugins-dependencies
 pubspec.lock
@@ -13,10 +14,6 @@ ios/
 linux/
 macos/
 windows/
-
-# web/ source is tracked (manifest, index.html, icons)
-# build/web/ output is tracked so Fly.io can serve it without a build step
-!build/web/
 
 # IDE
 .idea/
