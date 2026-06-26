@@ -3,7 +3,7 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile.cloud"
 
 [deploy]
-startCommand = "python -m cloud.main cloud/config.production.yaml"
+startCommand = "gunicorn -w 1 --threads 8 --timeout 60 --bind 0.0.0.0:$PORT cloud.wsgi:app"
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 30
 restartPolicyType = "always"
