@@ -107,8 +107,17 @@ class NodeInfo:
     has_enclosure: bool = False      # dome/minidome: operates in light rain/wind
     has_ups: bool = False            # survives brief power cuts
 
+    # ── Portability & session ─────────────────────────────────────────────────
+    portable: bool = False           # moves between sites; sleeps between sessions
+    vacation_until: str = ""         # ISO date "YYYY-MM-DD"; empty when not on vacation
+    session_lat: float = 0.0         # tonight's observing location (overrides home coords)
+    session_lon: float = 0.0
+    session_city: str = ""
+    session_site_name: str = ""
+    previous_locations: str = "[]"   # JSON [{lat,lon,city,site_name,last_used}] newest-first
+
     # ── Status ────────────────────────────────────────────────────────────────
-    status: str = "active"           # active | offline | disabled
+    status: str = "active"           # active | sleeping | vacation | disabled
 
     # ── Scheduler hints (operator-provided) ───────────────────────────────────
     scheduling_notes: str = ""       # free text, e.g. "south blocked past az 200"

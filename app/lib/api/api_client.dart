@@ -54,6 +54,11 @@ class ApiClient {
     return _decode(res);
   }
 
+  Future<Map<String, dynamic>> _delete(String path) async {
+    final res = await _http.delete(AppConfig.uri(path), headers: _headers);
+    return _decode(res);
+  }
+
   Map<String, dynamic> _decode(http.Response res) {
     Map<String, dynamic> json;
     try {
@@ -136,6 +141,7 @@ class ApiClient {
     double? lon,
     String? telescopeModel,
     Map<String, dynamic>? telescopeSpecs,
+    bool portable = false,
   }) async {
     final body = <String, dynamic>{};
     if (lat != null && lon != null) {
@@ -151,9 +157,40 @@ class ApiClient {
     if (telescopeSpecs != null && telescopeSpecs.isNotEmpty) {
       body['telescope_specs'] = telescopeSpecs;
     }
+    if (portable) body['portable'] = true;
     final json = await _post('/me/activation-code', body);
     return json['code'] as String;
   }
+
+  /// Start tonight's observing session for a portable node.
+  /// Returns {mpsas, bortle} for the session location.
+  Future<Map<String, dynamic>> startNodeSession(
+    String nodeId, {
+    required double lat,
+    required double lon,
+    required String city,
+    String siteName = '',
+  }) =>
+      _post('/me/nodes/$nodeId/session', {
+        'lat': lat,
+        'lon': lon,
+        'city': city,
+        'site_name': siteName,
+      });
+
+  /// End a portable node's session early (returns it to sleeping).
+  Future<void> endNodeSession(String nodeId) => _delete('/me/nodes/$nodeId/session');
+
+  /// Put a node on vacation until [untilDate] ('YYYY-MM-DD').
+  Future<void> setNodeVacation(String nodeId, String untilDate) =>
+      _put('/me/nodes/$nodeId/vacation', {'until_date': untilDate});
+
+  /// Cancel a node's active vacation.
+  Future<void> cancelNodeVacation(String nodeId) => _delete('/me/nodes/$nodeId/vacation');
+
+  /// Fetch sky quality (mpsas + bortle) for a lat/lon without starting a session.
+  Future<Map<String, dynamic>> skyQuality(double lat, double lon) =>
+      _get('/sky-quality', {'lat': lat, 'lon': lon});
 
   Future<void> pushActivationCode(String pairingToken, String activationCode) =>
       _post('/nodes/pair', {

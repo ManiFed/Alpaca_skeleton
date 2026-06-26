@@ -349,7 +349,15 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("nodes", "clear_nights_30d",   "INTEGER DEFAULT 0"),
     ("nodes", "outlier_rate",       "DOUBLE PRECISION DEFAULT 0.0"),
     ("nodes", "reliability_score",  "DOUBLE PRECISION DEFAULT 0.5"),
-    ("nodes", "perf_updated_at",    "TEXT DEFAULT ''"),
+    ("nodes", "perf_updated_at",      "TEXT DEFAULT ''"),
+    ("nodes", "portable",             "INTEGER DEFAULT 0"),
+    ("nodes", "vacation_until",       "TEXT DEFAULT ''"),
+    ("nodes", "session_lat",          "DOUBLE PRECISION DEFAULT 0"),
+    ("nodes", "session_lon",          "DOUBLE PRECISION DEFAULT 0"),
+    ("nodes", "session_city",         "TEXT DEFAULT ''"),
+    ("nodes", "session_site_name",    "TEXT DEFAULT ''"),
+    ("nodes", "previous_locations",   "TEXT DEFAULT '[]'"),
+    ("activation_codes", "portable",  "INTEGER DEFAULT 0"),
 ]
 
 

@@ -273,7 +273,8 @@ def api_register():
     node_lon = float(info.get("longitude") or 0.0)
     if activation_code:
         code_row = db.query_one(
-            "SELECT latitude, longitude, observatory_name, telescope_model, telescope_specs"
+            "SELECT latitude, longitude, observatory_name, telescope_model,"
+            "       telescope_specs, portable"
             " FROM activation_codes WHERE code = %s",
             (activation_code,),
         )
@@ -288,6 +289,8 @@ def api_register():
             # node that autodetected real ALPACA hardware always wins.
             if code_row.get("telescope_model") and not info.get("telescope_model"):
                 info["telescope_model"] = code_row["telescope_model"]
+            if code_row.get("portable") and "portable" not in info:
+                info["portable"] = True
             try:
                 specs = json.loads(code_row.get("telescope_specs") or "{}")
             except (TypeError, ValueError):
@@ -833,7 +836,9 @@ def api_me_nodes(user):
     """All nodes this member has claimed."""
     rows = db.query(
         """SELECT n.node_id, n.telescope_model, n.city, n.country, n.status,
-                  n.last_heartbeat, nm.claimed_at
+                  n.last_heartbeat, n.portable, n.vacation_until,
+                  n.session_city, n.session_site_name, n.previous_locations,
+                  nm.claimed_at
            FROM nodes n
            JOIN node_members nm ON nm.node_id = n.node_id
            WHERE nm.user_id = %s""",
@@ -841,6 +846,8 @@ def api_me_nodes(user):
     )
     for r in rows:
         r["online"] = registry.is_online(r)
+        r["portable"] = bool(r.get("portable"))
+        r["previous_locations"] = db.loads(r.get("previous_locations"), [])
     return jsonify({"nodes": rows})
 
 
@@ -865,6 +872,98 @@ def api_me_claim_node(user, node_id):
         )
         logger.info("Node %s claimed by member %s", node_id, user["user_id"])
     return jsonify({"ok": True, "node_id": node_id})
+
+
+def _assert_owns_node(user_id: str, node_id: str) -> bool:
+    return bool(db.query_one(
+        "SELECT 1 FROM node_members WHERE node_id = %s AND user_id = %s",
+        (node_id, user_id),
+    ))
+
+
+@app.route("/api/v1/me/nodes/<node_id>/session", methods=["POST"])
+@auth.require_member
+def api_me_start_session(user, node_id):
+    """Start a portable node's observing session for tonight.
+
+    Body: {lat, lon, city, site_name}
+    Returns: {mpsas, bortle} for the session location.
+    """
+    if not _assert_owns_node(user["user_id"], node_id):
+        return jsonify({"error": "node not found"}), 404
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        lat = float(body["lat"])
+        lon = float(body["lon"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "lat and lon required"}), 400
+    city = str(body.get("city") or "").strip()
+    site_name = str(body.get("site_name") or "").strip()
+    try:
+        result = registry.start_session(
+            node_id, lat, lon, city, site_name,
+            _config.get("light_pollution", {}).get("api_key", ""),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, **result})
+
+
+@app.route("/api/v1/me/nodes/<node_id>/session", methods=["DELETE"])
+@auth.require_member
+def api_me_end_session(user, node_id):
+    """Manually end a portable node's session (sets it back to sleeping)."""
+    if not _assert_owns_node(user["user_id"], node_id):
+        return jsonify({"error": "node not found"}), 404
+    registry.end_session(node_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/v1/me/nodes/<node_id>/vacation", methods=["PUT"])
+@auth.require_member
+def api_me_set_vacation(user, node_id):
+    """Put a node on vacation until *until_date* (ISO date 'YYYY-MM-DD').
+
+    Body: {until_date: "YYYY-MM-DD"}
+    """
+    if not _assert_owns_node(user["user_id"], node_id):
+        return jsonify({"error": "node not found"}), 404
+    body = request.get_json(force=True, silent=True) or {}
+    until_date = str(body.get("until_date") or "").strip()
+    if not until_date:
+        return jsonify({"error": "until_date required (YYYY-MM-DD)"}), 400
+    import re as _re
+    if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", until_date):
+        return jsonify({"error": "until_date must be YYYY-MM-DD"}), 400
+    registry.set_vacation(node_id, until_date)
+    return jsonify({"ok": True, "vacation_until": until_date})
+
+
+@app.route("/api/v1/me/nodes/<node_id>/vacation", methods=["DELETE"])
+@auth.require_member
+def api_me_cancel_vacation(user, node_id):
+    """Cancel an active vacation early."""
+    if not _assert_owns_node(user["user_id"], node_id):
+        return jsonify({"error": "node not found"}), 404
+    registry.clear_vacation(node_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/v1/sky-quality", methods=["GET"])
+def api_sky_quality():
+    """Return light pollution data for a lat/lon (used by the Start Tonight sheet).
+
+    Query params: lat, lon
+    Returns: {mpsas, bortle}
+    """
+    try:
+        lat = float(request.args["lat"])
+        lon = float(request.args["lon"])
+    except (KeyError, ValueError):
+        return jsonify({"error": "lat and lon required"}), 400
+    from cloud.conditions import fetch_light_pollution as _lp
+    mpsas, bortle = _lp(lat, lon, _config.get("light_pollution", {}).get("api_key", ""))
+    return jsonify({"mpsas": mpsas, "bortle": bortle})
 
 
 @app.route("/api/v1/me/observations", methods=["GET"])
@@ -1020,18 +1119,20 @@ def api_me_generate_activation_code(user):
             specs = merged
         telescope_specs_json = json.dumps(specs)
 
+    portable = 1 if body.get("portable") else 0
+
     code = _generate_activation_code()
     expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
     db.execute(
         "INSERT INTO activation_codes"
         " (code, user_id, created_at, expires_at, observatory_name, latitude, longitude,"
-        "  telescope_model, telescope_specs)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        "  telescope_model, telescope_specs, portable)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (code, user["user_id"], _now(), expires, location_name, lat, lon,
-         telescope_model, telescope_specs_json),
+         telescope_model, telescope_specs_json, portable),
     )
-    logger.info("Activation code generated for member %s: %s (location: %s)",
-                user["user_id"], code, location_name or "not set")
+    logger.info("Activation code generated for member %s: %s (location: %s, portable: %s)",
+                user["user_id"], code, location_name or "not set", bool(portable))
     return jsonify({"code": code, "expires_at": expires})
 
 

@@ -76,15 +76,18 @@ def fetch_light_pollution_detail(lat: float, lon: float, api_key: str = "") -> d
                           result["source"], result.get("radiance"))
         return result
 
-    # ── Source 3: NASA EOG VIIRS annual composite (Colorado School of Mines) ───
-    result = _fetch_eog_viirs(lat, lon, requests)
+    # ── Source 3: Clear Outside (public HTML scrape, no key required) ────────
+    result = _fetch_clear_outside_lp(lat, lon, requests)
     if result:
         _lp_cache[key] = (time.monotonic(), result["mpsas"], result["bortle"],
                           result["source"], result.get("radiance"))
         return result
 
-    # ── Source 4: default ──────────────────────────────────────────────────────
-    return _lp_default(lat, lon)
+    # ── Source 4: default — cache briefly so we don't hammer sources on every call
+    result = _lp_default(lat, lon)
+    _lp_cache[key] = (time.monotonic() - _LP_TTL_S + 3600,   # retry in 1 h
+                      result["mpsas"], result["bortle"], result["source"], None)
+    return result
 
 
 def _fetch_lpm_info(lat: float, lon: float, api_key: str, requests) -> Optional[dict]:
@@ -112,80 +115,39 @@ def _fetch_lpm_info(lat: float, lon: float, api_key: str, requests) -> Optional[
     return None
 
 
-def _fetch_eog_viirs(lat: float, lon: float, requests) -> Optional[dict]:
+def _fetch_clear_outside_lp(lat: float, lon: float, requests) -> Optional[dict]:
     """
-    NASA Earth Observation Group VIIRS Nighttime Lights annual composite.
-    Uses the public WCS endpoint at Colorado School of Mines EOG.
-    Returns radiance in nW/cm²/sr → converts via same Falchi formula.
+    Clear Outside (clearoutside.com) — public site, no API key needed.
+    Scrapes the estimated sky quality (MPSAS) and Bortle class from the
+    forecast page, which draws from the Falchi 2016 World Atlas data.
     """
-    # EOG WCS for VNL (VIIRS Nighttime Lights) annual composite
-    # Bounding box: tiny box around the point (0.01° each side)
-    bbox = f"{lon-0.01},{lat-0.01},{lon+0.01},{lat+0.01}"
+    import re
     try:
         resp = requests.get(
-            "https://eogdata.mines.edu/geoserver/VIIRS/wcs",
-            params={
-                "SERVICE": "WCS",
-                "VERSION": "1.0.0",
-                "REQUEST": "GetCoverage",
-                "COVERAGE": "VNL_v2_npp_2023_global_vcmslnl_c202402081600",
-                "CRS": "EPSG:4326",
-                "BBOX": bbox,
-                "WIDTH": "1",
-                "HEIGHT": "1",
-                "FORMAT": "GeoTIFF",
-            },
-            timeout=20,
+            f"https://clearoutside.com/forecast/{lat:.4f}/{lon:.4f}",
+            timeout=15,
+            headers={"User-Agent": "BoundlessSkies/1.0 (+https://boundlessskies.org)"},
         )
-        if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
-            radiance = _extract_geotiff_value(resp.content)
-            if radiance is not None and radiance >= 0:
-                mpsas = _radiance_to_mpsas(radiance)
-                bortle = mpsas_to_bortle(mpsas)
-                logger.info("LP EOG/VIIRS at %.3f,%.3f: %.3f nW → %.2f mpsas (Bortle %d)",
-                            lat, lon, radiance, mpsas, bortle)
-                return {"mpsas": mpsas, "bortle": bortle,
-                        "source": "NASA EOG VIIRS 2023", "radiance": radiance}
-        logger.debug("EOG VIIRS returned HTTP %d / content-type %s",
-                     resp.status_code, resp.headers.get("content-type", "?"))
+        if resp.status_code == 429:
+            logger.warning("Clear Outside rate-limited (429) for %.3f,%.3f", lat, lon)
+            return None
+        if resp.status_code != 200:
+            logger.debug("Clear Outside returned HTTP %d", resp.status_code)
+            return None
+
+        m_mpsas = re.search(r"Sky Quality.*?<strong>([\d.]+)</strong>\s*Magnitude", resp.text, re.DOTALL)
+        m_bortle = re.search(r"<strong>Class\s+(\d+)</strong>\s*Bortle", resp.text)
+        if m_mpsas and m_bortle:
+            mpsas = float(m_mpsas.group(1))
+            bortle = int(m_bortle.group(1))
+            logger.info("LP Clear Outside at %.3f,%.3f: %.2f mpsas (Bortle %d)",
+                        lat, lon, mpsas, bortle)
+            return {"mpsas": mpsas, "bortle": bortle,
+                    "source": "Clear Outside", "radiance": None}
+        logger.debug("Clear Outside: could not parse MPSAS/Bortle from page")
     except Exception as exc:
-        logger.debug("EOG VIIRS fetch failed: %s", exc)
+        logger.debug("Clear Outside LP fetch failed: %s", exc)
     return None
-
-
-def _extract_geotiff_value(data: bytes) -> Optional[float]:
-    """Read the first pixel value from a single-band GeoTIFF byte string."""
-    try:
-        import struct
-        # Minimal TIFF reader: find StripOffsets (tag 278) and read one float/int32
-        if data[:2] not in (b"II", b"MM"):
-            return None
-        little = data[:2] == b"II"
-        bo = "<" if little else ">"
-        ifd_offset = struct.unpack_from(f"{bo}I", data, 4)[0]
-        n_entries = struct.unpack_from(f"{bo}H", data, ifd_offset)[0]
-        tags = {}
-        for i in range(n_entries):
-            base = ifd_offset + 2 + i * 12
-            tag, typ, count, val_off = struct.unpack_from(f"{bo}HHII", data, base)
-            tags[tag] = (typ, count, val_off)
-        # StripOffsets=273, SampleFormat=339, BitsPerSample=258
-        strip_tag = tags.get(273)
-        if strip_tag is None:
-            return None
-        strip_offset = strip_tag[2]
-        bits_tag = tags.get(258)
-        bits = bits_tag[2] if bits_tag and bits_tag[1] == 1 else 32
-        fmt_tag = tags.get(339)
-        sample_fmt = fmt_tag[2] if fmt_tag and fmt_tag[1] == 1 else 1
-        # sample_fmt: 1=uint, 2=int, 3=float
-        fmt_map = {(32, 3): f"{bo}f", (32, 1): f"{bo}I", (32, 2): f"{bo}i",
-                   (16, 1): f"{bo}H", (16, 2): f"{bo}h"}
-        fmt = fmt_map.get((bits, sample_fmt), f"{bo}f")
-        val = struct.unpack_from(fmt, data, strip_offset)[0]
-        return float(val)
-    except Exception:
-        return None
 
 
 def _lp_default(lat: float, lon: float) -> dict:

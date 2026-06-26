@@ -14,8 +14,10 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import time
+
 from cloud import db
-from cloud.conditions import fetch_light_pollution
+from cloud.conditions import fetch_light_pollution, fetch_light_pollution_detail
 from src.shared_models import NodeInfo
 
 logger = logging.getLogger("cloud.registry")
@@ -64,6 +66,10 @@ def register_node(info: dict, lp_api_key: str = "") -> dict:
 
     mpsas, bortle = fetch_light_pollution(node.latitude, node.longitude, lp_api_key)
 
+    portable = _bool(info.get("portable", False))
+    # Portable nodes start sleeping; fixed nodes start active.
+    initial_status = "sleeping" if (portable and not existing) else "active"
+
     db.execute(
         """INSERT INTO nodes (
                node_id, api_key, owner_name, owner_email,
@@ -76,8 +82,8 @@ def register_node(info: dict, lp_api_key: str = "") -> dict:
                filter_set, filters, mag_bright_limit, mag_faint_limit, min_altitude_deg,
                has_dew_heater, has_power_mgmt, has_enclosure, has_ups,
                horizon_mask, scheduling_notes, preferred_targets,
-               status, registered_at, last_heartbeat)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               portable, status, registered_at, last_heartbeat)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            ON CONFLICT(node_id) DO UPDATE SET
                owner_name=excluded.owner_name, owner_email=excluded.owner_email,
                latitude=excluded.latitude, longitude=excluded.longitude,
@@ -108,7 +114,8 @@ def register_node(info: dict, lp_api_key: str = "") -> dict:
                horizon_mask=excluded.horizon_mask,
                scheduling_notes=excluded.scheduling_notes,
                preferred_targets=excluded.preferred_targets,
-               status='active', last_heartbeat=excluded.last_heartbeat""",
+               portable=excluded.portable,
+               last_heartbeat=excluded.last_heartbeat""",
         (
             node_id, api_key, node.owner_name, node.owner_email,
             node.latitude, node.longitude, node.elevation,
@@ -134,7 +141,7 @@ def register_node(info: dict, lp_api_key: str = "") -> dict:
             str(info.get("horizon_mask", "[]") or "[]"),
             str(info.get("scheduling_notes", "") or ""),
             str(info.get("preferred_targets", "[]") or "[]"),
-            "active", _now(), _now(),
+            portable, initial_status, _now(), _now(),
         ),
     )
     logger.info(
@@ -162,9 +169,14 @@ def authenticate(node_id: str, api_key: str) -> Optional[dict]:
 
 def heartbeat(node_id: str, conditions: Optional[dict] = None) -> None:
     """Record a heartbeat, optionally with current local conditions
-    (sky temperature, detected cloud, safety state, utc_offset_hours, ...)."""
+    (sky temperature, detected cloud, safety state, utc_offset_hours, ...).
+
+    Does not override vacation or disabled status — those are app-managed states.
+    Wakes a sleeping portable node to active when it starts heartbeating.
+    """
     params: list = [_now()]
-    sql = "UPDATE nodes SET last_heartbeat = %s, status = 'active'"
+    sql = ("UPDATE nodes SET last_heartbeat = %s, "
+           "status = CASE WHEN status IN ('vacation', 'disabled') THEN status ELSE 'active' END")
     if conditions:
         sql += ", last_conditions = %s"
         params.append(json.dumps(conditions))
@@ -189,8 +201,9 @@ def list_nodes(active_only: bool = False) -> list:
 
 
 def is_online(node_row: dict) -> bool:
-    """True when the node has heartbeated recently and is not disabled."""
-    if node_row.get("status") == "disabled":
+    """True when the node has heartbeated recently and is not in a non-observing state."""
+    status = node_row.get("status", "active")
+    if status in ("disabled", "sleeping", "vacation"):
         return False
     hb = node_row.get("last_heartbeat")
     if not hb:
@@ -207,7 +220,9 @@ def public_view(node_row: dict) -> dict:
     """Node row without the API key (and without raw owner email), for status APIs."""
     out = {k: v for k, v in node_row.items() if k not in ("api_key", "owner_email")}
     out["online"] = is_online(node_row)
+    out["portable"] = bool(node_row.get("portable"))
     out["last_conditions"] = db.loads(node_row.get("last_conditions"), {})
+    out["previous_locations"] = db.loads(node_row.get("previous_locations"), [])
     return out
 
 
@@ -325,11 +340,156 @@ def refresh_all_performance() -> int:
 
 
 def refresh_light_pollution(lp_api_key: str = "") -> None:
-    """Periodic re-fetch of light pollution for every node (it drifts slowly;
-    monthly is plenty). Called by the maintenance loop."""
-    for row in db.query("SELECT node_id, latitude, longitude FROM nodes"):
-        mpsas, bortle = fetch_light_pollution(row["latitude"], row["longitude"], lp_api_key)
+    """
+    Periodic re-fetch of light pollution for every node (monthly cadence is
+    plenty — VIIRS data updates annually). Stores mpsas, bortle, and source.
+    Sleeps 3 s between nodes to avoid rate-limiting Clear Outside (fallback source).
+    """
+    for i, row in enumerate(db.query("SELECT node_id, latitude, longitude FROM nodes")):
+        if i > 0:
+            time.sleep(3)
+        result = fetch_light_pollution_detail(row["latitude"], row["longitude"], lp_api_key)
         db.execute(
             "UPDATE nodes SET light_pollution_mpsas = %s, bortle = %s WHERE node_id = %s",
-            (mpsas, bortle, row["node_id"]),
+            (result["mpsas"], result["bortle"], row["node_id"]),
         )
+        logger.info("LP refresh %s: %.2f mpsas Bortle %d [%s]",
+                    row["node_id"], result["mpsas"], result["bortle"], result["source"])
+
+
+# ── Session management (portable nodes) ───────────────────────────────────────
+
+def _update_previous_locations(node_id: str, lat: float, lon: float,
+                                city: str, site_name: str) -> None:
+    """Prepend tonight's location to the node's previous-locations list.
+
+    Deduplicates by city name (case-insensitive).  Keeps the 10 most recent.
+    """
+    row = db.query_one("SELECT previous_locations FROM nodes WHERE node_id = %s", (node_id,))
+    if row is None:
+        return
+    locations: list = db.loads(row.get("previous_locations"), [])
+    entry = {
+        "lat": lat, "lon": lon,
+        "city": city, "site_name": site_name,
+        "last_used": _now(),
+    }
+    city_lc = city.lower()
+    locations = [loc for loc in locations if loc.get("city", "").lower() != city_lc]
+    locations.insert(0, entry)
+    locations = locations[:10]
+    db.execute(
+        "UPDATE nodes SET previous_locations = %s WHERE node_id = %s",
+        (json.dumps(locations), node_id),
+    )
+
+
+def start_session(node_id: str, lat: float, lon: float, city: str,
+                  site_name: str, lp_api_key: str = "") -> dict:
+    """
+    Activate a portable node for tonight's observing session.
+
+    Updates the session location, fetches sky quality for that location,
+    sets status → active, and prepends the location to previous_locations.
+
+    Returns {"mpsas": float, "bortle": int} for the session site.
+    """
+    node = db.query_one("SELECT portable FROM nodes WHERE node_id = %s", (node_id,))
+    if node is None:
+        raise ValueError(f"node not found: {node_id}")
+    if not node.get("portable"):
+        raise ValueError("start_session is only valid for portable nodes")
+
+    mpsas, bortle = fetch_light_pollution(lat, lon, lp_api_key)
+    db.execute(
+        """UPDATE nodes SET
+               session_lat = %s, session_lon = %s,
+               session_city = %s, session_site_name = %s,
+               light_pollution_mpsas = %s, bortle = %s,
+               status = 'active', last_heartbeat = %s
+           WHERE node_id = %s""",
+        (lat, lon, city, site_name, mpsas, bortle, _now(), node_id),
+    )
+    _update_previous_locations(node_id, lat, lon, city, site_name)
+    logger.info(
+        "Session started: node %s @ %s (%.4f,%.4f) %.1f mpsas Bortle %d",
+        node_id, city or site_name, lat, lon, mpsas, bortle,
+    )
+    return {"mpsas": mpsas, "bortle": bortle}
+
+
+def end_session(node_id: str) -> None:
+    """Explicitly end a portable node's session — sets status back to sleeping."""
+    db.execute(
+        "UPDATE nodes SET status = 'sleeping', session_lat = 0, session_lon = 0,"
+        " session_city = '', session_site_name = '' WHERE node_id = %s AND portable = 1",
+        (node_id,),
+    )
+    logger.info("Session ended: node %s → sleeping", node_id)
+
+
+def mark_stale_portables_sleeping() -> int:
+    """Set portable nodes whose heartbeat has gone stale back to sleeping.
+
+    Called by the nightly maintenance loop so a portable node that was left
+    running and lost connection doesn't stay 'active' forever.
+    Returns the number of nodes updated.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=HEARTBEAT_STALE_S)).isoformat()
+    rows = db.query(
+        "SELECT node_id FROM nodes WHERE portable = 1 AND status = 'active'"
+        " AND (last_heartbeat IS NULL OR last_heartbeat < %s)",
+        (cutoff,),
+    )
+    for r in rows:
+        db.execute(
+            "UPDATE nodes SET status = 'sleeping' WHERE node_id = %s",
+            (r["node_id"],),
+        )
+        logger.info("Portable node %s heartbeat stale → sleeping", r["node_id"])
+    return len(rows)
+
+
+# ── Vacation management ────────────────────────────────────────────────────────
+
+def set_vacation(node_id: str, until_date: str) -> None:
+    """Pause a node until *until_date* (ISO date string 'YYYY-MM-DD').
+
+    Missed nights during vacation are excluded from the reliability score.
+    """
+    db.execute(
+        "UPDATE nodes SET status = 'vacation', vacation_until = %s WHERE node_id = %s",
+        (until_date, node_id),
+    )
+    logger.info("Node %s on vacation until %s", node_id, until_date)
+
+
+def clear_vacation(node_id: str) -> None:
+    """Cancel an active vacation.  Portable nodes return to sleeping; fixed to offline."""
+    node = db.query_one("SELECT portable FROM nodes WHERE node_id = %s", (node_id,))
+    if node is None:
+        return
+    new_status = "sleeping" if node.get("portable") else "offline"
+    db.execute(
+        "UPDATE nodes SET status = %s, vacation_until = '' WHERE node_id = %s",
+        (new_status, node_id),
+    )
+    logger.info("Node %s vacation cleared → %s", node_id, new_status)
+
+
+def expire_vacations() -> int:
+    """Auto-clear vacations whose end date has passed.  Called by nightly maintenance."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rows = db.query(
+        "SELECT node_id, portable FROM nodes"
+        " WHERE status = 'vacation' AND vacation_until != '' AND vacation_until < %s",
+        (today,),
+    )
+    for r in rows:
+        new_status = "sleeping" if r.get("portable") else "offline"
+        db.execute(
+            "UPDATE nodes SET status = %s, vacation_until = '' WHERE node_id = %s",
+            (new_status, r["node_id"]),
+        )
+        logger.info("Node %s vacation expired → %s", r["node_id"], new_status)
+    return len(rows)

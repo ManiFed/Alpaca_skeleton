@@ -34,6 +34,36 @@ class Member {
       );
 }
 
+/// A previous observing location stored on a portable node.
+class PreviousLocation {
+  final double lat;
+  final double lon;
+  final String city;
+  final String siteName;
+  final String lastUsed;
+
+  const PreviousLocation({
+    required this.lat,
+    required this.lon,
+    required this.city,
+    required this.siteName,
+    required this.lastUsed,
+  });
+
+  factory PreviousLocation.fromJson(Map<String, dynamic> j) => PreviousLocation(
+        lat: _asDouble(j['lat']),
+        lon: _asDouble(j['lon']),
+        city: _asStr(j['city']),
+        siteName: _asStr(j['site_name']),
+        lastUsed: _asStr(j['last_used']),
+      );
+
+  String get label {
+    if (siteName.isNotEmpty && city.isNotEmpty) return '$siteName, $city';
+    return siteName.isNotEmpty ? siteName : city;
+  }
+}
+
 /// A telescope node the member has claimed (GET /me/nodes).
 class Node {
   final String nodeId;
@@ -43,6 +73,11 @@ class Node {
   final String status;
   final String lastHeartbeat;
   final bool online;
+  final bool portable;
+  final String vacationUntil;
+  final String sessionCity;
+  final String sessionSiteName;
+  final List<PreviousLocation> previousLocations;
 
   const Node({
     required this.nodeId,
@@ -52,17 +87,35 @@ class Node {
     required this.status,
     required this.lastHeartbeat,
     required this.online,
+    required this.portable,
+    required this.vacationUntil,
+    required this.sessionCity,
+    required this.sessionSiteName,
+    required this.previousLocations,
   });
 
-  factory Node.fromJson(Map<String, dynamic> j) => Node(
-        nodeId: _asStr(j['node_id']),
-        telescopeModel: _asStr(j['telescope_model']),
-        city: _asStr(j['city']),
-        country: _asStr(j['country']),
-        status: _asStr(j['status']),
-        lastHeartbeat: _asStr(j['last_heartbeat']),
-        online: j['online'] == true,
-      );
+  factory Node.fromJson(Map<String, dynamic> j) {
+    final locList = (j['previous_locations'] as List? ?? [])
+        .map((e) => PreviousLocation.fromJson(e as Map<String, dynamic>))
+        .toList();
+    return Node(
+      nodeId: _asStr(j['node_id']),
+      telescopeModel: _asStr(j['telescope_model']),
+      city: _asStr(j['city']),
+      country: _asStr(j['country']),
+      status: _asStr(j['status']),
+      lastHeartbeat: _asStr(j['last_heartbeat']),
+      online: j['online'] == true,
+      portable: j['portable'] == true,
+      vacationUntil: _asStr(j['vacation_until']),
+      sessionCity: _asStr(j['session_city']),
+      sessionSiteName: _asStr(j['session_site_name']),
+      previousLocations: locList,
+    );
+  }
+
+  bool get isSleeping => status == 'sleeping';
+  bool get isOnVacation => status == 'vacation';
 
   String get location {
     final parts = [city, country].where((p) => p.isNotEmpty).toList();
