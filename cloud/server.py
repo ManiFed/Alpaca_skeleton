@@ -97,6 +97,10 @@ def serve_app_asset(filename):
 
 @app.route("/<path:filename>")
 def serve_website(filename):
+    # Never let the website catch-all swallow API requests — return 404 so Flask
+    # still has a chance to route them, and so debugging is obvious.
+    if filename.startswith("api/"):
+        return jsonify({"error": "not found"}), 404
     full = os.path.join(_WEBSITE_DIR, filename)
     if os.path.isfile(full):
         return send_from_directory(_WEBSITE_DIR, filename)
@@ -1173,4 +1177,26 @@ def api_me_notification_prefs(user):
         return jsonify({"error": "no updatable fields"}), 400
     params.append(user["user_id"])
     db.execute(f"UPDATE members SET {', '.join(fields)} WHERE user_id = %s", tuple(params))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/v1/me", methods=["DELETE"])
+@auth.require_member
+def api_me_delete(user):
+    """
+    Permanently delete the member's account and all associated data.
+    Requires the member to confirm by sending {"confirm": true} in the body.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    if not body.get("confirm"):
+        return jsonify({"error": "send {\"confirm\": true} to confirm deletion"}), 400
+
+    uid = user["user_id"]
+    # Remove all member-owned data in dependency order.
+    db.execute("DELETE FROM notifications WHERE user_id = %s", (uid,))
+    db.execute("DELETE FROM node_members WHERE user_id = %s", (uid,))
+    db.execute("DELETE FROM activation_codes WHERE user_id = %s", (uid,))
+    db.execute("DELETE FROM members WHERE user_id = %s", (uid,))
+    db.execute("DELETE FROM users WHERE user_id = %s", (uid,))
+    logger.info("Account deleted: %s (%s)", uid, user["email"])
     return jsonify({"ok": True})

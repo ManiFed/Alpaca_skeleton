@@ -205,6 +205,15 @@ class ApiClient {
         if (pushToken != null) 'push_token': pushToken,
       });
 
+  Future<void> deleteAccount() async {
+    final res = await _http.delete(
+      AppConfig.uri('/me'),
+      headers: _headers,
+      body: jsonEncode({'confirm': true}),
+    );
+    _decode(res);
+  }
+
   /// Night summaries across all member nodes, newest first (GET /me/nights).
   Future<List<NightSummary>> nights({int limit = 30}) async {
     final json = await _get('/me/nights', {'limit': limit});

@@ -109,10 +109,58 @@ class _MeScreenState extends State<MeScreen> {
                 subtitle: const Text('Tap the Telescopes tab to manage them'),
               ),
             ),
+            const SizedBox(height: 32),
+            const Divider(),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: () => _confirmDeleteAccount(context),
+              icon: const Icon(Icons.delete_forever_outlined,
+                  color: Colors.redAccent),
+              label: const Text(
+                'Delete account',
+                style: TextStyle(color: Colors.redAccent),
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _confirmDeleteAccount(BuildContext context) async {
+    final state = context.read<AppState>();
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete account?'),
+        content: const Text(
+          'This permanently deletes your account and all your data. '
+          'Your telescopes will stop contributing to the network. '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: const Text('Delete my account'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await state.deleteAccount();
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not delete account: $e')),
+      );
+    }
   }
 }
 

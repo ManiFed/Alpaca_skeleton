@@ -107,6 +107,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> deleteAccount() async {
+    await _api.deleteAccount();
+    await signOut();
+  }
+
   /// Centralised handler so a 401 anywhere drops the member to the login screen.
   void handleAuthError(Object error) {
     if (error is ApiException && error.isUnauthorized) {
