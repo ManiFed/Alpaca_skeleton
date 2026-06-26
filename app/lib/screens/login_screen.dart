@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../theme.dart';
-import '../widgets/aladin_sky.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -56,15 +55,8 @@ class _LoginScreenState extends State<LoginScreen> {
         children: [
           // Background: Aladin live sky on web, painted glow on native
           Positioned.fill(
-            child: kIsWeb
-                ? const IgnorePointer(child: AladinSky())
-                : CustomPaint(painter: _NightGlowPainter()),
+            child: CustomPaint(painter: _NightGlowPainter()),
           ),
-          // Subtle dark veil so the glass panel reads against bright sky regions
-          if (kIsWeb)
-            Positioned.fill(
-              child: Container(color: const Color(0x55000000)),
-            ),
           // Brandmark
           const SafeArea(
             child: Padding(
