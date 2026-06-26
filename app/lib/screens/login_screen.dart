@@ -57,7 +57,7 @@ class _LoginScreenState extends State<LoginScreen> {
           // Background: Aladin live sky on web, painted glow on native
           Positioned.fill(
             child: kIsWeb
-                ? const AladinSky()
+                ? const IgnorePointer(child: AladinSky())
                 : CustomPaint(painter: _NightGlowPainter()),
           ),
           // Subtle dark veil so the glass panel reads against bright sky regions
