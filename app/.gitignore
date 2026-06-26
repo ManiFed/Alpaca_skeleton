@@ -10,7 +10,6 @@ pubspec.lock
 # Generated platform folders (run `flutter create .` to regenerate)
 # Comment these out if you commit platform code.
 android/
-ios/
 linux/
 macos/
 windows/
