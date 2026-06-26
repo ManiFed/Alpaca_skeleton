@@ -18,4 +18,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE ${PORT:-8800}
 
-CMD ["python", "-m", "cloud.main", "cloud/config.production.yaml"]
+CMD ["sh", "-c", "gunicorn -w 1 --threads 8 --timeout 60 --bind 0.0.0.0:${PORT:-8800} cloud.wsgi:app"]

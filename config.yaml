@@ -76,9 +76,9 @@ photometry:
   gain: 1.0
   read_noise: 5.0
   target:
-    name: 'Z Cam'
-    ra_deg: 126.30492
-    dec_deg: 73.11086
+    name: 'T CrB'
+    ra_deg: 239.87567
+    dec_deg: 25.92019
   # Plate solving. solver: "astap" or "astrometry" (Astrometry.net solve-field).
   # force_plate_solve re-solves every stack from scratch, discarding the Seestar's
   # onboard WCS so its alt-az pointing error can't leak into the cross-match.

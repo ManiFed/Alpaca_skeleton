@@ -208,6 +208,36 @@ class Target {
       );
 }
 
+/// One night's summary for a node (GET /me/nights).
+class NightSummary {
+  final String nodeId;
+  final String night;
+  final int nTargets;
+  final int nObservations;
+  final int nSubmitted;
+  final String generatedAt;
+
+  const NightSummary({
+    required this.nodeId,
+    required this.night,
+    required this.nTargets,
+    required this.nObservations,
+    required this.nSubmitted,
+    required this.generatedAt,
+  });
+
+  factory NightSummary.fromJson(Map<String, dynamic> j) => NightSummary(
+        nodeId: _asStr(j['node_id']),
+        night: _asStr(j['night']),
+        nTargets: _asInt(j['n_targets']),
+        nObservations: _asInt(j['n_observations']),
+        nSubmitted: _asInt(j['n_submitted']),
+        generatedAt: _asStr(j['generated_at']),
+      );
+
+  bool get wasClear => nObservations > 0;
+}
+
 /// An in-app notification (GET /me/notifications).
 class AppNotification {
   final int id;

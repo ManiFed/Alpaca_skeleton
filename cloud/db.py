@@ -21,10 +21,12 @@ from typing import Any, Optional
 import psycopg2
 import psycopg2.errors
 import psycopg2.extras
+from psycopg2.pool import ThreadedConnectionPool
 
 logger = logging.getLogger("cloud.db")
 
 _DB_URL: Optional[str] = None
+_pool: Optional[ThreadedConnectionPool] = None
 _init_lock = threading.Lock()
 
 # Each element is one DDL statement (no trailing semicolon needed).
@@ -289,6 +291,18 @@ _SCHEMA: list[str] = [
         updated_at      TEXT NOT NULL DEFAULT ''
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS subscribers (
+        id               SERIAL PRIMARY KEY,
+        email            TEXT NOT NULL,
+        source           TEXT DEFAULT 'tour',
+        equipment        TEXT DEFAULT '',
+        subscribed_at    TEXT NOT NULL,
+        activation_code  TEXT DEFAULT '',
+        status           TEXT DEFAULT 'pending'
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_email ON subscribers(email)",
 ]
 
 # Seed statements run once after schema creation (idempotent via ON CONFLICT DO NOTHING).
@@ -338,14 +352,15 @@ def _run_migrations(conn) -> None:
 
 def init(url: str = "") -> None:
     """Connect, create schema if missing, run column migrations."""
-    global _DB_URL
+    global _DB_URL, _pool
     with _init_lock:
         _DB_URL = url or os.environ.get("DATABASE_URL", "")
         if not _DB_URL:
             raise RuntimeError(
                 "No database URL configured. Set DATABASE_URL or pass url to db.init()."
             )
-        conn = psycopg2.connect(_DB_URL)
+        _pool = ThreadedConnectionPool(minconn=2, maxconn=20, dsn=_DB_URL)
+        conn = _pool.getconn()
         try:
             cur = conn.cursor()
             for stmt in _SCHEMA:
@@ -360,16 +375,21 @@ def init(url: str = "") -> None:
             conn.rollback()
             raise
         finally:
-            conn.close()
+            _pool.putconn(conn)
         logger.info("Database ready: %s", _DB_URL.split("@")[-1])
 
 
 def connect():
-    """Open a psycopg2 connection. Use as context manager for transactions;
-    caller is responsible for closing."""
-    if _DB_URL is None:
+    """Get a connection from the pool. Call db.release(conn) when done."""
+    if _pool is None:
         raise RuntimeError("cloud.db.init() has not been called")
-    return psycopg2.connect(_DB_URL)
+    return _pool.getconn()
+
+
+def release(conn) -> None:
+    """Return a pooled connection. Called in finally blocks instead of close()."""
+    if _pool is not None:
+        _pool.putconn(conn)
 
 
 # ── Convenience helpers ────────────────────────────────────────────────────────
@@ -381,8 +401,11 @@ def query(sql: str, params: tuple = ()) -> list:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        conn.close()
+        release(conn)
 
 
 def query_one(sql: str, params: tuple = ()) -> Optional[dict]:
@@ -409,7 +432,7 @@ def execute(sql: str, params: tuple = (), returning_id: bool = False) -> int:
                 return row["id"] if row else 0
             return 0
     finally:
-        conn.close()
+        release(conn)
 
 
 def executemany(sql: str, seq: list) -> None:
@@ -419,7 +442,7 @@ def executemany(sql: str, seq: list) -> None:
             cur = conn.cursor()
             cur.executemany(sql, seq)
     finally:
-        conn.close()
+        release(conn)
 
 
 def loads(text: Any, default: Any = None) -> Any:

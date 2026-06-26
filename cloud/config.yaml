@@ -83,7 +83,7 @@ aavso:
   username: '${AAVSO_USERNAME}'
   password: '${AAVSO_PASSWORD}'
   chart_id: ''
-  dry_run: true            # format + save batches without POSTing until ready
+  dry_run: false
   batch_interval_minutes: 360
   single_node_holdback_hours: 6
   audit_dir: cloud_data/aavso_batches

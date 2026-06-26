@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
@@ -7,7 +8,7 @@ import '../theme.dart';
 import '../widgets/async_view.dart';
 import 'target_detail_screen.dart';
 
-/// Recent photometric measurements across the member's telescopes.
+/// Recent photometric measurements and per-night summaries.
 class ObservationsTab extends StatefulWidget {
   const ObservationsTab({super.key});
 
@@ -15,8 +16,14 @@ class ObservationsTab extends StatefulWidget {
   State<ObservationsTab> createState() => _ObservationsTabState();
 }
 
+class _Data {
+  const _Data({required this.nights, required this.observations});
+  final List<NightSummary> nights;
+  final List<Observation> observations;
+}
+
 class _ObservationsTabState extends State<ObservationsTab> {
-  late Future<List<Observation>> _future;
+  late Future<_Data> _future;
 
   @override
   void initState() {
@@ -24,12 +31,15 @@ class _ObservationsTabState extends State<ObservationsTab> {
     _future = _load();
   }
 
-  Future<List<Observation>> _load() {
+  Future<_Data> _load() async {
     final state = context.read<AppState>();
-    return state.api.observations().catchError((e) {
+    final nightsFuture =
+        state.api.nights(limit: 14).catchError((_) => <NightSummary>[]);
+    final obsFuture = state.api.observations().catchError((e) {
       state.handleAuthError(e);
       throw e;
     });
+    return _Data(nights: await nightsFuture, observations: await obsFuture);
   }
 
   Future<void> _refresh() async => setState(() => _future = _load());
@@ -39,15 +49,139 @@ class _ObservationsTabState extends State<ObservationsTab> {
     final top = MediaQuery.of(context).padding.top + kToolbarHeight;
     final bottom = MediaQuery.of(context).padding.bottom + 64;
 
-    return AsyncView<List<Observation>>(
+    return AsyncView<_Data>(
       future: _future,
       onRefresh: _refresh,
-      isEmpty: (list) => list.isEmpty,
+      isEmpty: (d) => d.observations.isEmpty && d.nights.isEmpty,
       emptyMessage: 'No observations yet.\nThey appear here after a clear night.',
-      builder: (context, obs) => ListView.builder(
-        padding: EdgeInsets.fromLTRB(16, top + 8, 16, bottom + 16),
-        itemCount: obs.length,
-        itemBuilder: (context, i) => _ObservationCard(obs: obs[i]),
+      builder: (context, data) => CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(child: SizedBox(height: top + 8)),
+          if (data.nights.isNotEmpty)
+            SliverToBoxAdapter(child: _NightsStrip(nights: data.nights)),
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, bottom + 16),
+            sliver: data.observations.isEmpty
+                ? SliverToBoxAdapter(
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 32),
+                        child: Text(
+                          'No individual measurements in the last 90 days.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: BSTheme.ink2, fontSize: 14),
+                        ),
+                      ),
+                    ),
+                  )
+                : SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, i) =>
+                          _ObservationCard(obs: data.observations[i]),
+                      childCount: data.observations.length,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Night summary strip ───────────────────────────────────────────────────────
+
+class _NightsStrip extends StatelessWidget {
+  const _NightsStrip({required this.nights});
+  final List<NightSummary> nights;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 4, 16, 10),
+          child: Text(
+            'RECENT NIGHTS',
+            style: TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.0,
+              color: BSTheme.ink3,
+            ),
+          ),
+        ),
+        SizedBox(
+          height: 90,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: nights.length,
+            itemBuilder: (context, i) => _NightTile(night: nights[i]),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Divider(height: 1, color: BSTheme.glassBorder),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+}
+
+class _NightTile extends StatelessWidget {
+  const _NightTile({required this.night});
+  final NightSummary night;
+
+  @override
+  Widget build(BuildContext context) {
+    final clear = night.wasClear;
+    final color = clear ? BSTheme.accent : BSTheme.ink3;
+
+    String label = night.night;
+    try {
+      label = DateFormat('MMM d').format(DateTime.parse(night.night));
+    } catch (_) {}
+
+    return Container(
+      width: 72,
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: color.withValues(alpha: clear ? 0.10 : 0.04),
+        border: Border.all(
+            color: color.withValues(alpha: clear ? 0.28 : 0.12)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            clear ? Icons.nights_stay_rounded : Icons.cloud_outlined,
+            size: 18,
+            color: color,
+          ),
+          const SizedBox(height: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            clear ? '${night.nObservations} obs' : 'clouded',
+            style: const TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 10,
+              color: BSTheme.ink3,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -59,7 +193,6 @@ class _ObservationCard extends StatelessWidget {
   const _ObservationCard({required this.obs});
   final Observation obs;
 
-  // Color-code by brightness: lower magnitude = brighter.
   Color _magColor(double mag) {
     if (mag < 8) return BSTheme.warm;
     if (mag < 11) return BSTheme.accent;
@@ -110,7 +243,6 @@ class _ObservationCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Left: star glyph with magnitude-tinted glow
             Container(
               width: 46,
               height: 46,
@@ -122,7 +254,6 @@ class _ObservationCard extends StatelessWidget {
               child: Icon(Icons.star_rounded, size: 22, color: magColor),
             ),
             const SizedBox(width: 14),
-            // Middle: target name + magnitude readout
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -173,7 +304,6 @@ class _ObservationCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  // Badges row
                   Wrap(
                     spacing: 6,
                     runSpacing: 4,

@@ -522,6 +522,55 @@ def api_site_config_update():
     return api_site_config()
 
 
+# ── Subscribe (public join flow) ───────────────────────────────────────────────
+
+@app.route("/api/v1/subscribe", methods=["POST"])
+def api_subscribe():
+    body = request.get_json(force=True, silent=True) or {}
+    email = str(body.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return jsonify({"error": "valid email required"}), 400
+    source = str(body.get("source") or "tour")[:64]
+    equipment = str(body.get("equipment") or "")[:64]
+
+    existing = db.query_one("SELECT id, activation_code FROM subscribers WHERE email = %s", (email,))
+    if existing:
+        return jsonify({"ok": True, "code": existing["activation_code"], "new": False})
+
+    code = _generate_activation_code()
+    db.execute(
+        "INSERT INTO subscribers (email, source, equipment, subscribed_at, activation_code, status)"
+        " VALUES (%s, %s, %s, %s, %s, 'pending')",
+        (email, source, equipment, _now(), code),
+    )
+    db.execute(
+        "UPDATE site_config SET member_count = member_count + 1, updated_at = %s WHERE id = 1",
+        (_now(),),
+    )
+    return jsonify({"ok": True, "code": code, "new": True})
+
+
+@app.route("/api/v1/admin/subscribers", methods=["GET"])
+@require_admin
+def api_admin_subscribers():
+    rows = db.query(
+        "SELECT id, email, source, equipment, subscribed_at, activation_code, status"
+        " FROM subscribers ORDER BY subscribed_at DESC"
+    )
+    return jsonify({"subscribers": rows, "total": len(rows)})
+
+
+@app.route("/api/v1/admin/subscribers/<int:sub_id>/status", methods=["PATCH"])
+@require_admin
+def api_admin_subscriber_status(sub_id):
+    body = request.get_json(force=True, silent=True) or {}
+    status = str(body.get("status") or "").strip()
+    if status not in ("pending", "sent", "onboarded"):
+        return jsonify({"error": "status must be pending, sent, or onboarded"}), 400
+    db.execute("UPDATE subscribers SET status = %s WHERE id = %s", (status, sub_id))
+    return jsonify({"ok": True})
+
+
 # ── Admin operations ───────────────────────────────────────────────────────────
 
 @app.route("/api/v1/admin/ingest", methods=["POST"])
@@ -574,7 +623,19 @@ def api_admin_tuning_rollback():
 
 @app.route("/api/v1/health", methods=["GET"])
 def api_health():
-    return jsonify({"ok": True, "server_time": _now()})
+    try:
+        db.query_one("SELECT 1 AS ok")
+        db_ok = True
+    except Exception:
+        db_ok = False
+    code = 200 if db_ok else 503
+    return jsonify({"ok": db_ok, "db": db_ok, "server_time": _now()}), code
+
+
+@app.errorhandler(Exception)
+def handle_unhandled_error(exc):
+    logger.error("Unhandled exception: %s", exc, exc_info=True)
+    return jsonify({"error": "internal server error"}), 500
 
 
 # ── Member auth ────────────────────────────────────────────────────────────────

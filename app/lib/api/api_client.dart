@@ -146,6 +146,14 @@ class ApiClient {
         if (pushToken != null) 'push_token': pushToken,
       });
 
+  /// Night summaries across all member nodes, newest first (GET /me/nights).
+  Future<List<NightSummary>> nights({int limit = 30}) async {
+    final json = await _get('/me/nights', {'limit': limit});
+    return ((json['nights'] as List?) ?? [])
+        .map((e) => NightSummary.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   /// Active targets sorted by network priority (GET /targets — public).
   Future<List<Target>> targets() async {
     final json = await _get('/targets');

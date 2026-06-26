@@ -65,18 +65,8 @@ def _loop(name: str, interval_s: float, fn) -> None:
     threading.Thread(target=runner, daemon=True, name=name).start()
 
 
-def main() -> None:
-    config = load_config(sys.argv[1] if len(sys.argv) > 1 else None)
-
-    log_cfg = config.get("logging", {})
-    logging.basicConfig(
-        level=log_cfg.get("level", "INFO"),
-        format=log_cfg.get("format", "%(asctime)s [%(levelname)s] %(name)s: %(message)s"),
-    )
-
-    db.init(config.get("database", {}).get("url", ""))
-
-    # ── Background loops ───────────────────────────────────────────────────────
+def start_background_loops(config: dict) -> None:
+    """Start all daemon threads. Called from main() and from cloud/wsgi.py."""
     alerts_cfg = config.get("alerts", {})
     sched_cfg = config.get("scheduler", {})
     aavso_cfg = config.get("aavso", {})
@@ -95,12 +85,9 @@ def main() -> None:
         data_pipeline.prune_raw_images(config)
         nights.generate_pending_summaries(config)
         registry.refresh_all_performance()
-        # Light pollution drifts on month scales — refresh on day 1
         if time.gmtime().tm_mday == 1:
             registry.refresh_light_pollution(
                 config.get("light_pollution", {}).get("api_key", ""))
-        # Claude reviews recent outcomes and adjusts the scoring weights.
-        # No-op unless tuning.enabled and an API key are configured.
         tuning.run_nightly(config)
 
     _loop("alert-ingest",
@@ -112,7 +99,20 @@ def main() -> None:
           lambda: data_pipeline.submit_pending_batch(config))
     _loop("maintenance", 86400, maintenance)
 
-    # ── API server ─────────────────────────────────────────────────────────────
+
+def main() -> None:
+    config = load_config(sys.argv[1] if len(sys.argv) > 1 else None)
+
+    log_cfg = config.get("logging", {})
+    logging.basicConfig(
+        level=log_cfg.get("level", "INFO"),
+        format=log_cfg.get("format", "%(asctime)s [%(levelname)s] %(name)s: %(message)s"),
+    )
+
+    db.init(config.get("database", {}).get("url", ""))
+    start_background_loops(config)
+
+    # ── API server (dev only — production uses cloud/wsgi.py + gunicorn) ───────
     server_cfg = config.get("server", {})
     host = server_cfg.get("host", "0.0.0.0")
     port = int(os.environ.get("PORT", server_cfg.get("port", 8800)))

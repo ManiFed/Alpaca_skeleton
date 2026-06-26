@@ -1,19 +1,17 @@
-/// App-wide configuration.
-///
-/// The cloud layer runs Flask + SQLite on port 8800 (see cloud/main.py).
-/// Override the base URL at build time with:
-///   flutter run --dart-define=BS_API_BASE=https://api.telescopenet.org
 library;
 
 class AppConfig {
-  /// Base URL of the The Telescope Net cloud API (no trailing slash).
-  static const String apiBase = String.fromEnvironment(
-    'BS_API_BASE',
-    defaultValue: 'http://localhost:8800',
-  );
-
   /// All cloud routes are versioned under /api/v1.
   static const String apiPrefix = '/api/v1';
+
+  /// Derives the API base from the current page origin at runtime so no
+  /// dart-define or rebuild is needed when the deployment URL changes.
+  /// Falls back to localhost for local dev.
+  static String get apiBase {
+    final origin = Uri.base.origin;
+    if (origin.isEmpty || origin == 'null') return 'http://localhost:8800';
+    return origin;
+  }
 
   static Uri uri(String path, [Map<String, dynamic>? query]) {
     final q = query?.map((k, v) => MapEntry(k, '$v'));
