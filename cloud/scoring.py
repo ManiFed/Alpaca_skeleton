@@ -84,22 +84,43 @@ def time_criticality(target: dict) -> float:
     return base
 
 
+def historical_neglect(target: dict, window_days: int = 30) -> float:
+    """Fraction of expected observations that the network has missed over a
+    rolling window.  1.0 = severely under-observed; 0.0 = at or above cadence."""
+    cadence_h = max(1.0, float(target.get("cadence_hours", 24.0)))
+    expected = window_days * 24.0 / cadence_h
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+    row = db.query_one(
+        "SELECT COUNT(*) AS cnt FROM measurements "
+        "WHERE target_name = %s AND received_at >= %s",
+        (target["name"], cutoff),
+    )
+    actual = float(row["cnt"]) if row and row["cnt"] else 0.0
+    return max(0.0, min(1.0, 1.0 - actual / max(1.0, expected)))
+
+
 def coverage_gap(target: dict) -> float:
-    """1.0 when the network has no recent data on this target, dropping to 0
-    when it has been measured more recently than the desired cadence."""
+    """Blends short-term recency (40%) with long-term historical neglect weighted
+    by science priority (60%).  High score means important, under-observed target."""
     cadence_h = max(1.0, float(target.get("cadence_hours", 24.0)))
     row = db.query_one(
         "SELECT MAX(received_at) AS last FROM measurements WHERE target_name = %s",
         (target["name"],),
     )
     if not row or not row["last"]:
-        return 1.0
-    try:
-        age_h = (datetime.now(timezone.utc)
-                 - datetime.fromisoformat(row["last"])).total_seconds() / 3600.0
-    except ValueError:
-        return 1.0
-    return max(0.0, min(1.0, age_h / (2.0 * cadence_h)))
+        recency = 1.0
+    else:
+        try:
+            age_h = (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(row["last"])).total_seconds() / 3600.0
+        except ValueError:
+            recency = 1.0
+        else:
+            recency = max(0.0, min(1.0, age_h / (2.0 * cadence_h)))
+
+    neglect = historical_neglect(target)
+    science = float(target.get("priority", 0.5))
+    return 0.4 * recency + 0.6 * (neglect * science)
 
 
 def light_pollution_factor(target_mag: Optional[float], node: dict) -> float:
@@ -291,7 +312,7 @@ def explain_score(target: dict, node: dict, components: dict, weights: dict) -> 
         "brightness": "brightness match",
         "science": "science priority",
         "time": "urgency",
-        "coverage": "coverage gap",
+        "coverage": "coverage & neglect",
         "observe": "observability",
     }
     ranked = sorted(
