@@ -347,16 +347,18 @@ class StatOrb extends StatelessWidget {
     required this.label,
     required this.color,
     this.icon,
+    this.onTap,
   });
 
   final int value;
   final String label;
   final Color color;
   final IconData? icon;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final orb = Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
@@ -409,6 +411,8 @@ class StatOrb extends StatelessWidget {
         ],
       ),
     );
+    if (onTap == null) return orb;
+    return GestureDetector(onTap: onTap, behavior: HitTestBehavior.opaque, child: orb);
   }
 }
 

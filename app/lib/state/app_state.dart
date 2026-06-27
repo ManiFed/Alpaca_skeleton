@@ -28,6 +28,9 @@ class AppState extends ChangeNotifier {
   /// HomeScreen reads and clears this to jump to the right tab.
   int? pendingTab;
 
+  /// Unread notification count — shown as a badge on the Alerts tab.
+  int unreadNotifications = 0;
+
   /// Loads any persisted token and probes whether it is still valid.
   Future<void> bootstrap() async {
     await _auth.load();
@@ -53,6 +56,43 @@ class AppState extends ChangeNotifier {
       return;
     }
     await _fetchNodes();
+    await refreshUnreadNotifications();
+    notifyListeners();
+  }
+
+  void setPendingTab(int tab) {
+    pendingTab = tab;
+    notifyListeners();
+  }
+
+  void clearPendingTab() {
+    if (pendingTab == null) return;
+    pendingTab = null;
+    notifyListeners();
+  }
+
+  /// Atomically read and clear [pendingTab] without notifying listeners.
+  int? takePendingTab() {
+    final tab = pendingTab;
+    pendingTab = null;
+    return tab;
+  }
+
+  Future<void> refreshUnreadNotifications() async {
+    try {
+      final (_, unread) = await _api.notifications(limit: 1);
+      if (unreadNotifications != unread) {
+        unreadNotifications = unread;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Offline — keep the last known count.
+    }
+  }
+
+  void setUnreadNotifications(int count) {
+    if (unreadNotifications == count) return;
+    unreadNotifications = count;
     notifyListeners();
   }
 
@@ -103,6 +143,7 @@ class AppState extends ChangeNotifier {
     await _auth.clear();
     member = null;
     _hasNode = null;
+    unreadNotifications = 0;
     status = AuthStatus.signedOut;
     notifyListeners();
   }

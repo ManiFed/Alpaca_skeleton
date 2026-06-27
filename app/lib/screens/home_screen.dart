@@ -26,17 +26,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _index = 0;
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final state = context.read<AppState>();
-    if (state.pendingTab != null) {
-      final tab = state.pendingTab!;
-      state.pendingTab = null;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _index = tab);
-      });
-    }
+  void _applyPendingTab(AppState state) {
+    final tab = state.takePendingTab();
+    if (tab == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && tab != _index) setState(() => _index = tab);
+    });
   }
 
   static const _tabs = [
@@ -61,6 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    _applyPendingTab(state);
 
     // Show loading spinner while the node check is in-flight.
     if (!state.nodesLoaded) {
@@ -210,9 +206,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: List.generate(_tabs.length, (i) {
                         final selected = _index == i;
                         final tab = _tabs[i];
+                        final showBadge =
+                            i == 3 && state.unreadNotifications > 0;
                         return Expanded(
                           child: GestureDetector(
-                            onTap: () => setState(() => _index = i),
+                            onTap: () {
+                              setState(() => _index = i);
+                              if (i == 3) state.refreshUnreadNotifications();
+                            },
                             behavior: HitTestBehavior.opaque,
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 200),
@@ -230,11 +231,54 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(
-                                    selected ? tab.sel : tab.icon,
-                                    color:
-                                        selected ? BSTheme.accent : BSTheme.ink3,
-                                    size: 20,
+                                  Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      Icon(
+                                        selected ? tab.sel : tab.icon,
+                                        color: selected
+                                            ? BSTheme.accent
+                                            : BSTheme.ink3,
+                                        size: 20,
+                                      ),
+                                      if (showBadge)
+                                        Positioned(
+                                          right: -7,
+                                          top: -5,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                              vertical: 1,
+                                            ),
+                                            constraints: const BoxConstraints(
+                                              minWidth: 14,
+                                              minHeight: 14,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: BSTheme.danger,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              border: Border.all(
+                                                color: const Color(0xFF060E1E),
+                                                width: 1.5,
+                                              ),
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              state.unreadNotifications > 9
+                                                  ? '9+'
+                                                  : '${state.unreadNotifications}',
+                                              style: const TextStyle(
+                                                fontFamily: 'Geist',
+                                                fontSize: 8,
+                                                fontWeight: FontWeight.w700,
+                                                color: Colors.white,
+                                                height: 1,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                   const SizedBox(height: 3),
                                   Text(

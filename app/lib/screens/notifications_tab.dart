@@ -36,8 +36,10 @@ class _NotificationsTabState extends State<NotificationsTab> {
 
   Future<void> _markRead(AppNotification n) async {
     if (n.read) return;
+    final state = context.read<AppState>();
     try {
-      await context.read<AppState>().api.markNotificationRead(n.id);
+      await state.api.markNotificationRead(n.id);
+      await state.refreshUnreadNotifications();
       _refresh();
     } catch (_) {/* best effort */}
   }

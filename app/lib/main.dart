@@ -57,7 +57,7 @@ class _TelescopeNetAppState extends State<TelescopeNetApp> {
         // A night_summary notification tap navigates the user to Alerts tab.
         // The AppState exposes a setter that HomeScreen listens to.
         if (data['type'] == 'night_summary') {
-          state.pendingTab = 3; // Alerts tab index
+          state.setPendingTab(3);
         }
       },
     );
