@@ -2910,6 +2910,74 @@ def _run_schedule_observation(idx: int, item: dict) -> None:
             _pier_cam_pause.clear()
 
 
+def _sched_auto_horizon_scan() -> bool:
+    """Run a horizon scan synchronously at the start of a session.
+
+    Reads scan parameters from the safety config (same defaults as the manual
+    UI).  Applies the result as the horizon mask on success.  Returns True if
+    the schedule should continue, False if a cloud abort means it should stop.
+    """
+    if _tel is None or _cam is None:
+        logger.info("Schedule: skipping auto horizon scan — telescope or camera not connected")
+        return True
+
+    with _scan_lock:
+        if _scan_state["running"]:
+            logger.info("Schedule: horizon scan already in progress — skipping auto scan")
+            return True
+
+    cfg      = _load_config()
+    scan_cfg = cfg.get("safety", {}).get("horizon_scan", {})
+
+    floor_alt    = max(5.0,  min(45.0, float(scan_cfg.get("floor_alt",      25.0))))
+    start_alt    = max(30.0, min(85.0, float(scan_cfg.get("start_alt",      60.0))))
+    step_deg     = max(2.0,  min(15.0, float(scan_cfg.get("step",            5.0))))
+    exposure_s   = max(1.0,  min(60.0, float(scan_cfg.get("exposure",        5.0))))
+    star_thresh  = max(1,    min(100,  int(  scan_cfg.get("star_threshold",   5))))
+    settle_s     = max(0.0,  min(15.0, float(scan_cfg.get("settle",           2.0))))
+
+    if start_alt <= floor_alt:
+        logger.warning("Schedule: auto horizon scan config invalid (start_alt <= floor_alt) — skipping")
+        return True
+
+    logger.info(
+        "Schedule: starting auto horizon scan "
+        "(floor=%.1f start=%.1f step=%.1f exp=%.1fs thresh=%d settle=%.1fs)",
+        floor_alt, start_alt, step_deg, exposure_s, star_thresh, settle_s,
+    )
+    with _sched_lock:
+        _sched_state["current_phase"] = "horizon_scan"
+
+    # Run synchronously in this thread so observations don't start until it finishes.
+    _run_horizon_scan(floor_alt, start_alt, step_deg, exposure_s, star_thresh, settle_s)
+
+    with _scan_lock:
+        aborted = _scan_state.get("cloud_abort", False)
+        error   = _scan_state.get("error")
+        result  = _scan_state.get("result")
+
+    if aborted:
+        logger.error("Schedule: auto horizon scan aborted due to cloud cover — halting session. %s", error)
+        return False
+
+    if result:
+        # Auto-apply the mask so tonight's observations benefit immediately.
+        cfg = _load_config()
+        cfg.setdefault("safety", {})["horizon_mask"] = result
+        try:
+            with open("config.yaml", "w") as fh:
+                yaml.dump(cfg, fh, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        except OSError as exc:
+            logger.warning("Schedule: could not persist horizon mask to config.yaml: %s", exc)
+        if _safety_mgr is not None:
+            _safety_mgr._horizon_mask = [(float(p[0]), float(p[1])) for p in result]
+        logger.info("Schedule: horizon mask updated from auto scan")
+    else:
+        logger.warning("Schedule: auto horizon scan produced no result (%s) — continuing without mask update", error)
+
+    return True
+
+
 def _run_schedule_bg(items: list) -> None:
     """Background thread: slew + expose for each scheduled observation."""
     with _sched_lock:
@@ -2923,6 +2991,13 @@ def _run_schedule_bg(items: list) -> None:
     logger.info("Schedule started: %d observations", len(items))
 
     _sched_prepare_mount()
+
+    if not _sched_auto_horizon_scan():
+        with _sched_lock:
+            _sched_state["running"] = False
+            _sched_state["current_phase"] = "done"
+            _sched_state["error"] = "Horizon scan aborted due to cloud cover — session cancelled"
+        return
 
     try:
         for idx, item in enumerate(items):
