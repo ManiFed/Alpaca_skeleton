@@ -50340,7 +50340,8 @@ $S:0}
 A.axL.prototype={
 $0(){var s=this.a
 s.w=!0
-s.r=s.y=null},
+s.r=s.y=null
+s.ch=!1},
 $S:0}
 A.axM.prototype={
 $0(){var s=this.a
@@ -50476,7 +50477,7 @@ $S:0}
 A.axg.prototype={
 $0(){var s=this.a
 s.y=s.r=null
-s.ay=s.ax=!1
+s.ch=s.ay=s.ax=!1
 s.f.l2(0,B.nR)
 s.Vg()
 s.d.l2(0,B.nR)

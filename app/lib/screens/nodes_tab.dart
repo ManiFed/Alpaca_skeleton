@@ -1531,7 +1531,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
 
   Future<void> _generate() async {
     final location = _locationCtrl.text.trim();
-    setState(() { _busy = true; _error = null; _code = null; });
+    setState(() { _busy = true; _error = null; _code = null; _codeCopied = false; });
     try {
       final scopeModel =
           _scopeIsCustom ? _scopeCtrl.text.trim() : _selectedScope?.displayName;
@@ -2201,6 +2201,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           _error = null;
           _pushed = false;
           _pushing = false;
+          _codeCopied = false;
           _pairCtrl.clear();
           _resetLocation();
           _locationCtrl.clear();

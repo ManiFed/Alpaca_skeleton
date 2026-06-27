@@ -30,7 +30,7 @@ centering:
   settle_s: 2
   tolerance_arcmin: 3
 cloud:
-  activation_code: BS-2026-6268F8R2
+  activation_code: BS-2026-NM7SB91F
   api_key: ''
   auto_run_plans: false
   enabled: true
