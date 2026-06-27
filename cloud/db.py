@@ -398,6 +398,46 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("measurements",     "sky_mag",   "DOUBLE PRECISION"),
 ]
 
+# Tables added after initial schema — created idempotently in init().
+_LATE_TABLES: list[str] = [
+    """
+    CREATE TABLE IF NOT EXISTS member_highlights (
+        id              SERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL REFERENCES users(user_id),
+        node_id         TEXT NOT NULL,
+        measurement_id  INTEGER REFERENCES measurements(id),
+        target_name     TEXT NOT NULL,
+        target_type     TEXT DEFAULT '',
+        bjd             DOUBLE PRECISION NOT NULL,
+        magnitude       DOUBLE PRECISION NOT NULL,
+        headline        TEXT NOT NULL,
+        detail          TEXT DEFAULT '',
+        created_at      TEXT NOT NULL,
+        read_at         TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_highlights_user ON member_highlights(user_id, created_at)",
+    """
+    CREATE TABLE IF NOT EXISTS incidents (
+        id              SERIAL PRIMARY KEY,
+        node_id         TEXT NOT NULL,
+        status          TEXT DEFAULT 'open',
+        title           TEXT NOT NULL,
+        root_cause      TEXT DEFAULT 'unknown',
+        severity        TEXT DEFAULT 'warning',
+        opened_at       TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        resolved_at     TEXT,
+        resolver        TEXT DEFAULT '',
+        resolution_note TEXT DEFAULT '',
+        trigger_event   TEXT DEFAULT '',
+        n_raw_events    INTEGER DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_incidents_node ON incidents(node_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_incidents_open ON incidents(status, opened_at)",
+]
+
 
 def _run_migrations(conn) -> None:
     cur = conn.cursor()
@@ -430,6 +470,10 @@ def init(url: str = "") -> None:
                 if stmt:
                     cur.execute(stmt)
             _run_migrations(conn)
+            for stmt in _LATE_TABLES:
+                stmt = stmt.strip()
+                if stmt:
+                    cur.execute(stmt)
             for stmt in _SEEDS:
                 cur.execute(stmt)
             conn.commit()

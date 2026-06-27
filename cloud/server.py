@@ -1056,6 +1056,35 @@ def api_me_nodes(user):
     return jsonify({"nodes": rows})
 
 
+@app.route("/api/v1/me/highlights", methods=["GET"])
+@auth.require_member
+def api_me_highlights(user):
+    """Notable observation highlights for the authenticated member. ?limit=N (default 50)."""
+    limit = min(int(request.args.get("limit", 50)), 200)
+    rows = db.query(
+        """SELECT id, node_id, measurement_id, target_name, target_type,
+                  bjd, magnitude, headline, detail, created_at, read_at
+             FROM member_highlights
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s""",
+        (user["user_id"], limit),
+    )
+    unread = sum(1 for r in rows if not r.get("read_at"))
+    return jsonify({"highlights": rows, "unread": unread})
+
+
+@app.route("/api/v1/me/highlights/<int:highlight_id>/read", methods=["POST"])
+@auth.require_member
+def api_me_highlight_read(user, highlight_id: int):
+    """Mark a highlight as read."""
+    db.execute(
+        "UPDATE member_highlights SET read_at = %s WHERE id = %s AND user_id = %s",
+        (_now(), highlight_id, user["user_id"]),
+    )
+    return jsonify({"ok": True})
+
+
 @app.route("/api/v1/me/nodes/<node_id>", methods=["POST"])
 @auth.require_member
 def api_me_claim_node(user, node_id):

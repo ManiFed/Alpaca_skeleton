@@ -114,7 +114,57 @@ def ingest_measurement(node_id: str, payload: dict,
             },
         )
     cross_validate(m.target_name, m.bjd)
+    if m.quality_flag in ("good", "acceptable") and row_id:
+        _maybe_create_highlights(row_id, node_id, m)
     return {"ok": True, "id": row_id}
+
+
+_HIGHLIGHT_HEADLINES = {
+    "SN":       "Your telescope caught a supernova!",
+    "TDE":      "Your telescope observed a tidal disruption event!",
+    "GRB":      "Your telescope captured a gamma-ray burst!",
+    "NOVA":     "Your telescope detected a stellar nova outburst!",
+    "CV":       "Your telescope caught a cataclysmic variable in outburst!",
+    "EXOPLANET":"Your telescope observed a planetary transit!",
+}
+
+
+def _maybe_create_highlights(measurement_id: int, node_id: str,
+                              m: "Measurement") -> None:
+    """Create member_highlights records when a time_critical target is observed."""
+    target = db.query_one(
+        "SELECT target_type, time_critical FROM targets WHERE name = %s",
+        (m.target_name,),
+    )
+    if not target or not target.get("time_critical"):
+        return
+
+    owners = db.query(
+        "SELECT user_id FROM node_members WHERE node_id = %s", (node_id,)
+    )
+    if not owners:
+        return
+
+    ttype   = (target.get("target_type") or "unknown").upper()
+    headline = _HIGHLIGHT_HEADLINES.get(ttype, "Notable observation by your telescope")
+    detail   = (
+        f"{m.target_name} — {ttype} at mag {m.magnitude:.3f}±{m.uncertainty:.3f} "
+        f"(BJD {m.bjd:.4f})"
+    )
+    now = _now()
+    for owner in owners:
+        try:
+            db.execute(
+                """INSERT INTO member_highlights
+                       (user_id, node_id, measurement_id, target_name, target_type,
+                        bjd, magnitude, headline, detail, created_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (owner["user_id"], node_id, measurement_id, m.target_name, ttype,
+                 m.bjd, m.magnitude, headline, detail, now),
+            )
+            logger.info("Highlight created for %s: %s", owner["user_id"], headline)
+        except Exception as exc:
+            logger.warning("Could not create highlight: %s", exc)
 
 
 # ── Cross-validation ───────────────────────────────────────────────────────────
