@@ -322,7 +322,20 @@ def api_register():
         creds = registry.register_node(
             info, _config.get("light_pollution", {}).get("api_key", ""))
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        # If a valid activation code is present and the only problem is that
+        # this node_id was previously registered with different credentials,
+        # hand back the existing credentials so the node can reconnect.
+        if activation_code and "different API key" in str(exc):
+            existing = db.query_one(
+                "SELECT node_id, api_key FROM nodes WHERE node_id = %s",
+                (info.get("node_id", ""),),
+            )
+            if existing:
+                creds = {"node_id": existing["node_id"], "api_key": existing["api_key"]}
+            else:
+                return jsonify({"error": str(exc)}), 400
+        else:
+            return jsonify({"error": str(exc)}), 400
 
     # Consume the activation code and link the node to the member account
     if activation_code:
