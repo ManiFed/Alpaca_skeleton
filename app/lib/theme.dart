@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
 
 class BSTheme {
-  // Design tokens from tour.html
-  static const Color night = Color(0xFF02030A);
-  static const Color ink = Color(0xFFF2F5FF);
-  static const Color ink2 = Color(0xAAF2F5FF); // 66% opacity
-  static const Color ink3 = Color(0x66F2F5FF); // 40% opacity
-  static const Color accent = Color(0xFF8FD9FF);
+  // Operations-console tokens: restrained, legible, and status-led.
+  static const Color night = Color(0xFF07090C);
+  static const Color surface = Color(0xFF0D1014);
+  static const Color surface2 = Color(0xFF12161C);
+  static const Color ink = Color(0xFFF1F0E8);
+  static const Color ink2 = Color(0xA6F1F0E8); // 65% opacity
+  static const Color ink3 = Color(0x66F1F0E8); // 40% opacity
+  static const Color accent = Color(0xFF5BD6A6);
+  static const Color sky = Color(0xFF8FD9FF);
   static const Color warm = Color(0xFFFFC07A);
   static const Color success = Color(0xFF5BD6A6);
   static const Color warning = warm;
   static const Color danger = Color(0xFFFF6B6B);
-  static const Color glassBorder = Color(0x3DD7E4FF); // rgba(215,228,255,.24)
-  static const Color glassBg = Color(0x0BA0B9FF);     // rgba(160,185,255,.045)
-  static const Color btnPrimary = Color(0xFFCFEFFF);
-  static const Color btnPrimaryFg = Color(0xFF04121C);
+  static const Color glassBorder = Color(0x2EF1F0E8);
+  static const Color glassBg = Color(0x0AF1F0E8);
+  static const Color btnPrimary = ink;
+  static const Color btnPrimaryFg = night;
 
   static const String _font = 'Geist';
 
@@ -50,7 +53,7 @@ class BSTheme {
       onPrimary: btnPrimaryFg,
       secondary: warm,
       onSecondary: night,
-      surface: Color(0xFF080C1A),
+      surface: surface,
       onSurface: ink,
       error: danger,
     );
@@ -68,55 +71,55 @@ class BSTheme {
       displaySmall: base.textTheme.displaySmall?.copyWith(
         fontFamily: _font,
         fontWeight: FontWeight.w600,
-        letterSpacing: -2.0,
+        letterSpacing: 0,
         color: ink,
         height: 1.0,
       ),
       headlineMedium: base.textTheme.headlineMedium?.copyWith(
         fontFamily: _font,
         fontWeight: FontWeight.w600,
-        letterSpacing: -1.2,
+        letterSpacing: 0,
         color: ink,
       ),
       headlineSmall: base.textTheme.headlineSmall?.copyWith(
         fontFamily: _font,
         fontWeight: FontWeight.w600,
-        letterSpacing: -1.0,
+        letterSpacing: 0,
         color: ink,
       ),
       titleLarge: base.textTheme.titleLarge?.copyWith(
         fontFamily: _font,
         fontWeight: FontWeight.w500,
-        letterSpacing: -0.3,
+        letterSpacing: 0,
         color: ink2,
       ),
       titleMedium: base.textTheme.titleMedium?.copyWith(
         fontFamily: _font,
         fontWeight: FontWeight.w400,
-        letterSpacing: -0.2,
+        letterSpacing: 0,
         color: ink2,
       ),
       bodyLarge: base.textTheme.bodyLarge?.copyWith(
         fontFamily: _font,
         color: ink2,
-        letterSpacing: -0.1,
+        letterSpacing: 0,
         height: 1.6,
       ),
       bodyMedium: base.textTheme.bodyMedium?.copyWith(
         fontFamily: _font,
         color: ink2,
-        letterSpacing: -0.1,
+        letterSpacing: 0,
       ),
       bodySmall: base.textTheme.bodySmall?.copyWith(
         fontFamily: _font,
         color: ink3,
-        letterSpacing: 0.5,
+        letterSpacing: 0,
       ),
       labelSmall: base.textTheme.labelSmall?.copyWith(
         fontFamily: _font,
         color: ink3,
         fontWeight: FontWeight.w500,
-        letterSpacing: 1.8,
+        letterSpacing: 1.2,
       ),
     );
 
@@ -130,7 +133,7 @@ class BSTheme {
           fontFamily: _font,
           fontSize: 18,
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.5,
+          letterSpacing: 0,
           color: ink,
         ),
       ),
@@ -139,7 +142,7 @@ class BSTheme {
         elevation: 0,
         margin: const EdgeInsets.symmetric(vertical: 6),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(26),
+          borderRadius: BorderRadius.circular(10),
           side: const BorderSide(color: glassBorder, width: 1),
         ),
       ),
@@ -152,9 +155,9 @@ class BSTheme {
             fontFamily: _font,
             fontSize: 15,
             fontWeight: FontWeight.w500,
-            letterSpacing: -0.2,
+            letterSpacing: 0,
           ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           elevation: 0,
         ),
       ),
@@ -165,32 +168,32 @@ class BSTheme {
             fontFamily: _font,
             fontSize: 15,
             fontWeight: FontWeight.w400,
-            letterSpacing: -0.1,
+            letterSpacing: 0,
           ),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0x12B4D2FF), // rgba(180,210,255,.07)
+        fillColor: const Color(0x0EF1F0E8),
         contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(100),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: glassBorder, width: 1),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(100),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: glassBorder, width: 1),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(100),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: accent, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(100),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: danger, width: 1),
         ),
         focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(100),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: danger, width: 1.5),
         ),
         hintStyle: const TextStyle(
@@ -208,25 +211,25 @@ class BSTheme {
       ),
       snackBarTheme: const SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: Color(0xFF0F1428),
+        backgroundColor: surface2,
         contentTextStyle: TextStyle(
           fontFamily: _font,
           fontSize: 15,
           color: ink,
         ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(14)),
+          borderRadius: BorderRadius.all(Radius.circular(8)),
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: const Color(0xFF080C1A),
-        indicatorColor: Color(0x298FD9FF),
+        backgroundColor: surface,
+        indicatorColor: const Color(0x225BD6A6),
         labelTextStyle: WidgetStateProperty.all(
           const TextStyle(
             fontFamily: _font,
             fontSize: 12,
             fontWeight: FontWeight.w500,
-            letterSpacing: 0.2,
+            letterSpacing: 0,
             color: ink2,
           ),
         ),

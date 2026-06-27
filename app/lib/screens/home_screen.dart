@@ -90,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         // Dark veil — heavier than login so content stays readable.
         Positioned.fill(
-          child: Container(color: const Color(0xBB000814)),
+          child: Container(color: const Color(0xE607090C)),
         ),
         // Film grain — organic texture over everything.
         const Positioned.fill(child: GrainOverlay()),
@@ -127,7 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     fontFamily: 'Geist',
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
-                    letterSpacing: -0.5,
+                    letterSpacing: 0,
                     color: BSTheme.ink,
                   ),
                 ),
@@ -187,126 +187,346 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          body: IndexedStack(index: _index, children: pages),
-          bottomNavigationBar: ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: Color(0x1A060E1E),
-                  border: Border(
-                    top: BorderSide(color: BSTheme.glassBorder, width: 0.5),
+          body: LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 720;
+              final content = IndexedStack(index: _index, children: pages);
+              if (!wide) return content;
+              return Row(
+                children: [
+                  _ReadinessRail(
+                    index: _index,
+                    tabs: _tabs,
+                    unread: state.unreadNotifications,
+                    nodesReady: state.hasNode,
+                    onSelect: (i) {
+                      setState(() => _index = i);
+                      if (i == 3) state.refreshUnreadNotifications();
+                    },
                   ),
-                ),
-                child: SafeArea(
-                  top: false,
-                  child: SizedBox(
-                    height: 64,
-                    child: Row(
-                      children: List.generate(_tabs.length, (i) {
-                        final selected = _index == i;
-                        final tab = _tabs[i];
-                        final showBadge =
-                            i == 3 && state.unreadNotifications > 0;
-                        return Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              setState(() => _index = i);
-                              if (i == 3) state.refreshUnreadNotifications();
-                            },
-                            behavior: HitTestBehavior.opaque,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              curve: Curves.easeOut,
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 8,
+                  Expanded(child: content),
+                ],
+              );
+            },
+          ),
+          bottomNavigationBar: LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth >= 720) return const SizedBox.shrink();
+              return ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      color: Color(0xF20D1014),
+                      border: Border(
+                        top: BorderSide(
+                          color: BSTheme.glassBorder,
+                          width: 0.5,
+                        ),
+                      ),
+                    ),
+                    child: SafeArea(
+                      top: false,
+                      child: SizedBox(
+                        height: 66,
+                        child: Row(
+                          children: List.generate(_tabs.length, (i) {
+                            final selected = _index == i;
+                            final tab = _tabs[i];
+                            final showBadge =
+                                i == 3 && state.unreadNotifications > 0;
+                            return Expanded(
+                              child: _BottomNavItem(
+                                selected: selected,
+                                title: tab.title,
+                                icon: selected ? tab.sel : tab.icon,
+                                showBadge: showBadge,
+                                badgeText: state.unreadNotifications > 9
+                                    ? '9+'
+                                    : '${state.unreadNotifications}',
+                                onTap: () {
+                                  setState(() => _index = i);
+                                  if (i == 3) {
+                                    state.refreshUnreadNotifications();
+                                  }
+                                },
                               ),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                color: selected
-                                    ? BSTheme.accent.withValues(alpha: 0.14)
-                                    : Colors.transparent,
-                              ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      Icon(
-                                        selected ? tab.sel : tab.icon,
-                                        color: selected
-                                            ? BSTheme.accent
-                                            : BSTheme.ink3,
-                                        size: 20,
-                                      ),
-                                      if (showBadge)
-                                        Positioned(
-                                          right: -7,
-                                          top: -5,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 4,
-                                              vertical: 1,
-                                            ),
-                                            constraints: const BoxConstraints(
-                                              minWidth: 14,
-                                              minHeight: 14,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: BSTheme.danger,
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                              border: Border.all(
-                                                color: const Color(0xFF060E1E),
-                                                width: 1.5,
-                                              ),
-                                            ),
-                                            alignment: Alignment.center,
-                                            child: Text(
-                                              state.unreadNotifications > 9
-                                                  ? '9+'
-                                                  : '${state.unreadNotifications}',
-                                              style: const TextStyle(
-                                                fontFamily: 'Geist',
-                                                fontSize: 8,
-                                                fontWeight: FontWeight.w700,
-                                                color: Colors.white,
-                                                height: 1,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    tab.title,
-                                    style: TextStyle(
-                                      fontFamily: 'Geist',
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w500,
-                                      letterSpacing: 0.3,
-                                      color: selected
-                                          ? BSTheme.accent
-                                          : BSTheme.ink3,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
+                            );
+                          }),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ReadinessRail extends StatelessWidget {
+  const _ReadinessRail({
+    required this.index,
+    required this.tabs,
+    required this.unread,
+    required this.nodesReady,
+    required this.onSelect,
+  });
+
+  final int index;
+  final List<({IconData icon, IconData sel, String title})> tabs;
+  final int unread;
+  final bool nodesReady;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 92,
+      margin: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + kToolbarHeight,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xD90D1014),
+        border: Border(
+          right: BorderSide(color: BSTheme.glassBorder, width: 0.5),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            const SizedBox(height: 14),
+            _RailStateBadge(
+              label: nodesReady ? 'READY' : 'SETUP',
+              color: nodesReady ? BSTheme.success : BSTheme.warm,
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                itemCount: tabs.length,
+                itemBuilder: (context, i) => _RailItem(
+                  selected: index == i,
+                  icon: index == i ? tabs[i].sel : tabs[i].icon,
+                  label: tabs[i].title,
+                  badge: i == 3 && unread > 0 ? unread : null,
+                  onTap: () => onSelect(i),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RailStateBadge extends StatelessWidget {
+  const _RailStateBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        color: color.withValues(alpha: 0.10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Geist',
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.8,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+class _RailItem extends StatelessWidget {
+  const _RailItem({
+    required this.selected,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.badge,
+  });
+
+  final bool selected;
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final int? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: selected ? BSTheme.ink.withValues(alpha: 0.08) : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            height: 64,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected ? BSTheme.glassBorder : Colors.transparent,
+              ),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      icon,
+                      color: selected ? BSTheme.accent : BSTheme.ink3,
+                      size: 21,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0,
+                        color: selected ? BSTheme.ink : BSTheme.ink3,
+                      ),
+                    ),
+                  ],
+                ),
+                if (badge != null)
+                  Positioned(
+                    right: 8,
+                    top: 7,
+                    child: _UnreadBadge(text: badge! > 9 ? '9+' : '$badge'),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNavItem extends StatelessWidget {
+  const _BottomNavItem({
+    required this.selected,
+    required this.title,
+    required this.icon,
+    required this.showBadge,
+    required this.badgeText,
+    required this.onTap,
+  });
+
+  final bool selected;
+  final String title;
+  final IconData icon;
+  final bool showBadge;
+  final String badgeText;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: selected ? BSTheme.ink.withValues(alpha: 0.07) : Colors.transparent,
+          border: Border.all(
+            color: selected ? BSTheme.glassBorder : Colors.transparent,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(
+                  icon,
+                  color: selected ? BSTheme.accent : BSTheme.ink3,
+                  size: 20,
+                ),
+                if (showBadge)
+                  Positioned(
+                    right: -9,
+                    top: -7,
+                    child: _UnreadBadge(text: badgeText),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+                color: selected ? BSTheme.ink : BSTheme.ink3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      constraints: const BoxConstraints(minWidth: 15, minHeight: 15),
+      decoration: BoxDecoration(
+        color: BSTheme.danger,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: BSTheme.surface, width: 1.5),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontFamily: 'Geist',
+          fontSize: 8,
+          fontWeight: FontWeight.w800,
+          color: Colors.white,
+          height: 1,
+        ),
+      ),
     );
   }
 }
@@ -436,7 +656,7 @@ class _SetupWallState extends State<_SetupWall> {
                         fontFamily: 'Geist',
                         fontSize: 26,
                         fontWeight: FontWeight.w700,
-                        letterSpacing: -0.5,
+                        letterSpacing: 0,
                         color: BSTheme.ink,
                       ),
                     ),

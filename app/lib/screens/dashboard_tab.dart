@@ -174,89 +174,756 @@ class _DashboardViewState extends State<_DashboardView> {
 
     final online = widget.data.nodes.where((n) => n.online).length;
     final unread = widget.data.alerts.where((a) => !a.read).length;
+    final totalNodes = widget.data.nodes.length;
+    final needsAction = widget.data.nodes.where(_nodeNeedsAction).toList();
+    final priorityTargets = [...widget.data.targets]
+      ..sort((a, b) => b.priority.compareTo(a.priority));
 
-    return Padding(
-      padding: EdgeInsets.fromLTRB(14, topPad + 6, 14, bottomPad),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _fadeUp(
-            0,
-            _Hero(
-              name: name,
-              online: online,
-              totalNodes: widget.data.nodes.length,
-              obs24h: widget.data.recentObs.length,
-              targets: widget.data.targets.length,
-              unread: unread,
-              onAlertsTap: widget.onOpenAlerts,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Asymmetric two-column panel layout
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Left: activity — visual anchor with full-height sparkline
-                Expanded(
-                  flex: 55,
-                  child: _fadeUp(
-                    1,
-                    _ActivityPanel(
-                      obs: widget.data.recentObs,
-                      timeline: widget.data.timeline,
-                    ),
+    return RefreshIndicator(
+      onRefresh: widget.onRefresh,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(16, topPad + 12, 16, bottomPad + 18),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                _fadeUp(
+                  0,
+                  _TonightBriefHero(
+                    name: name,
+                    online: online,
+                    totalNodes: totalNodes,
+                    obs24h: widget.data.recentObs.length,
+                    unread: unread,
+                    actionCount: needsAction.length,
+                    topTarget: priorityTargets.isEmpty
+                        ? null
+                        : priorityTargets.first,
+                    onAlertsTap: widget.onOpenAlerts,
                   ),
                 ),
-                const SizedBox(width: 12),
-                // Right: targets + alerts stacked
-                Expanded(
-                  flex: 45,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        flex: 60,
-                        child: _fadeUp(
-                          2,
-                          GestureDetector(
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => _TargetsListScreen(
-                                  targets: widget.data.targets,
-                                ),
-                              ),
-                            ),
-                            child: _TargetsPanel(targets: widget.data.targets),
-                          ),
-                        ),
+                const SizedBox(height: 12),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 760;
+                    final readiness = _fadeUp(
+                      1,
+                      _ReadinessPanel(
+                        nodes: widget.data.nodes,
+                        alerts: widget.data.alerts,
+                        onOpenAlerts: widget.onOpenAlerts,
                       ),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        flex: 40,
-                        child: _fadeUp(
-                          3,
-                          GestureDetector(
-                            onTap: widget.onOpenAlerts,
-                            child: _AlertsPanel(
-                              alerts: widget.data.alerts,
-                              onOpenAlerts: widget.onOpenAlerts,
-                              centered: true,
-                            ),
-                          ),
-                        ),
+                    );
+                    final plan = _fadeUp(
+                      2,
+                      _PlanPanel(
+                        timeline: widget.data.timeline,
+                        targets: priorityTargets,
                       ),
-                    ],
+                    );
+                    if (!wide) {
+                      return Column(
+                        children: [
+                          readiness,
+                          const SizedBox(height: 12),
+                          plan,
+                        ],
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 44, child: readiness),
+                        const SizedBox(width: 12),
+                        Expanded(flex: 56, child: plan),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                _fadeUp(
+                  3,
+                  _EvidencePanel(
+                    obs: widget.data.recentObs,
+                    targets: priorityTargets,
                   ),
                 ),
-              ],
+              ]),
             ),
           ),
         ],
       ),
     );
   }
+}
+
+bool _nodeNeedsAction(Node node) =>
+    !node.online || node.isSleeping || node.isOnVacation;
+
+class _TonightBriefHero extends StatelessWidget {
+  const _TonightBriefHero({
+    required this.name,
+    required this.online,
+    required this.totalNodes,
+    required this.obs24h,
+    required this.unread,
+    required this.actionCount,
+    required this.topTarget,
+    required this.onAlertsTap,
+  });
+
+  final String name;
+  final int online;
+  final int totalNodes;
+  final int obs24h;
+  final int unread;
+  final int actionCount;
+  final Target? topTarget;
+  final VoidCallback onAlertsTap;
+
+  String get _firstName {
+    final trimmed = name.trim();
+    return trimmed.isEmpty ? '' : trimmed.split(' ').first;
+  }
+
+  String get _headline {
+    if (totalNodes == 0) return 'Connect a telescope to start observing.';
+    if (actionCount > 0) return 'Tonight needs $actionCount check.';
+    if (obs24h > 0) return 'Your network produced data today.';
+    if (online > 0) return 'Your telescopes are ready for tonight.';
+    return 'Your telescopes need attention.';
+  }
+
+  String get _summary {
+    final target = topTarget?.name;
+    if (actionCount > 0) {
+      return 'Resolve the action below before the observing window opens.';
+    }
+    if (target != null && target.isNotEmpty) {
+      return '$target is the highest-priority target in the current queue.';
+    }
+    return 'Nothing urgent is waiting. Check the plan and recent evidence.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final readinessColor = actionCount > 0
+        ? BSTheme.warm
+        : totalNodes > 0 && online == totalNodes
+            ? BSTheme.success
+            : BSTheme.danger;
+
+    return _OpsPanel(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _firstName.isEmpty
+                          ? 'Tonight brief'
+                          : 'Tonight brief, $_firstName',
+                      style: const TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.1,
+                        color: BSTheme.ink3,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _headline,
+                      style: const TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 30,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                        height: 1.05,
+                        color: BSTheme.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _summary,
+                      style: const TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 14,
+                        height: 1.45,
+                        color: BSTheme.ink2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              _StatusPill(
+                label: totalNodes == 0 ? 'SETUP' : '$online/$totalNodes LIVE',
+                color: readinessColor,
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _BriefMetric(
+                label: 'Observations 24h',
+                value: '$obs24h',
+                color: BSTheme.sky,
+              ),
+              _BriefMetric(
+                label: 'Active targets',
+                value: topTarget == null ? '0' : 'live',
+                color: BSTheme.warm,
+              ),
+              _BriefMetric(
+                label: 'Unread alerts',
+                value: '$unread',
+                color: unread > 0 ? BSTheme.danger : BSTheme.success,
+                onTap: onAlertsTap,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReadinessPanel extends StatelessWidget {
+  const _ReadinessPanel({
+    required this.nodes,
+    required this.alerts,
+    required this.onOpenAlerts,
+  });
+
+  final List<Node> nodes;
+  final List<AppNotification> alerts;
+  final VoidCallback onOpenAlerts;
+
+  @override
+  Widget build(BuildContext context) {
+    final unread = alerts.where((a) => !a.read).length;
+    final items = <_ReadinessItem>[
+      _ReadinessItem(
+        title: nodes.isEmpty
+            ? 'No telescope connected'
+            : '${nodes.where((n) => n.online).length}/${nodes.length} telescopes live',
+        detail: nodes.isEmpty
+            ? 'Connect a node before it can receive assignments.'
+            : 'Offline or sleeping nodes are called out here.',
+        color: nodes.isEmpty || nodes.any((n) => !n.online)
+            ? BSTheme.warm
+            : BSTheme.success,
+        icon: Icons.satellite_alt,
+      ),
+      _ReadinessItem(
+        title: unread == 0 ? 'Alerts quiet' : '$unread alert${unread == 1 ? '' : 's'} waiting',
+        detail: unread == 0
+            ? 'Nothing requires member attention right now.'
+            : 'Review incoming notices before tonight continues.',
+        color: unread == 0 ? BSTheme.success : BSTheme.danger,
+        icon: Icons.notifications_active,
+        onTap: unread == 0 ? null : onOpenAlerts,
+      ),
+    ];
+
+    final actionNodes = nodes.where(_nodeNeedsAction).take(2).map((node) {
+      return _ReadinessItem(
+        title: node.telescopeModel.isEmpty ? 'Telescope needs review' : node.telescopeModel,
+        detail: _nodeActionText(node),
+        color: node.online ? BSTheme.warm : BSTheme.danger,
+        icon: Icons.build_circle_outlined,
+      );
+    });
+
+    return _OpsPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _PanelHeader(
+            label: 'READINESS',
+            title: 'What needs attention',
+            icon: Icons.fact_check_outlined,
+          ),
+          const SizedBox(height: 12),
+          ...items.map((item) => _ReadinessRow(item: item)),
+          ...actionNodes.map((item) => _ReadinessRow(item: item)),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanPanel extends StatelessWidget {
+  const _PlanPanel({required this.timeline, required this.targets});
+
+  final List<TimelineItem> timeline;
+  final List<Target> targets;
+
+  @override
+  Widget build(BuildContext context) {
+    final planItems = timeline.take(4).toList();
+
+    return _OpsPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _PanelHeader(
+            label: 'PLAN',
+            title: 'What the network will try',
+            icon: Icons.route_outlined,
+          ),
+          const SizedBox(height: 12),
+          if (planItems.isEmpty)
+            ...targets.take(3).map((target) => _TargetIntentRow(target: target))
+          else
+            ...planItems.map((item) => _TimelineIntentRow(item: item)),
+          if (planItems.isEmpty && targets.isEmpty)
+            const _EmptyLine('No scheduled assignments yet.'),
+        ],
+      ),
+    );
+  }
+}
+
+class _EvidencePanel extends StatelessWidget {
+  const _EvidencePanel({required this.obs, required this.targets});
+
+  final List<Observation> obs;
+  final List<Target> targets;
+
+  @override
+  Widget build(BuildContext context) {
+    final accepted = obs.where((o) => o.aavsoSubmitted).length;
+    final values = obs.reversed.map((o) => o.magnitude).toList();
+
+    return _OpsPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _PanelHeader(
+            label: 'EVIDENCE',
+            title: obs.isEmpty ? 'No measurements yet today' : 'Recent measurements',
+            detail: obs.isEmpty ? null : '$accepted accepted',
+            icon: Icons.science_outlined,
+          ),
+          const SizedBox(height: 12),
+          if (obs.isNotEmpty) ...[
+            SizedBox(
+              height: 112,
+              child: Sparkline(
+                values: values,
+                color: BSTheme.sky,
+                height: 112,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...obs.take(4).map(
+                  (o) => _EvidenceRow(
+                    obs: o,
+                    onTap: () => _openTarget(context, o.targetName),
+                  ),
+                ),
+          ] else if (targets.isNotEmpty)
+            ...targets.take(3).map((target) => _TargetIntentRow(target: target))
+          else
+            const _EmptyLine('Observations will appear here after a clear run.'),
+        ],
+      ),
+    );
+  }
+}
+
+class _OpsPanel extends StatelessWidget {
+  const _OpsPanel({
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+  });
+
+  final Widget child;
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: BSTheme.surface.withValues(alpha: 0.86),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: BSTheme.glassBorder),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 24,
+            offset: Offset(0, 14),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _PanelHeader extends StatelessWidget {
+  const _PanelHeader({
+    required this.label,
+    required this.title,
+    required this.icon,
+    this.detail,
+  });
+
+  final String label;
+  final String title;
+  final IconData icon;
+  final String? detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            color: BSTheme.ink.withValues(alpha: 0.06),
+            border: Border.all(color: BSTheme.glassBorder),
+          ),
+          child: Icon(icon, size: 17, color: BSTheme.ink2),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: 'Geist',
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.2,
+                  color: BSTheme.ink3,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontFamily: 'Geist',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                  color: BSTheme.ink,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (detail != null) _StatusPill(label: detail!, color: BSTheme.success),
+      ],
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.32)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Geist',
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.8,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+class _BriefMetric extends StatelessWidget {
+  const _BriefMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+    this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = Container(
+      constraints: const BoxConstraints(minWidth: 112),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: BSTheme.ink.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: BSTheme.glassBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 10,
+              color: BSTheme.ink3,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (onTap == null) return child;
+    return GestureDetector(onTap: onTap, child: child);
+  }
+}
+
+class _ReadinessItem {
+  const _ReadinessItem({
+    required this.title,
+    required this.detail,
+    required this.color,
+    required this.icon,
+    this.onTap,
+  });
+
+  final String title;
+  final String detail;
+  final Color color;
+  final IconData icon;
+  final VoidCallback? onTap;
+}
+
+class _ReadinessRow extends StatelessWidget {
+  const _ReadinessRow({required this.item});
+
+  final _ReadinessItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return _IntentRow(
+      icon: item.icon,
+      color: item.color,
+      title: item.title,
+      detail: item.detail,
+      trailing: item.onTap == null
+          ? null
+          : const Icon(Icons.chevron_right, color: BSTheme.ink3, size: 18),
+      onTap: item.onTap,
+    );
+  }
+}
+
+class _TimelineIntentRow extends StatelessWidget {
+  const _TimelineIntentRow({required this.item});
+
+  final TimelineItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = item.reason.isNotEmpty
+        ? item.reason
+        : '${item.expCount} exposures'
+            '${item.filter.isEmpty ? '' : ' · ${item.filter.toUpperCase()}'}';
+    return _IntentRow(
+      icon: Icons.schedule,
+      color: BSTheme.sky,
+      title: item.target.isEmpty ? 'Scheduled target' : item.target,
+      detail: '${item.startTime} · $detail',
+      onTap: () => _openTarget(context, item.target),
+    );
+  }
+}
+
+class _TargetIntentRow extends StatelessWidget {
+  const _TargetIntentRow({required this.target});
+
+  final Target target;
+
+  @override
+  Widget build(BuildContext context) {
+    final priority = (target.priority * 100).clamp(0, 100).round();
+    final type = target.targetType.isEmpty ? 'target' : target.targetType;
+    return _IntentRow(
+      icon: Icons.my_location,
+      color: priority > 70 ? BSTheme.warm : BSTheme.sky,
+      title: target.name,
+      detail: '$type · priority $priority · ${target.nMeasurements} measurements',
+      onTap: () => _openTarget(context, target.name),
+    );
+  }
+}
+
+class _EvidenceRow extends StatelessWidget {
+  const _EvidenceRow({required this.obs, this.onTap});
+
+  final Observation obs;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final magColor = obs.magnitude < 8
+        ? BSTheme.warm
+        : obs.magnitude < 11
+            ? BSTheme.sky
+            : BSTheme.ink2;
+    final status = obs.aavsoSubmitted ? 'AAVSO accepted' : obs.qualityFlag;
+    return _IntentRow(
+      icon: Icons.scatter_plot_outlined,
+      color: magColor,
+      title: obs.targetName.isEmpty ? 'Unknown target' : obs.targetName,
+      detail: '${obs.magnitude.toStringAsFixed(2)} mag · $status',
+      trailing: Text(
+        _ago(DateTime.tryParse(obs.receivedAt)),
+        style: const TextStyle(
+          fontFamily: 'Geist',
+          fontSize: 11,
+          color: BSTheme.ink3,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
+}
+
+class _IntentRow extends StatelessWidget {
+  const _IntentRow({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.detail,
+    this.trailing,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String detail;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final row = Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: color.withValues(alpha: 0.10),
+            ),
+            child: Icon(icon, size: 17, color: color),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: 'Geist',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                    color: BSTheme.ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: 'Geist',
+                    fontSize: 12,
+                    height: 1.35,
+                    color: BSTheme.ink2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            trailing!,
+          ],
+        ],
+      ),
+    );
+    if (onTap == null) return row;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: row,
+      ),
+    );
+  }
+}
+
+String _nodeActionText(Node node) {
+  if (!node.online) return 'Last heartbeat is stale. Check power and network.';
+  if (node.isSleeping && node.portable) {
+    return 'Set an observing site before tonight can begin.';
+  }
+  if (node.isSleeping) return 'Sleeping now. It will wait for assignment.';
+  if (node.isOnVacation) return 'Vacation mode is active until ${node.vacationUntil}.';
+  return 'Review this telescope before the next observing window.';
 }
 
 // ── Hero: greeting + stat orbs ────────────────────────────────────────────────
@@ -313,7 +980,7 @@ class _Hero extends StatelessWidget {
                       fontFamily: 'Geist',
                       fontSize: 22,
                       fontWeight: FontWeight.w700,
-                      letterSpacing: -0.8,
+                      letterSpacing: 0,
                       color: BSTheme.ink,
                     ),
                     overflow: TextOverflow.ellipsis,
@@ -538,7 +1205,7 @@ class _ActivityRow extends StatelessWidget {
               fontFamily: 'Geist',
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              letterSpacing: -0.3,
+              letterSpacing: 0,
               fontFeatures: const [FontFeature.tabularFigures()],
               color: magColor,
             ),
@@ -664,7 +1331,7 @@ class _TargetRow extends StatelessWidget {
                   fontFamily: 'Geist',
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: -0.3,
+                  letterSpacing: 0,
                   fontFeatures: const [FontFeature.tabularFigures()],
                   color: barColor,
                 ),

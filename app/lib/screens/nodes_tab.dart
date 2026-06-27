@@ -140,6 +140,16 @@ class _NodeCard extends StatelessWidget {
     }
   }
 
+  String get _nextAction {
+    if (!node.online) return 'Check power, network, or node software.';
+    if (node.portable && node.isSleeping) {
+      return 'Set tonight\'s observing location before it can run.';
+    }
+    if (node.isOnVacation) return 'Paused until ${_fmtDate(node.vacationUntil)}.';
+    if (node.status == 'active') return 'Accepting assignments for this window.';
+    return 'Open details to review this telescope.';
+  }
+
   Future<void> _openManage(BuildContext context) async {
     final ok = await showModalBottomSheet<bool>(
       context: context,
@@ -158,36 +168,35 @@ class _NodeCard extends StatelessWidget {
       onTap: () => _openManage(context),
       child: Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: BSTheme.glassBg,
+        borderRadius: BorderRadius.circular(12),
+        color: BSTheme.surface.withValues(alpha: 0.86),
         border: Border.all(color: _borderColor),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x55000000),
+            blurRadius: 18,
+            offset: Offset(0, 10),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Column(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: color.withValues(alpha: 0.10),
-                      border:
-                          Border.all(color: color.withValues(alpha: 0.28)),
-                    ),
-                    child:
-                        Icon(Icons.satellite_alt, size: 22, color: color),
-                  ),
-                  const SizedBox(height: 6),
-                  _StatusDot(status: node.status),
-                ],
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: color.withValues(alpha: 0.10),
+                  border: Border.all(color: color.withValues(alpha: 0.28)),
+                ),
+                child: Icon(Icons.satellite_alt, size: 22, color: color),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -202,8 +211,8 @@ class _NodeCard extends StatelessWidget {
                             style: const TextStyle(
                               fontFamily: 'Geist',
                               fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: -0.4,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
                               color: BSTheme.ink,
                             ),
                           ),
@@ -250,8 +259,8 @@ class _NodeCard extends StatelessWidget {
                         style: const TextStyle(
                           fontFamily: 'Geist',
                           fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: 0.8,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0,
                           color: BSTheme.ink3,
                         ),
                       ),
@@ -279,8 +288,8 @@ class _NodeCard extends StatelessWidget {
                         style: TextStyle(
                           fontFamily: 'Geist',
                           fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.2,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
                           color: color,
                         ),
                       ),
@@ -300,6 +309,33 @@ class _NodeCard extends StatelessWidget {
                 ],
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: color.withValues(alpha: 0.055),
+              border: Border.all(color: color.withValues(alpha: 0.16)),
+            ),
+            child: Row(
+              children: [
+                _StatusDot(status: node.status),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _nextAction,
+                    style: const TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 12,
+                      height: 1.35,
+                      color: BSTheme.ink2,
+                    ),
+                  ),
+                ),
+                const Icon(Icons.chevron_right, size: 18, color: BSTheme.ink3),
+              ],
+            ),
           ),
           // Sleeping portable: Start tonight + Vacation
           if (node.portable && node.isSleeping) ...[
@@ -805,7 +841,7 @@ class _StatCell extends StatelessWidget {
               fontSize: 24,
               fontWeight: FontWeight.w700,
               color: BSTheme.ink,
-              letterSpacing: -0.5,
+              letterSpacing: 0,
             ),
           ),
           Text(
@@ -1591,7 +1627,7 @@ class _SkyPill extends StatelessWidget {
               fontSize: 16,
               fontWeight: FontWeight.w600,
               color: color,
-              letterSpacing: -0.3,
+              letterSpacing: 0,
             ),
           ),
         ],

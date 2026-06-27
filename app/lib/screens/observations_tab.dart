@@ -149,7 +149,7 @@ class _NightTile extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 4),
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(10),
         color: color.withValues(alpha: clear ? 0.10 : 0.04),
         border: Border.all(
             color: color.withValues(alpha: clear ? 0.28 : 0.12)),
@@ -224,26 +224,16 @@ class _ObservationCard extends StatelessWidget {
               ),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              magColor.withValues(alpha: 0.10),
-              const Color(0x12A0B9FF),
-              const Color(0x08060E1E),
-            ],
-            stops: const [0.0, 0.45, 1.0],
-          ),
-          border: Border.all(color: BSTheme.glassBorder),
+          borderRadius: BorderRadius.circular(12),
+          color: BSTheme.surface.withValues(alpha: 0.88),
+          border: Border.all(color: magColor.withValues(alpha: 0.22)),
           boxShadow: [
             BoxShadow(
-              color: magColor.withValues(alpha: 0.10),
-              blurRadius: 22,
-              spreadRadius: -8,
-              offset: const Offset(0, 8),
+              color: Colors.black.withValues(alpha: 0.34),
+              blurRadius: 18,
+              offset: const Offset(0, 10),
             ),
           ],
         ),
@@ -254,7 +244,7 @@ class _ObservationCard extends StatelessWidget {
               width: 46,
               height: 46,
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
+                borderRadius: BorderRadius.circular(10),
                 color: magColor.withValues(alpha: 0.10),
                 border: Border.all(color: magColor.withValues(alpha: 0.28)),
               ),
@@ -270,8 +260,8 @@ class _ObservationCard extends StatelessWidget {
                     style: const TextStyle(
                       fontFamily: 'Geist',
                       fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -0.3,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
                       color: BSTheme.ink,
                     ),
                   ),
@@ -284,7 +274,7 @@ class _ObservationCard extends StatelessWidget {
                           fontFamily: 'Geist',
                           fontSize: 22,
                           fontWeight: FontWeight.w800,
-                          letterSpacing: -1.0,
+                          letterSpacing: 0,
                           color: magColor,
                           height: 1.0,
                         ),
@@ -296,18 +286,42 @@ class _ObservationCard extends StatelessWidget {
                           fontFamily: 'Geist',
                           fontSize: 11,
                           color: BSTheme.ink3,
-                          letterSpacing: 0.5,
+                          letterSpacing: 0,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '± ${obs.uncertainty.toStringAsFixed(3)}',
-                    style: const TextStyle(
-                      fontFamily: 'Geist',
-                      fontSize: 12,
-                      color: BSTheme.ink3,
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(9),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(9),
+                      color: BSTheme.ink.withValues(alpha: 0.035),
+                      border: Border.all(color: BSTheme.glassBorder),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _EvidenceDatum(
+                            label: 'uncertainty',
+                            value: '± ${obs.uncertainty.toStringAsFixed(3)}',
+                          ),
+                        ),
+                        Expanded(
+                          child: _EvidenceDatum(
+                            label: 'node',
+                            value: obs.nodeId.isEmpty ? 'unknown' : obs.nodeId,
+                          ),
+                        ),
+                        Expanded(
+                          child: _EvidenceDatum(
+                            label: 'quality',
+                            value: obs.qualityFlag.isEmpty
+                                ? 'unmarked'
+                                : obs.qualityFlag,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -382,6 +396,44 @@ class _Badge extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _EvidenceDatum extends StatelessWidget {
+  const _EvidenceDatum({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: 'Geist',
+            fontSize: 9,
+            color: BSTheme.ink3,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: 'Geist',
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: BSTheme.ink2,
+          ),
+        ),
+      ],
     );
   }
 }
