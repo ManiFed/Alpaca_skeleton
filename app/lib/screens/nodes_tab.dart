@@ -1,6 +1,5 @@
-// ignore: avoid_web_libraries_in_flutter
 import 'dart:convert';
-import 'dart:html' as html;
+import 'package:geolocator/geolocator.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1032,10 +1031,11 @@ class _StartTonightSheetState extends State<_StartTonightSheet> {
   Future<void> _detectGps() async {
     setState(() { _locating = true; _error = null; });
     try {
-      final pos = await html.window.navigator.geolocation
-          .getCurrentPosition(enableHighAccuracy: true);
-      final lat = (pos.coords!.latitude as num).toDouble();
-      final lon = (pos.coords!.longitude as num).toDouble();
+      await Geolocator.requestPermission();
+      final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
+      final lat = pos.latitude;
+      final lon = pos.longitude;
       if (!mounted) return;
       setState(() {
         _lat = lat;
@@ -1882,10 +1882,11 @@ class _ClaimSheetState extends State<_ClaimSheet> {
   Future<void> _tryPortableGps() async {
     setState(() => _locating = true);
     try {
-      final pos = await html.window.navigator.geolocation
-          .getCurrentPosition(enableHighAccuracy: false);
-      final lat = (pos.coords!.latitude as num).toDouble();
-      final lon = (pos.coords!.longitude as num).toDouble();
+      await Geolocator.requestPermission();
+      final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.low));
+      final lat = pos.latitude;
+      final lon = pos.longitude;
       if (mounted) {
         setState(() {
           _lat = lat;
@@ -1904,10 +1905,11 @@ class _ClaimSheetState extends State<_ClaimSheet> {
   Future<void> _detectLocation() async {
     setState(() { _locating = true; _error = null; });
     try {
-      final pos = await html.window.navigator.geolocation
-          .getCurrentPosition(enableHighAccuracy: true);
-      final lat = (pos.coords!.latitude as num).toDouble();
-      final lon = (pos.coords!.longitude as num).toDouble();
+      await Geolocator.requestPermission();
+      final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(accuracy: LocationAccuracy.high));
+      final lat = pos.latitude;
+      final lon = pos.longitude;
       if (mounted) {
         setState(() {
           _lat = lat;
