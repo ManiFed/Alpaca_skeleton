@@ -8726,13 +8726,18 @@ async function _checkFirstRun() {
     const cfg = await cfgR.json();
     const cloudCfg = cfg.cloud || {};
     const registered = cloudR && cloudR.ok && (await cloudR.json()).registered;
-    const hasCode = !_isPlaceholderCode(cloudCfg.activation_code);
     const setupBanner = document.getElementById('setupBanner');
-    if (registered || hasCode) {
+    if (registered) {
       if (setupBanner) setupBanner.style.display = 'none';
       return;
     }
     if (setupBanner) setupBanner.style.display = 'flex';
+    // Pre-fill with any saved code so the user just has to click Connect
+    const savedCode = (cloudCfg.activation_code || '').trim();
+    if (savedCode && !_isPlaceholderCode(savedCode)) {
+      const inp = document.getElementById('welcomeCodeInput');
+      if (inp && !inp.value) inp.value = savedCode;
+    }
     openWelcomeModal();
   } catch (_) {}
 }
