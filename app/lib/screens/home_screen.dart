@@ -279,19 +279,19 @@ class _SetupWall extends StatelessWidget {
     (
       icon: Icons.download_outlined,
       label: 'Download & install',
-      detail: 'Run the installer on the Mac connected to your Seestar S50.',
+      detail: 'Run the installer on the Mac connected to your telescope.',
     ),
     (
-      icon: Icons.settings_outlined,
-      label: 'Enter your activation code',
+      icon: Icons.tag_outlined,
+      label: 'Note your pairing token',
       detail:
-          'Open the Node Agent dashboard, go to Settings → Cloud, and paste the code we emailed you.',
+          'When the Node Agent starts, it shows a short token like NOVA-4827. You\'ll need it in the next step.',
     ),
     (
-      icon: Icons.nights_stay_outlined,
-      label: 'Come back here',
+      icon: Icons.link_outlined,
+      label: 'Connect your telescope',
       detail:
-          'The software runs silently in the background. This app is where you see everything.',
+          'Tap "Connect telescope" below, pick your scope and location, then enter the pairing token. The app does the rest.',
     ),
   ];
 
@@ -475,13 +475,44 @@ class _SetupWall extends StatelessWidget {
                       ),
                     ),
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
 
-                    // Already installed? Re-check.
+                    // Connect telescope (opens claim sheet)
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          final claimed = await showClaimSheet(context);
+                          if (claimed && context.mounted) {
+                            context.read<AppState>().refreshNodes();
+                          }
+                        },
+                        icon: const Icon(Icons.link_outlined, size: 18),
+                        label: const Text('Connect telescope'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: BSTheme.accent,
+                          side: BorderSide(
+                              color: BSTheme.accent.withValues(alpha: 0.4)),
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          textStyle: const TextStyle(
+                            fontFamily: 'Geist',
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // Already linked? Re-check.
                     TextButton(
                       onPressed: () => context.read<AppState>().refreshNodes(),
                       child: const Text(
-                        'Already installed and registered? Tap to refresh',
+                        'Already connected? Tap to refresh',
                         style: TextStyle(
                           fontFamily: 'Geist',
                           fontSize: 13,

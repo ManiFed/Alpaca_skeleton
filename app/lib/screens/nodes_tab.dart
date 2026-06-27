@@ -12,6 +12,17 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/async_view.dart';
 
+/// Opens the connect-telescope sheet from any screen.
+/// Returns true if a node was successfully claimed.
+Future<bool> showClaimSheet(BuildContext context) async {
+  final ok = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => const _ClaimSheet(),
+  );
+  return ok == true;
+}
+
 class NodesTab extends StatefulWidget {
   const NodesTab({super.key});
 

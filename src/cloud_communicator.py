@@ -129,12 +129,12 @@ class CloudCommunicator:
         if not (self._node_id and self._api_key) and self._pair_token:
             print(
                 f"\n  ┌─────────────────────────────────────────────┐\n"
-                f"  │  Telescope not yet connected to Boundless   │\n"
-                f"  │  Skies. Open the app and enter:             │\n"
+                f"  │  Telescope not yet linked to your TTN       │\n"
+                f"  │  account. Open the app and enter:           │\n"
                 f"  │                                             │\n"
                 f"  │      Pairing token:  {self._pair_token:<8}            │\n"
                 f"  │                                             │\n"
-                f"  │  App → Telescopes → Connect telescope       │\n"
+                f"  │  app.thetelescope.net → Connect telescope   │\n"
                 f"  └─────────────────────────────────────────────┘\n",
                 flush=True,
             )
