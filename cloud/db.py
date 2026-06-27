@@ -332,6 +332,26 @@ _SCHEMA: list[str] = [
         updated_at     TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS patrol_detections (
+        id              SERIAL PRIMARY KEY,
+        measurement_id  INTEGER REFERENCES measurements(id),
+        node_id         TEXT NOT NULL,
+        target_name     TEXT NOT NULL,
+        bjd             DOUBLE PRECISION NOT NULL,
+        ra_deg          DOUBLE PRECISION NOT NULL,
+        dec_deg         DOUBLE PRECISION NOT NULL,
+        est_mag         DOUBLE PRECISION,
+        catalog_mag     DOUBLE PRECISION,
+        delta_mag       DOUBLE PRECISION,
+        alert_type      TEXT NOT NULL,
+        status          TEXT DEFAULT 'new',
+        detected_at     TEXT NOT NULL,
+        UNIQUE (node_id, bjd, ra_deg, dec_deg)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_patrol_time ON patrol_detections(detected_at)",
+    "CREATE INDEX IF NOT EXISTS idx_patrol_status ON patrol_detections(status, detected_at)",
 ]
 
 # Seed statements run once after schema creation (idempotent via ON CONFLICT DO NOTHING).

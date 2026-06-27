@@ -849,6 +849,25 @@ def api_admin_tuning_rollback():
     return jsonify({"restored_weights": tuning.active_obs_weights(_config)})
 
 
+@app.route("/api/v1/admin/patrol", methods=["GET"])
+@require_admin
+def api_admin_patrol():
+    """Recent patrol detections across all nodes. ?hours=N (default 48)."""
+    hours = float(request.args.get("hours", 48))
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    rows = db.query(
+        """SELECT pd.id, pd.node_id, pd.target_name, pd.bjd, pd.ra_deg, pd.dec_deg,
+                  pd.est_mag, pd.catalog_mag, pd.delta_mag, pd.alert_type,
+                  pd.status, pd.detected_at, n.owner_name
+             FROM patrol_detections pd
+             LEFT JOIN nodes n USING (node_id)
+            WHERE pd.detected_at > %s
+            ORDER BY pd.detected_at DESC LIMIT 200""",
+        (cutoff,),
+    )
+    return jsonify({"n": len(rows), "hours": hours, "detections": rows})
+
+
 @app.route("/api/v1/health", methods=["GET"])
 def api_health():
     try:

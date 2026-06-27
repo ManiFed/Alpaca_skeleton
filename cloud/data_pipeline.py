@@ -94,6 +94,11 @@ def ingest_measurement(node_id: str, payload: dict,
 
     logger.info("Measurement stored: %s %s mag=%.3f±%.3f quality=%s",
                 node_id, m.target_name, m.magnitude, m.uncertainty, m.quality_flag)
+
+    patrol_alerts = (payload or {}).get("patrol_alerts") or []
+    if patrol_alerts and row_id:
+        store_patrol_alerts(row_id, node_id, m.target_name, m.bjd, patrol_alerts)
+
     if m.quality_flag == "poor" or m.uncertainty > 0.3 or m.comparison_stars < 3:
         incidents.log(
             node_id,
@@ -239,6 +244,36 @@ def consensus_light_curve(target_name: str, days: float = 365.0) -> list:
             clusters.append(r["bjd"])
 
     return [p for p in (compute_consensus(target_name, c) for c in clusters) if p]
+
+
+# ── Patrol alert storage ───────────────────────────────────────────────────────
+
+def store_patrol_alerts(measurement_id: int, node_id: str,
+                        target_name: str, bjd: float,
+                        alerts: list) -> None:
+    """Persist transient patrol detections linked to an ingested measurement."""
+    now = _now()
+    for a in alerts:
+        try:
+            db.execute(
+                """INSERT INTO patrol_detections
+                       (measurement_id, node_id, target_name, bjd,
+                        ra_deg, dec_deg, est_mag, catalog_mag, delta_mag,
+                        alert_type, detected_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT DO NOTHING""",
+                (measurement_id, node_id, target_name, bjd,
+                 a.get("ra_deg"), a.get("dec_deg"),
+                 a.get("est_mag"), a.get("catalog_mag"), a.get("delta_mag"),
+                 a.get("alert_type", "unknown"), now),
+            )
+            logger.info(
+                "Patrol alert stored: %s at (%.4f, %.4f) type=%s",
+                target_name, a.get("ra_deg", 0), a.get("dec_deg", 0),
+                a.get("alert_type"),
+            )
+        except Exception as exc:
+            logger.warning("Could not store patrol alert: %s", exc)
 
 
 # ── AAVSO batch submission ─────────────────────────────────────────────────────

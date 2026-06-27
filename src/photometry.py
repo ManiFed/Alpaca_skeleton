@@ -397,6 +397,20 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
         snr, n_comp_used, airmass, quality_flag,
     )
 
+    # ── Step 9: Patrol check (opt-in) ────────────────────────────────────────
+    patrol_alerts: list = []
+    if phot_cfg.get("patrol_enabled", False):
+        try:
+            patrol_alerts = _run_patrol_check(
+                data, wcs, bkg_med, bkg_std, fwhm_px,
+                comp_in_field, zero_point, phot_cfg,
+            )
+            if patrol_alerts:
+                logger.warning("Patrol: %d alert(s) in field of %s",
+                               len(patrol_alerts), target_name)
+        except Exception as _pe:
+            logger.warning("Patrol check error: %s", _pe)
+
     return {
         "target_name":      target_name,
         "bjd":              round(bjd, 6),
@@ -412,6 +426,7 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
         "zero_point":       round(zero_point, 3),
         "zp_scatter":       round(zp_scatter, 3),
         "fits_file":        os.path.basename(fits_path),
+        "patrol_alerts":    patrol_alerts,
     }
 
 
@@ -1340,3 +1355,102 @@ def _compute_airmass(header: dict, config: dict) -> float:
     except Exception as exc:
         logger.warning("Airmass computation failed: %s", exc)
         return 1.5
+
+
+# ── Patrol check ───────────────────────────────────────────────────────────────
+
+def _run_patrol_check(
+    data: np.ndarray,
+    wcs,
+    bkg_med: float,
+    bkg_std: float,
+    fwhm_px: float,
+    comp_stars: list,
+    zero_point: float,
+    phot_cfg: dict,
+) -> list:
+    """
+    Scan the image for transient candidates using the calibrated zero_point
+    from the main photometry pass.
+
+    Flags two cases:
+        new_source  — bright point source not matched in the comparison catalog
+        brightening — catalog star significantly brighter than its listed magnitude
+
+    Config keys (under photometry):
+        patrol_new_source_mag_limit  (default 14.0)  — faintest new source to flag
+        patrol_brightening_delta_mag (default 1.5)   — minimum brightening vs catalog
+        patrol_match_radius_arcsec   (default 15.0)  — sky separation for catalog match
+    """
+    try:
+        from photutils.detection import DAOStarFinder
+    except ImportError:
+        logger.debug("photutils not available — skipping patrol check")
+        return []
+
+    try:
+        new_src_limit = float(phot_cfg.get("patrol_new_source_mag_limit",  14.0))
+        delta_flag    = float(phot_cfg.get("patrol_brightening_delta_mag",  1.5))
+        match_radius  = float(phot_cfg.get("patrol_match_radius_arcsec",   15.0))
+        thr_deg       = match_radius / 3600.0
+
+        daofind = DAOStarFinder(fwhm=fwhm_px, threshold=5.0 * bkg_std,
+                                exclude_border=True)
+        sources = daofind(data - bkg_med)
+        if sources is None or len(sources) == 0:
+            return []
+
+        x_col = "x_centroid" if "x_centroid" in sources.colnames else "xcentroid"
+        y_col = "y_centroid" if "y_centroid" in sources.colnames else "ycentroid"
+
+        alerts = []
+        for row in sources:
+            try:
+                px, py = float(row[x_col]), float(row[y_col])
+                sky    = wcs.pixel_to_world(px, py)
+                ra, dec = float(sky.ra.deg), float(sky.dec.deg)
+            except Exception:
+                continue
+
+            peak = float(row["peak"])
+            if peak <= 0:
+                continue
+            est_mag = -2.5 * math.log10(peak) + zero_point
+
+            cos_dec    = math.cos(math.radians(dec))
+            matched_cs = None
+            for cs in comp_stars:
+                if (abs((ra - cs["ra_deg"]) * cos_dec) < thr_deg
+                        and abs(dec - cs["dec_deg"]) < thr_deg):
+                    matched_cs = cs
+                    break
+
+            if matched_cs is None:
+                if est_mag <= new_src_limit:
+                    alerts.append({
+                        "ra_deg":      round(ra, 6),
+                        "dec_deg":     round(dec, 6),
+                        "est_mag":     round(est_mag, 2),
+                        "catalog_mag": None,
+                        "delta_mag":   None,
+                        "alert_type":  "new_source",
+                    })
+            else:
+                cat_mag = matched_cs.get("mag_v")
+                if cat_mag is not None:
+                    delta = cat_mag - est_mag   # positive = brighter than catalog
+                    if delta >= delta_flag:
+                        alerts.append({
+                            "ra_deg":      round(ra, 6),
+                            "dec_deg":     round(dec, 6),
+                            "est_mag":     round(est_mag, 2),
+                            "catalog_mag": round(cat_mag, 2),
+                            "delta_mag":   round(delta, 2),
+                            "alert_type":  "brightening",
+                        })
+
+        return alerts
+
+    except Exception as exc:
+        logger.warning("Patrol check raised: %s", exc)
+        return []
