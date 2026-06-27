@@ -73,11 +73,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final name = state.member?.displayName ?? '';
 
-    final pages = const [
-      DashboardTab(),
-      NodesTab(),
-      ObservationsTab(),
-      NotificationsTab(),
+    final pages = [
+      DashboardTab(onNavigateToTab: (i) => setState(() => _index = i)),
+      const NodesTab(),
+      const ObservationsTab(),
+      const NotificationsTab(),
     ];
 
     return Stack(

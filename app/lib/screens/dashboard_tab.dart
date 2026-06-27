@@ -11,7 +11,9 @@ import 'target_detail_screen.dart';
 /// "Tonight" — live mission-control dashboard. No scrolling: a hero stat band
 /// over the Aladin sky, then an asymmetric two-column glass layout.
 class DashboardTab extends StatefulWidget {
-  const DashboardTab({super.key});
+  const DashboardTab({super.key, this.onNavigateToTab});
+
+  final void Function(int)? onNavigateToTab;
 
   @override
   State<DashboardTab> createState() => _DashboardTabState();
@@ -218,7 +220,16 @@ class _DashboardViewState extends State<_DashboardView> {
                         flex: 60,
                         child: _fadeUp(
                           2,
-                          _TargetsPanel(targets: widget.data.targets),
+                          GestureDetector(
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => _TargetsListScreen(
+                                  targets: widget.data.targets,
+                                ),
+                              ),
+                            ),
+                            child: _TargetsPanel(targets: widget.data.targets),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -226,9 +237,13 @@ class _DashboardViewState extends State<_DashboardView> {
                         flex: 40,
                         child: _fadeUp(
                           3,
-                          _AlertsPanel(
-                            alerts: widget.data.alerts,
-                            onOpenAlerts: widget.onOpenAlerts,
+                          GestureDetector(
+                            onTap: widget.onOpenAlerts,
+                            child: _AlertsPanel(
+                              alerts: widget.data.alerts,
+                              onOpenAlerts: widget.onOpenAlerts,
+                              centered: true,
+                            ),
                           ),
                         ),
                       ),
@@ -562,11 +577,22 @@ class _TargetsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          GlassSectionHeader(
-            icon: Icons.my_location,
-            label: 'NETWORK TARGETS',
-            detail: '${targets.length} active',
-            color: BSTheme.warm,
+          Row(
+            children: [
+              Expanded(
+                child: GlassSectionHeader(
+                  icon: Icons.my_location,
+                  label: 'NETWORK TARGETS',
+                  detail: '${targets.length} active',
+                  color: BSTheme.warm,
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                size: 14,
+                color: BSTheme.ink3,
+              ),
+            ],
           ),
           if (targets.isEmpty)
             const Expanded(child: _EmptyLine('No active targets.'))
@@ -695,9 +721,14 @@ class _TargetRow extends StatelessWidget {
 // ── Alerts panel ──────────────────────────────────────────────────────────────
 
 class _AlertsPanel extends StatelessWidget {
-  const _AlertsPanel({required this.alerts, required this.onOpenAlerts});
+  const _AlertsPanel({
+    required this.alerts,
+    required this.onOpenAlerts,
+    this.centered = false,
+  });
   final List<AppNotification> alerts;
   final VoidCallback onOpenAlerts;
+  final bool centered;
 
   @override
   Widget build(BuildContext context) {
@@ -708,19 +739,37 @@ class _AlertsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          GlassSectionHeader(
-            icon: Icons.notifications_active,
-            label: 'ALERTS',
-            detail: unread > 0 ? '$unread unread' : 'all clear',
-            color: unread > 0 ? BSTheme.danger : BSTheme.success,
+          Row(
+            children: [
+              Expanded(
+                child: GlassSectionHeader(
+                  icon: Icons.notifications_active,
+                  label: 'ALERTS',
+                  detail: unread > 0 ? '$unread unread' : 'all clear',
+                  color: unread > 0 ? BSTheme.danger : BSTheme.success,
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                size: 14,
+                color: BSTheme.ink3,
+              ),
+            ],
           ),
           if (alerts.isEmpty)
-            const Expanded(child: _EmptyLine('All quiet.'))
+            Expanded(
+              child: Center(
+                child: _EmptyLine(centered ? 'All quiet.' : 'All quiet.'),
+              ),
+            )
           else ...[
             const SizedBox(height: 6),
             Expanded(
               child: ClipRect(
                 child: Column(
+                  mainAxisAlignment: centered
+                      ? MainAxisAlignment.center
+                      : MainAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children:
                       alerts
@@ -849,6 +898,126 @@ class _EmptyLine extends StatelessWidget {
           color: BSTheme.ink3,
         ),
       ),
+    );
+  }
+}
+
+// ── Full targets list screen ──────────────────────────────────────────────────
+
+class _TargetsListScreen extends StatelessWidget {
+  const _TargetsListScreen({required this.targets});
+  final List<Target> targets;
+
+  @override
+  Widget build(BuildContext context) {
+    final sorted = [...targets]
+      ..sort((a, b) => b.priority.compareTo(a.priority));
+
+    return Scaffold(
+      backgroundColor: BSTheme.night,
+      appBar: AppBar(
+        backgroundColor: BSTheme.night,
+        elevation: 0,
+        title: const Text(
+          'Network Targets',
+          style: TextStyle(
+            fontFamily: 'Geist',
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.5,
+            color: BSTheme.ink,
+          ),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: BSTheme.ink2),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: sorted.isEmpty
+          ? const Center(
+              child: Text(
+                'No active targets.',
+                style: TextStyle(fontFamily: 'Geist', color: BSTheme.ink3),
+              ),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              itemCount: sorted.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(color: BSTheme.glassBorder, height: 1),
+              itemBuilder: (context, i) {
+                final t = sorted[i];
+                final p = t.priority.clamp(0.0, 1.0);
+                final barColor = p > 0.7
+                    ? BSTheme.accent
+                    : p > 0.4
+                        ? BSTheme.warm
+                        : BSTheme.ink3;
+                final typeLabel = t.targetType.isEmpty
+                    ? '—'
+                    : t.targetType.toUpperCase();
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              t.name,
+                              style: const TextStyle(
+                                fontFamily: 'Geist',
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: BSTheme.ink,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GlowChip(typeLabel, color: barColor),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${t.nMeasurements} obs',
+                            style: TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: barColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: Stack(
+                          children: [
+                            Container(height: 3, color: BSTheme.glassBorder),
+                            FractionallySizedBox(
+                              widthFactor: p,
+                              child: Container(
+                                height: 3,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(2),
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      barColor.withValues(alpha: 0.5),
+                                      barColor,
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
     );
   }
 }
