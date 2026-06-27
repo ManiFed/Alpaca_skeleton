@@ -35,13 +35,6 @@ TEMPLATE="${APP_DIR}/config.template.yaml"
 
 if [ ! -f "${CONFIG}" ]; then
     cp "${TEMPLATE}" "${CONFIG}"
-    if [ -n "${ACTIVATION_CODE}" ]; then
-        sed -i '' "s/ACTIVATION_CODE_PLACEHOLDER/${ACTIVATION_CODE}/g" "${CONFIG}"
-        echo "Activation code written to config.yaml"
-    else
-        sed -i '' "s/ACTIVATION_CODE_PLACEHOLDER//g" "${CONFIG}"
-        echo "WARNING: No activation code provided — edit config.yaml to add it later"
-    fi
     chmod 600 "${CONFIG}"
 fi
 
@@ -65,6 +58,14 @@ chmod 644 "${PLIST_DEST}"
 # Load and start
 launchctl load -w "${PLIST_DEST}"
 echo "Service installed and started: com.telescopenet.nodeagent"
+
+# Open the dashboard in the browser for the logged-in user
+CONSOLE_USER="$(stat -f '%Su' /dev/console 2>/dev/null || echo '')"
+if [ -n "${CONSOLE_USER}" ] && [ "${CONSOLE_USER}" != "root" ]; then
+    # Wait a few seconds for the service to bind its port
+    sleep 4
+    sudo -u "${CONSOLE_USER}" open "http://localhost:5173" &
+fi
 
 echo ""
 echo "Installation complete!"

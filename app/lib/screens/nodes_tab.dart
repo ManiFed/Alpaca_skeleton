@@ -526,7 +526,7 @@ class _StartTonightSheet extends StatefulWidget {
   State<_StartTonightSheet> createState() => _StartTonightSheetState();
 }
 
-enum _LocStep { idle, geocoding, confirming, confirmed }
+enum _LocStep { idle, geocoding, picking, confirming, confirmed }
 
 class _StartTonightSheetState extends State<_StartTonightSheet> {
   final _locationCtrl = TextEditingController();
@@ -535,6 +535,7 @@ class _StartTonightSheetState extends State<_StartTonightSheet> {
   double? _lon;
   String _city = '';
   String? _resolved;
+  List<Map<String, dynamic>> _locResults = [];
   _LocStep _locStep = _LocStep.idle;
   bool _locating = false;
   bool _fetchingSky = false;
@@ -607,28 +608,31 @@ class _StartTonightSheetState extends State<_StartTonightSheet> {
     setState(() { _locStep = _LocStep.geocoding; _error = null; });
     try {
       final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
-        'q': q, 'format': 'json', 'limit': '1', 'addressdetails': '1',
+        'q': q, 'format': 'json', 'limit': '5', 'addressdetails': '1',
       });
-      final resp = await http.get(
-          uri, headers: {'User-Agent': 'BoundlessSkiesApp/1.0'});
+      final resp = await http.get(uri, headers: {'User-Agent': 'TTNApp/1.0'});
       if (!mounted) return;
       if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as List;
+        final data = (jsonDecode(resp.body) as List).cast<Map<String, dynamic>>();
         if (data.isNotEmpty) {
-          final r = data.first as Map<String, dynamic>;
-          final lat = double.tryParse(r['lat'] as String? ?? '');
-          final lon = double.tryParse(r['lon'] as String? ?? '');
-          if (lat != null && lon != null) {
-            final addr = r['address'] as Map<String, dynamic>?;
-            _city = addr?['city'] as String? ??
-                addr?['town'] as String? ??
-                addr?['village'] as String? ?? '';
-            setState(() {
-              _lat = lat;
-              _lon = lon;
-              _resolved = r['display_name'] as String?;
-              _locStep = _LocStep.confirming;
-            });
+          if (data.length == 1) {
+            final r = data.first;
+            final lat = double.tryParse(r['lat'] as String? ?? '');
+            final lon = double.tryParse(r['lon'] as String? ?? '');
+            if (lat != null && lon != null) {
+              final addr = r['address'] as Map<String, dynamic>?;
+              _city = addr?['city'] as String? ??
+                  addr?['town'] as String? ??
+                  addr?['village'] as String? ?? '';
+              setState(() {
+                _lat = lat; _lon = lon;
+                _resolved = r['display_name'] as String?;
+                _locStep = _LocStep.confirming;
+              });
+              return;
+            }
+          } else {
+            setState(() { _locResults = data; _locStep = _LocStep.picking; });
             return;
           }
         }
@@ -748,6 +752,53 @@ class _StartTonightSheetState extends State<_StartTonightSheet> {
               ),
               const SizedBox(height: 16),
               const Center(child: CircularProgressIndicator()),
+            ] else if (_locStep == _LocStep.picking) ...[
+              Text('Which location did you mean?', style: tt.titleMedium),
+              const SizedBox(height: 12),
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: BSTheme.glassBorder),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  children: [
+                    for (final r in _locResults)
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.location_on_outlined, size: 18),
+                        title: Text(
+                          r['display_name'] as String? ?? '',
+                          style: const TextStyle(fontSize: 13),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () {
+                          final lat = double.tryParse(r['lat'] as String? ?? '');
+                          final lon = double.tryParse(r['lon'] as String? ?? '');
+                          if (lat != null && lon != null) {
+                            final addr = r['address'] as Map<String, dynamic>?;
+                            _city = addr?['city'] as String? ??
+                                addr?['town'] as String? ??
+                                addr?['village'] as String? ?? '';
+                            setState(() {
+                              _lat = lat; _lon = lon;
+                              _resolved = r['display_name'] as String?;
+                              _locResults = [];
+                              _locStep = _LocStep.confirming;
+                            });
+                            _fetchSky();
+                          }
+                        },
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => setState(() { _locStep = _LocStep.idle; _locResults = []; }),
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: const Text('Try a different name'),
+              ),
             ] else if (_locStep == _LocStep.confirming) ...[
               Text('Is this the right location?', style: tt.titleMedium),
               const SizedBox(height: 16),
@@ -1279,6 +1330,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
   double? _lat;
   double? _lon;
   String? _resolvedLocation;
+  List<Map<String, dynamic>> _locationResults = [];
   bool _pushed = false;
   bool _pushing = false;
   _LocStep _step = _LocStep.idle;
@@ -1363,6 +1415,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
     _lat = null;
     _lon = null;
     _resolvedLocation = null;
+    _locationResults = [];
     _step = _LocStep.idle;
     _error = null;
   }
@@ -1425,45 +1478,51 @@ class _ClaimSheetState extends State<_ClaimSheet> {
     setState(() { _step = _LocStep.geocoding; _error = null; });
     try {
       final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
-        'q': query, 'format': 'json', 'limit': '1', 'addressdetails': '1',
+        'q': query, 'format': 'json', 'limit': '5', 'addressdetails': '1',
       });
       final resp = await http.get(
-          uri, headers: {'User-Agent': 'BoundlessSkiesApp/1.0'});
+          uri, headers: {'User-Agent': 'TTNApp/1.0'});
       if (!mounted) return;
       if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as List;
+        final data = (jsonDecode(resp.body) as List)
+            .cast<Map<String, dynamic>>();
         if (data.isNotEmpty) {
-          final r = data.first as Map<String, dynamic>;
-          final lat = double.tryParse(r['lat'] as String? ?? '');
-          final lon = double.tryParse(r['lon'] as String? ?? '');
-          if (lat != null && lon != null) {
+          if (data.length == 1) {
+            final r = data.first;
+            final lat = double.tryParse(r['lat'] as String? ?? '');
+            final lon = double.tryParse(r['lon'] as String? ?? '');
+            if (lat != null && lon != null) {
+              setState(() {
+                _lat = lat;
+                _lon = lon;
+                _resolvedLocation = r['display_name'] as String?;
+                _step = _LocStep.confirming;
+              });
+              return;
+            }
+          } else {
             setState(() {
-              _lat = lat;
-              _lon = lon;
-              _resolvedLocation = r['display_name'] as String?;
-              _step = _LocStep.confirming;
+              _locationResults = data;
+              _step = _LocStep.picking;
             });
             return;
           }
         }
         setState(() {
           _step = _LocStep.idle;
-          _error =
-              'No location found for "$query". Try a more specific name.';
+          _error = 'No location found for "$query". Try a more specific name.';
         });
       } else {
         setState(() {
           _step = _LocStep.idle;
-          _error =
-              'Location lookup failed. Try again or use the GPS button.';
+          _error = 'Location lookup failed. Try again or use the GPS button.';
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _step = _LocStep.idle;
-          _error =
-              'Location lookup failed. Try again or use the GPS button.';
+          _error = 'Location lookup failed. Try again or use the GPS button.';
         });
       }
     }
@@ -1898,6 +1957,52 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           const SizedBox(height: 16),
           const Center(child: CircularProgressIndicator()),
           const SizedBox(height: 4),
+        ];
+
+      case _LocStep.picking:
+        return [
+          Text('Which location did you mean?', style: tt.titleMedium),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: BSTheme.glassBorder),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              children: [
+                for (final r in _locationResults)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.location_on_outlined, size: 18),
+                    title: Text(
+                      r['display_name'] as String? ?? '',
+                      style: const TextStyle(fontSize: 13),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () {
+                      final lat = double.tryParse(r['lat'] as String? ?? '');
+                      final lon = double.tryParse(r['lon'] as String? ?? '');
+                      if (lat != null && lon != null) {
+                        setState(() {
+                          _lat = lat;
+                          _lon = lon;
+                          _resolvedLocation = r['display_name'] as String?;
+                          _locationResults = [];
+                          _step = _LocStep.confirming;
+                        });
+                      }
+                    },
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => setState(_resetLocation),
+            icon: const Icon(Icons.edit_outlined, size: 16),
+            label: const Text('Try a different name'),
+          ),
         ];
 
       case _LocStep.confirming:

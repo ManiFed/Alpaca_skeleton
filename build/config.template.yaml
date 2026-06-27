@@ -87,7 +87,7 @@ aavso:
 cloud:
   enabled: true
   url: 'https://api.thetelescope.net'
-  activation_code: 'ACTIVATION_CODE_PLACEHOLDER'
+  activation_code: ''
   node_id: ''             # set automatically after first registration
   api_key: ''             # set automatically after first registration
   heartbeat_interval: 60
