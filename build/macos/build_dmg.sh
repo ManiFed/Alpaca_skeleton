@@ -117,22 +117,25 @@ if [ ! -f "${RESOURCES_SRC}/welcome.html" ]; then
 <head><meta charset="UTF-8"/></head>
 <body style="font-family: -apple-system, Helvetica; font-size: 13px; color: #1a1a1a; padding: 20px;">
 <h2 style="color:#1a1a1a;">Welcome to The Telescope Net Node Agent</h2>
-<p>This installer will set up the <strong>The Telescope Net Node Agent</strong> on your Mac.</p>
-<p>The Node Agent runs in the background as a system service, automatically:</p>
+<p>This installer will set up the <strong>The Telescope Net (TTN) Node Agent</strong> on your Mac.</p>
+<p>The Node Agent runs silently in the background, connecting your telescope to the TTN network and contributing science-quality photometry to the global variable star record.</p>
+<p><strong>Works with your telescope</strong></p>
+<p>TTN supports a wide range of equipment, including:</p>
 <ul>
-<li>Connecting to your Seestar telescope</li>
-<li>Downloading tonight's observation plan</li>
-<li>Processing photometry and uploading science data</li>
+<li><strong>Smart telescopes</strong> — ZWO Seestar S50 &amp; S30, Vaonis Vespera / Vespera II / Vespera Pro / Stellina / Hyperia, DwarfLab Dwarf II / Dwarf 3 / Dwarf S, Unistellar eVscope / eVscope 2 / eQuinox / eQuinox 2 / Odyssey, Celestron Origin</li>
+<li><strong>Traditional &amp; GOTO setups</strong> — Celestron, Meade, Sky-Watcher, William Optics, Takahashi, and many more via ALPACA/ASCOM</li>
 </ul>
-<p><strong>Requirements:</strong></p>
+<p>After installation, the setup wizard will walk you through selecting your telescope and downloading the star catalog needed for accurate plate solving (~6 GB, downloaded in the background).</p>
+<p><strong>Requirements</strong></p>
 <ul>
 <li>macOS 11 or later</li>
-<li>Seestar S50 or S30 in Station Mode on your local WiFi</li>
-<li>A The Telescope Net activation code (get one at telescopenet.org)</li>
-<li>ASTAP plate solver (<a href="https://www.hnsky.org/astap.htm">hnsky.org/astap.htm</a>)</li>
+<li>Your telescope connected to your local WiFi or via USB</li>
+<li>A TTN activation code (get one at <strong>app.thetelescope.net</strong>)</li>
 </ul>
-<p style="color:#555;">After installation, add your activation code to:<br/>
-<code>/Library/Application Support/TelescopeNet/NodeAgent/config.yaml</code></p>
+<p>Everything else — Python, the plate solver, all science libraries — is bundled. No separate downloads required.</p>
+<p style="color:#555;">After installation, the dashboard opens automatically at
+<strong>http://localhost:5173</strong>.</p>
+<p style="color:#555;">Paste your activation code into the dashboard setup prompt to connect this computer to your member account.</p>
 </body>
 </html>
 HTML

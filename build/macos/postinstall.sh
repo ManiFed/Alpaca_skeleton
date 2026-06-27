@@ -9,6 +9,7 @@
 #   2. Writes config.yaml from the template (substituting the activation code)
 #   3. Installs the launchd plist and starts the service
 #   4. Configures system power settings to prevent sleep
+#   5. Opens the local dashboard for the logged-in user
 
 set -e
 
@@ -17,7 +18,7 @@ DATA_DIR="/Library/Application Support/TelescopeNet/NodeAgent"
 LOG_DIR="/Library/Logs/TelescopeNet"
 PLIST_SRC="${APP_DIR}/Contents/Resources/com.telescopenet.nodeagent.plist"
 PLIST_DEST="/Library/LaunchDaemons/com.telescopenet.nodeagent.plist"
-ACTIVATION_CODE="${BS_ACTIVATION_CODE:-}"    # Set by the GUI installer page
+ACTIVATION_CODE="${BS_ACTIVATION_CODE:-}"    # Optional: supplied by scripted installs
 
 echo "=== The Telescope Net Node Agent — postinstall ==="
 
@@ -35,6 +36,13 @@ TEMPLATE="${APP_DIR}/config.template.yaml"
 
 if [ ! -f "${CONFIG}" ]; then
     cp "${TEMPLATE}" "${CONFIG}"
+    if [ -n "${ACTIVATION_CODE}" ]; then
+        sed -i '' "s/ACTIVATION_CODE_PLACEHOLDER/${ACTIVATION_CODE}/g" "${CONFIG}"
+        echo "Activation code written to config.yaml"
+    else
+        sed -i '' "s/ACTIVATION_CODE_PLACEHOLDER//g" "${CONFIG}"
+        echo "No activation code supplied — dashboard setup will ask for one"
+    fi
     chmod 600 "${CONFIG}"
 fi
 
@@ -59,16 +67,28 @@ chmod 644 "${PLIST_DEST}"
 launchctl load -w "${PLIST_DEST}"
 echo "Service installed and started: com.telescopenet.nodeagent"
 
-# Open the dashboard in the browser for the logged-in user
-CONSOLE_USER="$(stat -f '%Su' /dev/console 2>/dev/null || echo '')"
-if [ -n "${CONSOLE_USER}" ] && [ "${CONSOLE_USER}" != "root" ]; then
-    # Wait a few seconds for the service to bind its port
-    sleep 4
-    sudo -u "${CONSOLE_USER}" open "http://localhost:5173" &
+# ── Open dashboard for the logged-in desktop user ─────────────────────────────
+# Installer scripts run as root; open the URL inside the console user's GUI
+# session so the browser appears on their desktop. Headless installs simply skip.
+DASHBOARD_URL="http://localhost:5173"
+CONSOLE_USER="$(stat -f %Su /dev/console 2>/dev/null || true)"
+if [ -n "${CONSOLE_USER}" ] && [ "${CONSOLE_USER}" != "root" ] && [ "${CONSOLE_USER}" != "loginwindow" ]; then
+    CONSOLE_UID="$(id -u "${CONSOLE_USER}" 2>/dev/null || true)"
+    if [ -n "${CONSOLE_UID}" ]; then
+        # Give launchd a few seconds to bind the dashboard port before opening.
+        for _ in 1 2 3 4 5; do
+            if /usr/bin/curl -fsS "${DASHBOARD_URL}/api/status" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        launchctl asuser "${CONSOLE_UID}" /usr/bin/open "${DASHBOARD_URL}" || true
+        echo "Dashboard opened for ${CONSOLE_USER}: ${DASHBOARD_URL}"
+    fi
 fi
 
 echo ""
 echo "Installation complete!"
-echo "Dashboard: http://localhost:5173"
+echo "Dashboard: ${DASHBOARD_URL}"
 echo "Logs:      ${LOG_DIR}/node_agent.log"
 echo ""
