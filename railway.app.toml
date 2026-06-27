@@ -1,9 +1,0 @@
-# App service — app.thetelescope.net
-[build]
-builder = "dockerfile"
-dockerfilePath = "Dockerfile.app"
-
-[deploy]
-healthcheckPath = "/"
-healthcheckTimeout = 10
-restartPolicyType = "always"

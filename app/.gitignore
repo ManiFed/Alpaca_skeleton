@@ -1,20 +1,8 @@
-# Flutter / Dart
-.dart_tool/
-.packages
-build/*
-!build/web/
-.flutter-plugins
-.flutter-plugins-dependencies
-pubspec.lock
-
-# Generated platform folders (run `flutter create .` to regenerate)
-# Comment these out if you commit platform code.
-android/
-linux/
-macos/
-windows/
-
-# IDE
-.idea/
-*.iml
-.vscode/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
