@@ -94,6 +94,7 @@ cloud:
   plan_poll_interval: 300
   auto_run_plans: true    # execute cloud observation plans automatically
   upload_images: false
+  disconnect_park_timeout: 1800  # park if cloud heartbeat fails this long (0 = disabled)
 
 image_watcher:
   enabled: true

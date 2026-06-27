@@ -512,6 +512,10 @@ class SafetyManager:
 
     # ── Emergency park ─────────────────────────────────────────────────────────
 
+    def emergency_park(self, reason: str) -> None:
+        """Public entry for external triggers (e.g. prolonged cloud disconnect)."""
+        self._emergency_park(reason)
+
     def _emergency_park(self, reason: str) -> None:
         """
         Mark the system unsafe, invoke the on_unsafe callback, park the mount,

@@ -733,6 +733,65 @@ def _cloud_telescope_specs() -> dict:
     return detect_telescope_specs(_tel, _cam, fallback_model=model)
 
 
+_cloud_disconnect_since: Optional[float] = None
+_cloud_disconnect_parked: bool = False
+
+
+def _cloud_disconnect_monitor_loop() -> None:
+    """Park the telescope when cloud heartbeats fail beyond the configured timeout."""
+    global _cloud_disconnect_since, _cloud_disconnect_parked
+    while True:
+        time.sleep(30)
+        cfg = _load_config().get("cloud", {})
+        timeout = float(cfg.get("disconnect_park_timeout", 1800))
+        if timeout <= 0 or _cloud is None or not _cloud.status.get("registered"):
+            _cloud_disconnect_since = None
+            _cloud_disconnect_parked = False
+            continue
+
+        ok = _cloud.status.get("last_heartbeat_ok")
+        if ok is True:
+            if _cloud_disconnect_since is not None:
+                logger.info("Cloud heartbeat restored — disconnect timer cleared")
+            _cloud_disconnect_since = None
+            _cloud_disconnect_parked = False
+            continue
+
+        if ok is not False:
+            continue
+
+        now = time.monotonic()
+        if _cloud_disconnect_since is None:
+            _cloud_disconnect_since = now
+            logger.warning(
+                "Cloud heartbeat failing — will park after %ds without contact",
+                int(timeout),
+            )
+            continue
+
+        elapsed = now - _cloud_disconnect_since
+        if elapsed < timeout or _cloud_disconnect_parked:
+            continue
+
+        _cloud_disconnect_parked = True
+        reason = f"cloud connection lost >{int(timeout)}s"
+        logger.critical("Cloud disconnect timeout — emergency park (%s)", reason)
+        if _safety_mgr is not None:
+            _safety_mgr.emergency_park(reason)
+        elif _tel is not None:
+            _on_safety_unsafe()
+
+            def _park() -> None:
+                try:
+                    with _device_lock:
+                        _tel.park()
+                    logger.info("Park complete after cloud disconnect")
+                except Exception as exc:
+                    logger.error("Park after cloud disconnect failed: %s", exc)
+
+            threading.Thread(target=_park, daemon=True, name="cloud-disco-park").start()
+
+
 def _on_cloud_plan(items: list) -> None:
     """A new observation plan arrived from the cloud.  Validate it with the
     same gate as /api/schedule/run; execute it only when auto_run_plans is on
@@ -8836,6 +8895,11 @@ def launch(port: int = 5173) -> None:
             get_telescope_specs=_cloud_telescope_specs,
         )
         _cloud.start()
+        threading.Thread(
+            target=_cloud_disconnect_monitor_loop,
+            daemon=True,
+            name="cloud-disco-monitor",
+        ).start()
 
     pc_cfg = cfg.get("pier_cam", {})
     if pc_cfg.get("enabled", False):

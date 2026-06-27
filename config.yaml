@@ -138,6 +138,7 @@ cloud:
   plan_poll_interval: 300      # seconds between observation-plan polls
   auto_run_plans: false        # execute cloud plans automatically when idle
   upload_images: false         # also upload raw FITS after each measurement
+  disconnect_park_timeout: 1800  # park if cloud heartbeat fails this long (0 = disabled)
 safety:
   dawn_type: astronomical
   disconnect_timeout: 600
