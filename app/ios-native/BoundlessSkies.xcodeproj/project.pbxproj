@@ -20,6 +20,8 @@
 		BS000101000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BS000201000000000000000B /* Assets.xcassets */; };
 		BS000101000000000000000C /* TextToSpeechManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BS000201000000000000000C /* TextToSpeechManagerTests.swift */; };
 		BS000101000000000000000D /* HapticManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BS000201000000000000000D /* HapticManagerTests.swift */; };
+		BS000101000000000000000E /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BS0002010000000000000010 /* GoogleService-Info.plist */; };
+		BS000101000000000000000F /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = BS000F010000000000000001 /* FirebaseMessaging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -48,6 +50,7 @@
 		BS000201000000000000000D /* HapticManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticManagerTests.swift; sourceTree = "<group>"; };
 		BS000201000000000000000E /* BoundlessSkies.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BoundlessSkies.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BS000201000000000000000F /* BoundlessSkiesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BoundlessSkiesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BS0002010000000000000010 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -55,6 +58,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BS000101000000000000000F /* FirebaseMessaging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -87,6 +91,7 @@
 				BS0007010000000000000007 /* ViewModels */,
 				BS0007010000000000000008 /* Views */,
 				BS000201000000000000000B /* Assets.xcassets */,
+				BS0002010000000000000010 /* GoogleService-Info.plist */,
 			);
 			path = BoundlessSkies;
 			sourceTree = "<group>";
@@ -161,6 +166,9 @@
 			dependencies = (
 			);
 			name = BoundlessSkies;
+			packageProductDependencies = (
+				BS000F010000000000000001 /* FirebaseMessaging */,
+			);
 			productName = BoundlessSkies;
 			productReference = BS000201000000000000000E /* BoundlessSkies.app */;
 			productType = "com.apple.product-type.application";
@@ -210,6 +218,9 @@
 				Base,
 			);
 			mainGroup = BS0007010000000000000001;
+			packageReferences = (
+				BS000E010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			productRefGroup = BS0007010000000000000004 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -226,6 +237,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BS000101000000000000000B /* Assets.xcassets in Resources */,
+				BS000101000000000000000E /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -326,24 +338,28 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BoundlessSkies/BoundlessSkies.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Boundless Skies";
+				INFOPLIST_KEY_CFBundleName = boundless_skies;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Used to detect your telescope's location during setup.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "The Telescope Net uses your location to set up portable observing sessions and estimate sky quality.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.boundlessskies.native;
+				PRODUCT_BUNDLE_IDENTIFIER = net.thetelescope.node;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -361,24 +377,28 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BoundlessSkies/BoundlessSkies.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Boundless Skies";
+				INFOPLIST_KEY_CFBundleName = boundless_skies;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Used to detect your telescope's location during setup.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "The Telescope Net uses your location to set up portable observing sessions and estimate sky quality.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.boundlessskies.native;
+				PRODUCT_BUNDLE_IDENTIFIER = net.thetelescope.node;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -462,6 +482,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BS000E010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.15.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BS000F010000000000000001 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BS000E010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BS0004010000000000000001 /* Project object */;
 }
