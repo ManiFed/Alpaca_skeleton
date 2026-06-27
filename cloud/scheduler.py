@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from cloud import db, registry
+from cloud import db, incidents, registry
 from cloud.conditions import altitude_curve, night_window
 from cloud.transit_windows import get_tonight_transits
 from src.shared_models import ObservationPlan, PlanItem
@@ -67,7 +67,27 @@ def choose_exposure(mag: Optional[float], node: dict) -> tuple:
 
 # ── Plan generation ────────────────────────────────────────────────────────────
 
-def generate_plan(node: dict, config: dict) -> Optional[ObservationPlan]:
+def _longitude_sep(a: float, b: float) -> float:
+    diff = abs((a - b + 180.0) % 360.0 - 180.0)
+    return min(diff, 360.0 - diff)
+
+
+def _reserved_nearby(
+    reservations: dict[str, list[float]] | None,
+    target_id: str,
+    lon: float,
+    min_sep_deg: float,
+) -> bool:
+    if not reservations or not target_id:
+        return False
+    return any(_longitude_sep(lon, other) < min_sep_deg for other in reservations.get(target_id, []))
+
+
+def generate_plan(
+    node: dict,
+    config: dict,
+    coverage_reservations: dict[str, list[float]] | None = None,
+) -> Optional[ObservationPlan]:
     """
     Build tonight's plan for one node from its stored scores.
     Returns the plan (possibly with zero items), or None when there is no
@@ -77,6 +97,8 @@ def generate_plan(node: dict, config: dict) -> Optional[ObservationPlan]:
     min_score = float(sched_cfg.get("min_score", 0.25))
     max_targets = int(sched_cfg.get("max_targets_per_night", 12))
     sun_limit = float(sched_cfg.get("sun_altitude_limit", -12.0))
+    min_longitude_sep = float(sched_cfg.get("longitude_diversity_deg", 45.0))
+    diversity_bypass_score = float(sched_cfg.get("longitude_diversity_bypass_score", 0.82))
 
     night = night_window(node["latitude"], node["longitude"],
                          sun_limit_deg=sun_limit)
@@ -158,6 +180,16 @@ def generate_plan(node: dict, config: dict) -> Optional[ObservationPlan]:
             break
         if row["target_id"] in scored_ids:
             continue
+        if (
+            float(row["total"]) < diversity_bypass_score
+            and _reserved_nearby(
+                coverage_reservations,
+                row["target_id"],
+                float(node["longitude"]),
+                min_longitude_sep,
+            )
+        ):
+            continue
 
         exp_dur, exp_count = choose_exposure(row["mag"], node)
         duration_min = exp_dur * exp_count / 60.0 + SLEW_OVERHEAD_MIN
@@ -189,6 +221,16 @@ def generate_plan(node: dict, config: dict) -> Optional[ObservationPlan]:
         start_utc = t0 + timedelta(minutes=best_start * STEP_MIN)
         start_local = start_utc + utc_offset
         comp = db.loads(row["components"], {})
+        explanation = comp.get("explanation") or {}
+        explanation.update({
+            "scheduled_start_utc": start_utc.isoformat(),
+            "scheduled_start_local": start_local.strftime("%H:%M"),
+            "duration_minutes": round(duration_min, 1),
+            "longitude_diversity": {
+                "min_separation_deg": min_longitude_sep,
+                "bypass_score": diversity_bypass_score,
+            },
+        })
         items.append(PlanItem(
             target=row["name"],
             ra=round(row["ra_deg"] / 15.0, 4),
@@ -202,7 +244,10 @@ def generate_plan(node: dict, config: dict) -> Optional[ObservationPlan]:
             filter=(node.get("filters") or "CV").split(",")[0].strip(),
             notes=f"type={row['target_type']} mag={row['mag']} "
                   f"best_alt={comp.get('best_alt_deg', '?')}",
+            explanation=explanation,
         ))
+        if coverage_reservations is not None:
+            coverage_reservations.setdefault(row["target_id"], []).append(float(node["longitude"]))
 
     # Execute in time order — the node runner walks the list sequentially
     items.sort(key=lambda i: i.startTime)
@@ -244,12 +289,23 @@ def current_plan(node_id: str) -> Optional[dict]:
 def generate_all_plans(config: dict) -> int:
     """Generate a fresh plan for every online node. Returns plan count."""
     count = 0
-    for node in registry.list_nodes():
+    reservations: dict[str, list[float]] = {}
+    nodes = sorted(
+        registry.list_nodes(),
+        key=lambda n: (float(n.get("longitude", 0.0)) + 360.0) % 360.0,
+    )
+    for node in nodes:
         if node.get("status") == "disabled":
             continue
         try:
-            if generate_plan(node, config) is not None:
+            if generate_plan(node, config, reservations) is not None:
                 count += 1
         except Exception as exc:
             logger.error("Plan generation failed for %s: %s", node["node_id"], exc)
+            incidents.log(
+                node["node_id"],
+                "plan_generation_failed",
+                severity="error",
+                detail={"error": str(exc)},
+            )
     return count

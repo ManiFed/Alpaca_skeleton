@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/glass.dart';
+import 'target_detail_screen.dart';
 
 /// "Tonight" — live mission-control dashboard. No scrolling: a hero stat band
 /// over the Aladin sky, then an asymmetric two-column glass layout.
@@ -22,12 +23,14 @@ class _DashboardData {
   const _DashboardData({
     required this.nodes,
     required this.recentObs,
+    required this.timeline,
     required this.targets,
     required this.alerts,
   });
 
   final List<Node> nodes;
   final List<Observation> recentObs;
+  final List<TimelineItem> timeline;
   final List<Target> targets;
   final List<AppNotification> alerts;
 }
@@ -49,19 +52,28 @@ class _DashboardTabState extends State<DashboardTab> {
     final nodesFuture = api.nodes().catchError((_) => <Node>[]);
     final obsFuture =
         api.observations(days: 1, limit: 10).catchError((_) => <Observation>[]);
+    final timelineFuture = api.timeline().catchError((_) => <TimelineItem>[]);
     final targetsFuture = api.targets().catchError((_) => <Target>[]);
     final notifsFuture = api.notifications(limit: 5);
 
     List<AppNotification> alerts;
+    var unread = 0;
     try {
-      alerts = (await notifsFuture).$1;
+      final notifs = await notifsFuture;
+      alerts = notifs.$1;
+      unread = notifs.$2;
     } catch (_) {
       alerts = [];
+    }
+
+    if (mounted) {
+      context.read<AppState>().setUnreadNotifications(unread);
     }
 
     return _DashboardData(
       nodes: await nodesFuture,
       recentObs: await obsFuture,
+      timeline: await timelineFuture,
       targets: await targetsFuture,
       alerts: alerts,
     );
@@ -96,7 +108,11 @@ class _DashboardTabState extends State<DashboardTab> {
             ),
           );
         }
-        return _DashboardView(data: snap.data!, onRefresh: _refresh);
+        return _DashboardView(
+          data: snap.data!,
+          onRefresh: _refresh,
+          onOpenAlerts: () => context.read<AppState>().setPendingTab(3),
+        );
       },
     );
   }
@@ -105,9 +121,14 @@ class _DashboardTabState extends State<DashboardTab> {
 // ── Dashboard view — staggered entrance ──────────────────────────────────────
 
 class _DashboardView extends StatefulWidget {
-  const _DashboardView({required this.data, required this.onRefresh});
+  const _DashboardView({
+    required this.data,
+    required this.onRefresh,
+    required this.onOpenAlerts,
+  });
   final _DashboardData data;
   final Future<void> Function() onRefresh;
+  final VoidCallback onOpenAlerts;
 
   @override
   State<_DashboardView> createState() => _DashboardViewState();
@@ -166,6 +187,7 @@ class _DashboardViewState extends State<_DashboardView> {
               obs24h: widget.data.recentObs.length,
               targets: widget.data.targets.length,
               unread: unread,
+              onAlertsTap: widget.onOpenAlerts,
             ),
           ),
           const SizedBox(height: 12),
@@ -179,7 +201,10 @@ class _DashboardViewState extends State<_DashboardView> {
                   flex: 55,
                   child: _fadeUp(
                     1,
-                    _ActivityPanel(obs: widget.data.recentObs),
+                    _ActivityPanel(
+                      obs: widget.data.recentObs,
+                      timeline: widget.data.timeline,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -201,7 +226,10 @@ class _DashboardViewState extends State<_DashboardView> {
                         flex: 40,
                         child: _fadeUp(
                           3,
-                          _AlertsPanel(alerts: widget.data.alerts),
+                          _AlertsPanel(
+                            alerts: widget.data.alerts,
+                            onOpenAlerts: widget.onOpenAlerts,
+                          ),
                         ),
                       ),
                     ],
@@ -226,6 +254,7 @@ class _Hero extends StatelessWidget {
     required this.obs24h,
     required this.targets,
     required this.unread,
+    required this.onAlertsTap,
   });
 
   final String name;
@@ -234,6 +263,7 @@ class _Hero extends StatelessWidget {
   final int obs24h;
   final int targets;
   final int unread;
+  final VoidCallback onAlertsTap;
 
   String get _greeting {
     final h = DateTime.now().hour;
@@ -349,6 +379,7 @@ class _Hero extends StatelessWidget {
                 label: 'Alerts',
                 color: unread > 0 ? BSTheme.danger : BSTheme.ink3,
                 icon: Icons.notifications_active,
+                onTap: onAlertsTap,
               ),
             ),
           ],
@@ -361,8 +392,9 @@ class _Hero extends StatelessWidget {
 // ── Recent activity panel — sparkline + rows ──────────────────────────────────
 
 class _ActivityPanel extends StatelessWidget {
-  const _ActivityPanel({required this.obs});
+  const _ActivityPanel({required this.obs, required this.timeline});
   final List<Observation> obs;
+  final List<TimelineItem> timeline;
 
   @override
   Widget build(BuildContext context) {
@@ -378,8 +410,17 @@ class _ActivityPanel extends StatelessWidget {
             label: 'RECENT ACTIVITY',
             detail: 'last 24 h',
           ),
-          if (obs.isEmpty)
+          if (obs.isEmpty && timeline.isEmpty)
             const Expanded(child: _EmptyLine('No observations in the last 24 hours.'))
+          else if (obs.isEmpty) ...[
+            const SizedBox(height: 10),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: timeline.take(6).map((t) => _TimelineRow(item: t)).toList(),
+              ),
+            ),
+          ]
           else ...[
             const SizedBox(height: 10),
             // Full-height sparkline — dominant visual in the left column.
@@ -393,7 +434,9 @@ class _ActivityPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            ...obs.take(4).map((o) => _ActivityRow(obs: o)),
+            ...obs
+                .take(4)
+                .map((o) => _ActivityRow(obs: o, onTap: () => _openTarget(context, o.targetName))),
           ],
         ],
       ),
@@ -401,9 +444,53 @@ class _ActivityPanel extends StatelessWidget {
   }
 }
 
+class _TimelineRow extends StatelessWidget {
+  const _TimelineRow({required this.item});
+  final TimelineItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          const Icon(Icons.schedule, size: 13, color: BSTheme.accent),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 42,
+            child: Text(
+              item.startTime,
+              style: const TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: BSTheme.accent,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              item.target,
+              style: const TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: BSTheme.ink,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (item.filter.isNotEmpty) GlowChip(item.filter.toUpperCase()),
+        ],
+      ),
+    );
+  }
+}
+
 class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({required this.obs});
+  const _ActivityRow({required this.obs, this.onTap});
   final Observation obs;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -414,9 +501,7 @@ class _ActivityRow extends StatelessWidget {
             ? BSTheme.accent
             : BSTheme.ink2;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.5),
-      child: Row(
+    return _DashboardTapRow(onTap: onTap, child: Row(
         children: [
           Icon(Icons.star_rounded, size: 13, color: magColor),
           const SizedBox(width: 8),
@@ -457,8 +542,7 @@ class _ActivityRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
+      ));
   }
 }
 
@@ -494,7 +578,10 @@ class _TargetsPanel extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: sorted
                       .take(4)
-                      .map((t) => _TargetRow(target: t))
+                      .map((t) => _TargetRow(
+                            target: t,
+                            onTap: () => _openTarget(context, t.name),
+                          ))
                       .toList(),
                 ),
               ),
@@ -507,8 +594,9 @@ class _TargetsPanel extends StatelessWidget {
 }
 
 class _TargetRow extends StatelessWidget {
-  const _TargetRow({required this.target});
+  const _TargetRow({required this.target, this.onTap});
   final Target target;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -521,7 +609,8 @@ class _TargetRow extends StatelessWidget {
     final typeLabel =
         target.targetType.isEmpty ? '—' : target.targetType.toUpperCase();
 
-    return Padding(
+    return _DashboardTapRow(
+      onTap: onTap,
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -606,8 +695,9 @@ class _TargetRow extends StatelessWidget {
 // ── Alerts panel ──────────────────────────────────────────────────────────────
 
 class _AlertsPanel extends StatelessWidget {
-  const _AlertsPanel({required this.alerts});
+  const _AlertsPanel({required this.alerts, required this.onOpenAlerts});
   final List<AppNotification> alerts;
+  final VoidCallback onOpenAlerts;
 
   @override
   Widget build(BuildContext context) {
@@ -633,7 +723,10 @@ class _AlertsPanel extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children:
-                      alerts.take(3).map((a) => _AlertRow(alert: a)).toList(),
+                      alerts
+                          .take(3)
+                          .map((a) => _AlertRow(alert: a, onTap: onOpenAlerts))
+                          .toList(),
                 ),
               ),
             ),
@@ -645,15 +738,14 @@ class _AlertsPanel extends StatelessWidget {
 }
 
 class _AlertRow extends StatelessWidget {
-  const _AlertRow({required this.alert});
+  const _AlertRow({required this.alert, this.onTap});
   final AppNotification alert;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final unread = !alert.read;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
+    return _DashboardTapRow(onTap: onTap, child: Row(
         children: [
           Container(
             width: 6,
@@ -698,12 +790,48 @@ class _AlertRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
+      ));
   }
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
+
+void _openTarget(BuildContext context, String name) {
+  if (name.isEmpty) return;
+  Navigator.push(
+    context,
+    MaterialPageRoute<void>(
+      builder: (_) => TargetDetailScreen(targetName: name),
+    ),
+  );
+}
+
+class _DashboardTapRow extends StatelessWidget {
+  const _DashboardTapRow({
+    required this.child,
+    this.onTap,
+    this.padding = const EdgeInsets.symmetric(vertical: 4.5),
+  });
+
+  final Widget child;
+  final VoidCallback? onTap;
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) {
+    if (onTap == null) {
+      return Padding(padding: padding, child: child);
+    }
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(padding: padding, child: child),
+      ),
+    );
+  }
+}
 
 class _EmptyLine extends StatelessWidget {
   const _EmptyLine(this.text);

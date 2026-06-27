@@ -248,6 +248,21 @@ _SCHEMA: list[str] = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_review_pending ON review_queue(decision)",
     """
+    CREATE TABLE IF NOT EXISTS reliability_incidents (
+        id             SERIAL PRIMARY KEY,
+        node_id        TEXT NOT NULL,
+        incident_type  TEXT NOT NULL,
+        severity       TEXT DEFAULT 'info',
+        target_name    TEXT DEFAULT '',
+        measurement_id INTEGER,
+        detail         TEXT DEFAULT '{}',
+        occurred_at    TEXT NOT NULL,
+        resolved_at    TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_incidents_node_time ON reliability_incidents(node_id, occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_incidents_open ON reliability_incidents(node_id, resolved_at)",
+    """
     CREATE TABLE IF NOT EXISTS tuning_state (
         id              INTEGER PRIMARY KEY CHECK (id = 1),
         obs_weights     TEXT NOT NULL DEFAULT '{}',

@@ -84,6 +84,19 @@ def generate_night_summary(node_id: str, night: str) -> dict | None:
 
     n_obs = sum(t["n_observations"] for t in per_target.values())
     n_submitted = sum(t["n_submitted"] for t in per_target.values())
+    target_names = sorted(per_target.keys())
+    if n_submitted:
+        receipt_title = f"{n_submitted} measurement{'s' if n_submitted != 1 else ''} submitted to AAVSO"
+    else:
+        receipt_title = f"{n_obs} measurement{'s' if n_obs != 1 else ''} captured for review"
+    if target_names:
+        lead = (
+            f"Your node observed {len(target_names)} target"
+            f"{'s' if len(target_names) != 1 else ''}: {', '.join(target_names[:4])}"
+            f"{' and more' if len(target_names) > 4 else ''}."
+        )
+    else:
+        lead = "Your node checked in, but no usable measurements were captured."
 
     summary = {
         "node_id":       node_id,
@@ -92,6 +105,16 @@ def generate_night_summary(node_id: str, night: str) -> dict | None:
         "n_observations": n_obs,
         "n_submitted":   n_submitted,
         "targets":       per_target,
+        "receipt": {
+            "title": receipt_title,
+            "lead": lead,
+            "highlights": [
+                f"{len(per_target)} target{'s' if len(per_target) != 1 else ''} covered",
+                f"{n_obs} photometric measurement{'s' if n_obs != 1 else ''}",
+                f"{n_submitted} AAVSO submission{'s' if n_submitted != 1 else ''}",
+            ],
+            "aavso_ready": n_submitted > 0,
+        },
     }
 
     db.execute(

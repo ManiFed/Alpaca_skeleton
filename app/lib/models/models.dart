@@ -294,6 +294,7 @@ class Target {
   final double priority;
   final double? bestScore;
   final int nMeasurements;
+  final Map<String, dynamic> scoreExplanation;
 
   const Target({
     required this.targetId,
@@ -304,6 +305,7 @@ class Target {
     required this.priority,
     required this.bestScore,
     required this.nMeasurements,
+    required this.scoreExplanation,
   });
 
   factory Target.fromJson(Map<String, dynamic> j) => Target(
@@ -315,7 +317,64 @@ class Target {
         priority: _asDouble(j['priority']),
         bestScore: j['best_score'] == null ? null : _asDouble(j['best_score']),
         nMeasurements: _asInt(j['n_measurements']),
+        scoreExplanation: (j['score_explanation'] is Map)
+            ? Map<String, dynamic>.from(j['score_explanation'] as Map)
+            : <String, dynamic>{},
       );
+}
+
+/// One planned observation in tonight's timeline (GET /me/timeline).
+class TimelineItem {
+  final String nodeId;
+  final String target;
+  final String targetId;
+  final String startTime;
+  final double score;
+  final double ra;
+  final double dec;
+  final double expDur;
+  final int expCount;
+  final String filter;
+  final String notes;
+  final Map<String, dynamic> explanation;
+
+  const TimelineItem({
+    required this.nodeId,
+    required this.target,
+    required this.targetId,
+    required this.startTime,
+    required this.score,
+    required this.ra,
+    required this.dec,
+    required this.expDur,
+    required this.expCount,
+    required this.filter,
+    required this.notes,
+    required this.explanation,
+  });
+
+  factory TimelineItem.fromJson(Map<String, dynamic> j) {
+    final node = j['node'] is Map ? Map<String, dynamic>.from(j['node'] as Map) : {};
+    return TimelineItem(
+      nodeId: _asStr(node['node_id']),
+      target: _asStr(j['target']),
+      targetId: _asStr(j['target_id']),
+      startTime: _asStr(j['startTime']),
+      score: _asDouble(j['score']),
+      ra: _asDouble(j['ra']),
+      dec: _asDouble(j['dec']),
+      expDur: _asDouble(j['expDur']),
+      expCount: _asInt(j['expCount']),
+      filter: _asStr(j['filter']),
+      notes: _asStr(j['notes']),
+      explanation: (j['explanation'] is Map)
+          ? Map<String, dynamic>.from(j['explanation'] as Map)
+          : <String, dynamic>{},
+    );
+  }
+
+  double get estimatedMinutes => expDur * expCount / 60.0;
+  String get reason => _asStr(explanation['summary']);
 }
 
 /// One night's summary for a node (GET /me/nights).
@@ -326,6 +385,7 @@ class NightSummary {
   final int nObservations;
   final int nSubmitted;
   final String generatedAt;
+  final Map<String, dynamic> receipt;
 
   const NightSummary({
     required this.nodeId,
@@ -334,6 +394,7 @@ class NightSummary {
     required this.nObservations,
     required this.nSubmitted,
     required this.generatedAt,
+    required this.receipt,
   });
 
   factory NightSummary.fromJson(Map<String, dynamic> j) => NightSummary(
@@ -343,9 +404,13 @@ class NightSummary {
         nObservations: _asInt(j['n_observations']),
         nSubmitted: _asInt(j['n_submitted']),
         generatedAt: _asStr(j['generated_at']),
+        receipt: (j['receipt'] is Map)
+            ? Map<String, dynamic>.from(j['receipt'] as Map)
+            : <String, dynamic>{},
       );
 
   bool get wasClear => nObservations > 0;
+  String get receiptTitle => _asStr(receipt['title']);
 }
 
 /// An in-app notification (GET /me/notifications).

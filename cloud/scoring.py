@@ -281,7 +281,52 @@ def score_target_for_node(target: dict, node: dict, night: Optional[tuple],
         components["reliability_score"] = round(reliability, 3)
 
     components["total"] = round(total, 4)
+    components["explanation"] = explain_score(target, node, components, weights)
     return components
+
+
+def explain_score(target: dict, node: dict, components: dict, weights: dict) -> dict:
+    """Compact, client-safe explanation of a target/node score."""
+    labels = {
+        "brightness": "brightness match",
+        "science": "science priority",
+        "time": "urgency",
+        "coverage": "coverage gap",
+        "observe": "observability",
+    }
+    ranked = sorted(
+        (
+            {
+                "key": key,
+                "label": labels[key],
+                "value": round(float(components.get(key, 0.0)), 3),
+                "weight": round(float(weights.get(key, 0.0)), 3),
+                "contribution": round(
+                    float(components.get(key, 0.0)) * float(weights.get(key, 0.0)), 3
+                ),
+            }
+            for key in labels
+        ),
+        key=lambda item: item["contribution"],
+        reverse=True,
+    )
+    top = ranked[:3]
+    reason_bits = [f"{i['label']} {i['value']:.2f}" for i in top if i["value"] > 0]
+    if float(components.get("observe", 0.0)) <= 0:
+        summary = "Not observable from this node tonight."
+    elif reason_bits:
+        summary = "Strongest factors: " + ", ".join(reason_bits) + "."
+    else:
+        summary = "Low but schedulable score."
+    return {
+        "summary": summary,
+        "factors": ranked,
+        "best_alt_deg": components.get("best_alt_deg"),
+        "visibility_minutes": components.get("visibility_minutes"),
+        "reliability_score": components.get("reliability_score"),
+        "target_type": target.get("target_type", "unknown"),
+        "node_id": node.get("node_id", ""),
+    }
 
 
 def score_all(config: dict) -> int:

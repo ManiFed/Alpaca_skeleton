@@ -174,10 +174,17 @@ class _NightTile extends StatelessWidget {
           ),
           const SizedBox(height: 3),
           Text(
-            clear ? '${night.nObservations} obs' : 'clouded',
+            clear && night.receiptTitle.isNotEmpty
+                ? night.receiptTitle
+                : clear
+                    ? '${night.nObservations} obs'
+                    : 'clouded',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             style: const TextStyle(
               fontFamily: 'Geist',
-              fontSize: 10,
+              fontSize: 9,
               color: BSTheme.ink3,
             ),
           ),

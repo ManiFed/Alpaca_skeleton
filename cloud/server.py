@@ -542,6 +542,18 @@ def api_interrupts_post():
     except (KeyError, TypeError, ValueError):
         return jsonify({"error": "name, ra_deg, dec_deg required"}), 400
     hours = float(body.get("expires_hours", 12.0))
+    raw_node_ids = body.get("node_ids")
+    if isinstance(raw_node_ids, str):
+        node_ids = [raw_node_ids]
+    elif isinstance(raw_node_ids, list):
+        node_ids = [str(n) for n in raw_node_ids if str(n).strip()]
+    else:
+        node_ids = None
+    if not node_ids and body.get("escalate", True):
+        node_ids = _eligible_interrupt_nodes(
+            {"name": name, "ra_deg": ra_deg, "dec_deg": dec_deg, "mag": body.get("mag")},
+            min_score=float(body.get("min_score", 0.35)),
+        )
     iid = db.execute(
         """INSERT INTO interrupts
                (target_id, name, ra_deg, dec_deg, mag, reason, node_ids,
@@ -549,13 +561,49 @@ def api_interrupts_post():
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (body.get("target_id"), name, ra_deg, dec_deg, body.get("mag"),
          str(body.get("reason", "")),
-         json.dumps(body["node_ids"]) if body.get("node_ids") else None,
+         json.dumps(node_ids) if node_ids else None,
          _now(),
          (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()),
         returning_id=True,
     )
     logger.info("Interrupt #%d created: %s (%.4f, %.4f)", iid, name, ra_deg, dec_deg)
-    return jsonify({"ok": True, "id": iid})
+    if body.get("replan", False) and node_ids:
+        for nid in node_ids:
+            node = db.query_one("SELECT * FROM nodes WHERE node_id = %s", (nid,))
+            if node:
+                scheduler.generate_plan(node, _config)
+    return jsonify({"ok": True, "id": iid, "node_ids": node_ids or []})
+
+
+def _eligible_interrupt_nodes(target: dict, min_score: float = 0.35) -> list[str]:
+    """Choose active nodes that can plausibly see a transient interrupt soon."""
+    from cloud.conditions import night_window
+    out: list[tuple[float, str]] = []
+    pseudo = {
+        "target_id": "interrupt",
+        "name": target["name"],
+        "ra_deg": target["ra_deg"],
+        "dec_deg": target["dec_deg"],
+        "mag": target.get("mag"),
+        "target_type": "transient",
+        "priority": 1.0,
+        "time_critical": 1,
+        "cadence_hours": 1,
+        "discovered_at": _now(),
+    }
+    for node in registry.list_nodes():
+        if node.get("status") in ("disabled", "vacation"):
+            continue
+        try:
+            night = night_window(node["latitude"], node["longitude"])
+            weather = scoring.weather_factor(node, night)
+            comp = scoring.score_target_for_node(pseudo, node, night, weather, _config)
+            if comp["total"] >= min_score:
+                out.append((comp["total"], node["node_id"]))
+        except Exception as exc:
+            logger.warning("Interrupt eligibility failed for %s: %s", node.get("node_id"), exc)
+    out.sort(reverse=True)
+    return [nid for _, nid in out[:50]]
 
 
 # ── Query endpoints (dashboard / app) ──────────────────────────────────────────
@@ -572,6 +620,14 @@ def api_targets():
            GROUP BY t.target_id ORDER BY best_score DESC LIMIT 200""")
     for r in rows:
         r["sources"] = db.loads(r["sources"], [])
+        best = db.query_one(
+            """SELECT node_id, components FROM scores
+               WHERE target_id = %s ORDER BY total DESC LIMIT 1""",
+            (r["target_id"],),
+        )
+        comp = db.loads((best or {}).get("components"), {})
+        r["best_node_id"] = (best or {}).get("node_id", "")
+        r["score_explanation"] = comp.get("explanation", {})
     return jsonify({"targets": rows})
 
 
@@ -603,6 +659,63 @@ def api_network_status():
         "nodes":                nodes,
         "server_time":          _now(),
     })
+
+
+@app.route("/api/v1/network/activity", methods=["GET"])
+def api_network_activity():
+    """Public feed of recent observations, submissions, nodes, and interrupts."""
+    limit = min(int(request.args.get("limit", 50)), 200)
+    since = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    events = []
+
+    for r in db.query(
+        """SELECT node_id, target_name, magnitude, uncertainty, filter,
+                  aavso_submitted, received_at
+           FROM measurements WHERE received_at > %s
+           ORDER BY received_at DESC LIMIT %s""",
+        (since, limit),
+    ):
+        events.append({
+            "type": "aavso_submission" if r["aavso_submitted"] else "measurement",
+            "at": r["received_at"],
+            "node_id": r["node_id"],
+            "target": r["target_name"],
+            "summary": (
+                f"{r['target_name']} {r['magnitude']:.3f}±{r['uncertainty']:.3f} "
+                f"{r['filter'] or 'CV'}"
+            ),
+        })
+
+    for r in db.query(
+        """SELECT node_id, city, country, registered_at
+           FROM nodes WHERE registered_at > %s
+           ORDER BY registered_at DESC LIMIT %s""",
+        (since, max(10, limit // 4)),
+    ):
+        place = ", ".join(p for p in (r.get("city"), r.get("country")) if p)
+        events.append({
+            "type": "node_joined",
+            "at": r["registered_at"],
+            "node_id": r["node_id"],
+            "summary": f"New node joined{f' in {place}' if place else ''}.",
+        })
+
+    for r in db.query(
+        """SELECT id, name, reason, created_at, expires_at
+           FROM interrupts WHERE created_at > %s
+           ORDER BY created_at DESC LIMIT %s""",
+        (since, max(10, limit // 4)),
+    ):
+        events.append({
+            "type": "transient_interrupt",
+            "at": r["created_at"],
+            "target": r["name"],
+            "summary": r["reason"] or f"High-priority interrupt for {r['name']}.",
+            "expires_at": r["expires_at"],
+        })
+
+    events.sort(key=lambda e: e["at"], reverse=True)
+    return jsonify({"events": events[:limit], "server_time": _now()})
 
 
 # ── Site config ────────────────────────────────────────────────────────────────
@@ -1073,6 +1186,75 @@ def api_me_stats(user):
     })
 
 
+@app.route("/api/v1/me/timeline", methods=["GET"])
+@auth.require_member
+def api_me_timeline(user):
+    """Tonight's planned observing timeline across the member's nodes."""
+    node_ids = [r["node_id"] for r in db.query(
+        "SELECT node_id FROM node_members WHERE user_id = %s", (user["user_id"],))]
+    if not node_ids:
+        return jsonify({"items": [], "plans": []})
+
+    placeholders = ",".join(["%s"] * len(node_ids))
+    rows = db.query(
+        f"""SELECT p.node_id, p.night, p.generated_at, p.plan_json,
+                   n.telescope_model, n.city, n.country, n.status,
+                   n.last_heartbeat, n.utc_offset_hours
+            FROM plans p
+            JOIN nodes n ON n.node_id = p.node_id
+            WHERE p.node_id IN ({placeholders}) AND p.status = 'current'
+            ORDER BY p.generated_at DESC""",
+        tuple(node_ids),
+    )
+    items = []
+    plans = []
+    now_local = datetime.now(timezone.utc)
+    for r in rows:
+        plan = db.loads(r["plan_json"], {})
+        node_meta = {
+            "node_id": r["node_id"],
+            "telescope_model": r["telescope_model"],
+            "city": r["city"],
+            "country": r["country"],
+            "status": r["status"],
+            "online": registry.is_online(r),
+        }
+        plans.append({
+            "node": node_meta,
+            "night": r["night"],
+            "generated_at": r["generated_at"],
+            "n_items": len(plan.get("items", [])),
+        })
+        for i, item in enumerate(plan.get("items", [])):
+            exp_min = float(item.get("expDur") or 0) * int(item.get("expCount") or 0) / 60.0
+            state = "planned"
+            try:
+                hh, mm = [int(part) for part in str(item.get("startTime", "0:0")).split(":")[:2]]
+                local_day = datetime.strptime(r["night"], "%Y-%m-%d")
+                if hh < 12:
+                    local_day += timedelta(days=1)
+                start_local = local_day.replace(hour=hh, minute=mm)
+                now_for_node = datetime.now(timezone.utc) + timedelta(
+                    hours=float(r.get("utc_offset_hours") or 0.0)
+                )
+                end_local = start_local + timedelta(minutes=max(exp_min, 5.0))
+                if start_local <= now_for_node <= end_local:
+                    state = "observing"
+                elif now_for_node > end_local:
+                    state = "complete"
+            except Exception:
+                state = "planned"
+            items.append({
+                **item,
+                "node": node_meta,
+                "sequence": i + 1,
+                "estimated_minutes": round(exp_min, 1),
+                "state": state,
+            })
+    items.sort(key=lambda item: (item.get("startTime") or "", item["node"]["node_id"]))
+    return jsonify({"items": items, "plans": plans, "server_time": now_local.isoformat()})
+
+
 @app.route("/api/v1/me/nights", methods=["GET"])
 @auth.require_member
 def api_me_nights(user):
@@ -1093,8 +1275,34 @@ def api_me_nights(user):
         (*node_ids, limit),
     )
     for r in rows:
-        r["targets"] = db.loads(r.pop("summary_json"), {}).get("targets", {})
+        summary = db.loads(r.pop("summary_json"), {})
+        r["targets"] = summary.get("targets", {})
+        r["receipt"] = summary.get("receipt", {})
     return jsonify({"nights": rows})
+
+
+@app.route("/api/v1/me/incidents", methods=["GET"])
+@auth.require_member
+def api_me_incidents(user):
+    """Recent reliability incidents for nodes this member owns."""
+    limit = min(int(request.args.get("limit", 50)), 200)
+    node_ids = [r["node_id"] for r in db.query(
+        "SELECT node_id FROM node_members WHERE user_id = %s", (user["user_id"],))]
+    if not node_ids:
+        return jsonify({"incidents": []})
+    placeholders = ",".join(["%s"] * len(node_ids))
+    rows = db.query(
+        f"""SELECT id, node_id, incident_type, severity, target_name,
+                   measurement_id, detail, occurred_at, resolved_at
+            FROM reliability_incidents
+            WHERE node_id IN ({placeholders})
+            ORDER BY occurred_at DESC LIMIT %s""",
+        (*node_ids, limit),
+    )
+    for r in rows:
+        r["detail"] = db.loads(r["detail"], {})
+        r["resolved"] = bool(r.get("resolved_at"))
+    return jsonify({"incidents": rows})
 
 
 @app.route("/api/v1/me/notifications", methods=["GET"])

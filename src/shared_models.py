@@ -200,6 +200,7 @@ class PlanItem:
     score: float = 0.0
     filter: str = "CV"
     notes: str = ""
+    explanation: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)

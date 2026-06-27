@@ -116,6 +116,13 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<TimelineItem>> timeline() async {
+    final json = await _get('/me/timeline');
+    return ((json['items'] as List?) ?? [])
+        .map((e) => TimelineItem.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   /// Returns notifications and the unread count.
   Future<(List<AppNotification>, int)> notifications({int limit = 50}) async {
     final json = await _get('/me/notifications', {'limit': limit});

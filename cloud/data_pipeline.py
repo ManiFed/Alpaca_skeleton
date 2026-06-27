@@ -24,7 +24,7 @@ from typing import Optional
 
 import psycopg2.errors
 
-from cloud import db
+from cloud import db, incidents
 from src.shared_models import Measurement
 
 logger = logging.getLogger("cloud.data_pipeline")
@@ -54,6 +54,13 @@ def ingest_measurement(node_id: str, payload: dict,
     m = Measurement.from_dict(payload)
     m.node_id = node_id
     if not m.is_valid():
+        incidents.log(
+            node_id,
+            "measurement_validation_failed",
+            severity="warning",
+            target_name=m.target_name,
+            detail={"reason": "bounds", "payload": payload},
+        )
         return {"ok": False, "error": "measurement failed validation bounds"}
 
     try:
@@ -75,10 +82,31 @@ def ingest_measurement(node_id: str, payload: dict,
                         node_id, m.target_name, m.bjd)
             return {"ok": True, "id": None, "duplicate": True}
         logger.error("Measurement insert failed: %s", exc)
+        incidents.log(
+            node_id,
+            "measurement_storage_failed",
+            severity="error",
+            target_name=m.target_name,
+            detail={"error": str(exc)},
+        )
         return {"ok": False, "error": "storage error"}
 
     logger.info("Measurement stored: %s %s mag=%.3f±%.3f quality=%s",
                 node_id, m.target_name, m.magnitude, m.uncertainty, m.quality_flag)
+    if m.quality_flag == "poor" or m.uncertainty > 0.3 or m.comparison_stars < 3:
+        incidents.log(
+            node_id,
+            "borderline_photometry",
+            severity="warning",
+            target_name=m.target_name,
+            measurement_id=row_id,
+            detail={
+                "quality_flag": m.quality_flag,
+                "uncertainty": m.uncertainty,
+                "comparison_stars": m.comparison_stars,
+                "snr": m.snr,
+            },
+        )
     cross_validate(m.target_name, m.bjd)
     return {"ok": True, "id": row_id}
 
@@ -114,6 +142,19 @@ def cross_validate(target_name: str, bjd: float) -> None:
         if status == "outlier":
             logger.warning("Cross-validation outlier: %s on %s — %.3f vs median %.3f",
                            r["node_id"], target_name, r["magnitude"], median)
+            incidents.log(
+                r["node_id"],
+                "cross_validation_outlier",
+                severity="warning",
+                target_name=target_name,
+                measurement_id=r["id"],
+                detail={
+                    "magnitude": r["magnitude"],
+                    "median": median,
+                    "deviation": dev,
+                    "uncertainty": r["uncertainty"],
+                },
+            )
 
 
 # ── Light curves ───────────────────────────────────────────────────────────────
@@ -275,6 +316,12 @@ def store_raw_image(node_id: str, filename: str, data: bytes,
     if len(data) > max_mb * 1024 * 1024:
         logger.warning("Raw image from %s rejected — %.1f MB exceeds limit",
                        node_id, len(data) / 1e6)
+        incidents.log(
+            node_id,
+            "raw_image_rejected",
+            severity="warning",
+            detail={"filename": filename, "size_mb": len(data) / 1e6, "max_mb": max_mb},
+        )
         return None
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename).name) or "image.fits"
     root = Path(config.get("storage", {}).get("raw_image_dir", "cloud_data/raw_images"))
@@ -286,6 +333,12 @@ def store_raw_image(node_id: str, filename: str, data: bytes,
         return str(path)
     except OSError as exc:
         logger.error("Could not store raw image: %s", exc)
+        incidents.log(
+            node_id,
+            "raw_image_storage_failed",
+            severity="error",
+            detail={"filename": filename, "error": str(exc)},
+        )
         return None
 
 
