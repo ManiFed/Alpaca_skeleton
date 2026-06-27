@@ -24,6 +24,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "4188", "--directory", "app/build/web"],
       "port": 4188
+    },
+    {
+      "name": "installer-welcome",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4189", "--directory", "build/macos/resources"],
+      "port": 4189
     }
   ]
 }
