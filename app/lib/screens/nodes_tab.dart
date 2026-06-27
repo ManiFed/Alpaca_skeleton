@@ -141,12 +141,23 @@ class _NodeCard extends StatelessWidget {
     }
   }
 
+  Future<void> _openManage(BuildContext context) async {
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _NodeManageSheet(node: node, onRefresh: onRefresh),
+    );
+    if (ok == true) onRefresh();
+  }
+
   @override
   Widget build(BuildContext context) {
     final color = _statusColor;
     final label = _statusLabel;
 
-    return Container(
+    return GestureDetector(
+      onTap: () => _openManage(context),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -346,6 +357,7 @@ class _NodeCard extends StatelessWidget {
           ],
         ],
       ),
+    ),
     );
   }
 
@@ -434,6 +446,451 @@ class _NodeCard extends StatelessWidget {
         );
       }
     }
+  }
+}
+
+// ── Node manage sheet ─────────────────────────────────────────────────────────
+
+class _NodeManageSheet extends StatefulWidget {
+  const _NodeManageSheet({required this.node, required this.onRefresh});
+  final Node node;
+  final VoidCallback onRefresh;
+
+  @override
+  State<_NodeManageSheet> createState() => _NodeManageSheetState();
+}
+
+class _NodeManageSheetState extends State<_NodeManageSheet> {
+  late Future<List<NightSummary>> _nightsFuture;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _nightsFuture = _loadNights();
+  }
+
+  Future<List<NightSummary>> _loadNights() async {
+    final all = await context.read<AppState>().api.nights(limit: 90);
+    return all.where((n) => n.nodeId == widget.node.nodeId).toList();
+  }
+
+  Future<void> _setVacation() async {
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _VacationSheet(node: widget.node),
+    );
+    if (ok == true && mounted) Navigator.of(context).pop(true);
+  }
+
+  Future<void> _cancelVacation() async {
+    setState(() { _busy = true; _error = null; });
+    try {
+      await context.read<AppState>().api.cancelNodeVacation(widget.node.nodeId);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) setState(() { _busy = false; _error = '$e'; });
+    }
+  }
+
+  Future<void> _disconnect() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Disconnect telescope?'),
+        content: Text(
+          'This removes ${widget.node.telescopeModel.isEmpty ? "this telescope" : widget.node.telescopeModel} '
+          'from your account. The node software will keep running but you '
+          "won't see it here anymore.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: BSTheme.danger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() { _busy = true; _error = null; });
+    try {
+      await context.read<AppState>().api.disconnectNode(widget.node.nodeId);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) setState(() { _busy = false; _error = '$e'; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final node = widget.node;
+    final name = node.telescopeModel.isEmpty ? 'Telescope' : node.telescopeModel;
+
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.92,
+      builder: (_, ctrl) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          children: [
+            // Handle + header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36, height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(2),
+                        color: BSTheme.glassBorder,
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(name, style: tt.titleLarge),
+                            if (node.location.isNotEmpty) ...[
+                              const SizedBox(height: 3),
+                              Row(
+                                children: [
+                                  const Icon(Icons.location_on_outlined,
+                                      size: 12, color: BSTheme.ink3),
+                                  const SizedBox(width: 3),
+                                  Flexible(
+                                    child: Text(node.location,
+                                        style: const TextStyle(
+                                            fontFamily: 'Geist',
+                                            fontSize: 13,
+                                            color: BSTheme.ink3)),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      _StatusBadge(status: node.status),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    node.nodeId,
+                    style: const TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 10,
+                        color: BSTheme.ink3,
+                        letterSpacing: 0.8),
+                  ),
+                  const SizedBox(height: 20),
+                  const Divider(height: 1),
+                ],
+              ),
+            ),
+
+            // Scrollable body
+            Expanded(
+              child: ListView(
+                controller: ctrl,
+                padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+                children: [
+                  // Stats
+                  FutureBuilder<List<NightSummary>>(
+                    future: _nightsFuture,
+                    builder: (context, snap) {
+                      if (snap.connectionState == ConnectionState.waiting) {
+                        return const Center(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 20),
+                            child: CircularProgressIndicator(),
+                          ),
+                        );
+                      }
+                      final nights = snap.data ?? [];
+                      final clearNights =
+                          nights.where((n) => n.wasClear).length;
+                      final totalObs = nights.fold<int>(
+                          0, (s, n) => s + n.nObservations);
+                      final submitted = nights.fold<int>(
+                          0, (s, n) => s + n.nSubmitted);
+                      return _StatsRow(
+                        clearNights: clearNights,
+                        totalObs: totalObs,
+                        submitted: submitted,
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 24),
+                  Text('MANAGE',
+                      style: tt.labelSmall
+                          ?.copyWith(letterSpacing: 1.4, color: BSTheme.ink3)),
+                  const SizedBox(height: 12),
+
+                  // Vacation
+                  if (node.isOnVacation) ...[
+                    _ManageTile(
+                      icon: Icons.event_busy_outlined,
+                      color: BSTheme.warm,
+                      title: 'On vacation',
+                      subtitle: node.vacationUntil.isNotEmpty
+                          ? 'Back ${_fmtDate(node.vacationUntil)}'
+                          : 'Vacation mode active',
+                      trailing: _busy
+                          ? const SizedBox(
+                              width: 18, height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : TextButton(
+                              onPressed: _cancelVacation,
+                              style: TextButton.styleFrom(
+                                  foregroundColor: BSTheme.warm,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8)),
+                              child: const Text('Cancel'),
+                            ),
+                    ),
+                  ] else ...[
+                    _ManageTile(
+                      icon: Icons.event_busy_outlined,
+                      color: BSTheme.ink3,
+                      title: 'Set vacation',
+                      subtitle: 'Pause reliability score while away',
+                      onTap: _busy ? null : _setVacation,
+                    ),
+                  ],
+
+                  const SizedBox(height: 8),
+
+                  // Disconnect
+                  _ManageTile(
+                    icon: Icons.link_off_outlined,
+                    color: BSTheme.danger,
+                    title: 'Disconnect telescope',
+                    subtitle: 'Remove from your account',
+                    onTap: _busy ? null : _disconnect,
+                  ),
+
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(_error!,
+                        style: const TextStyle(
+                            color: BSTheme.danger, fontSize: 13)),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _fmtDate(String iso) {
+    try {
+      final d = DateTime.parse(iso);
+      const m = [
+        'Jan','Feb','Mar','Apr','May','Jun',
+        'Jul','Aug','Sep','Oct','Nov','Dec'
+      ];
+      return '${m[d.month - 1]} ${d.day}';
+    } catch (_) {
+      return iso;
+    }
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.status});
+  final String status;
+
+  Color get _color {
+    switch (status) {
+      case 'active': return BSTheme.success;
+      case 'sleeping': return BSTheme.accent;
+      case 'vacation': return BSTheme.warm;
+      case 'disabled': return BSTheme.ink3;
+      default: return BSTheme.danger;
+    }
+  }
+
+  String get _label {
+    switch (status) {
+      case 'active': return 'ONLINE';
+      case 'sleeping': return 'SLEEPING';
+      case 'vacation': return 'VACATION';
+      case 'disabled': return 'DISABLED';
+      default: return 'OFFLINE';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _color;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        color: c.withValues(alpha: 0.12),
+        border: Border.all(color: c.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        _label,
+        style: TextStyle(
+          fontFamily: 'Geist',
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.2,
+          color: c,
+        ),
+      ),
+    );
+  }
+}
+
+class _StatsRow extends StatelessWidget {
+  const _StatsRow({
+    required this.clearNights,
+    required this.totalObs,
+    required this.submitted,
+  });
+  final int clearNights;
+  final int totalObs;
+  final int submitted;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _StatCell(value: '$clearNights', label: 'Clear nights'),
+        _StatCell(value: '$totalObs', label: 'Observations'),
+        _StatCell(value: '$submitted', label: 'Submitted'),
+      ],
+    );
+  }
+}
+
+class _StatCell extends StatelessWidget {
+  const _StatCell({required this.value, required this.label});
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              color: BSTheme.ink,
+              letterSpacing: -0.5,
+            ),
+          ),
+          Text(
+            label,
+            style: const TextStyle(
+                fontFamily: 'Geist', fontSize: 11, color: BSTheme.ink3),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ManageTile extends StatelessWidget {
+  const _ManageTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    this.onTap,
+    this.trailing,
+  });
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: BSTheme.glassBg,
+          border: Border.all(color: BSTheme.glassBorder),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: color.withValues(alpha: 0.1),
+              ),
+              child: Icon(icon, size: 18, color: color),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: color == BSTheme.danger ? BSTheme.danger : BSTheme.ink,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 12,
+                        color: BSTheme.ink3),
+                  ),
+                ],
+              ),
+            ),
+            trailing ??
+                (onTap != null
+                    ? const Icon(Icons.chevron_right,
+                        size: 18, color: BSTheme.ink3)
+                    : const SizedBox.shrink()),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -2104,7 +2561,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
       } else {
         setState(() {
           _pushing = false;
-          _error = 'Not linked yet. Paste the code at localhost:5173, wait a moment, then try again.';
+          _error = 'Not linked yet. Enter the code in the node software, wait a moment, then try again.';
         });
       }
     } catch (e) {
@@ -2136,8 +2593,8 @@ class _ClaimSheetState extends State<_ClaimSheet> {
       Text('Your activation code', style: tt.titleMedium),
       const SizedBox(height: 8),
       Text(
-        'Open http://localhost:5173 on your telescope\'s Mac. '
-        'A setup prompt will appear — paste this code there.',
+        'Enter this code in the node software on your telescope\'s Mac. '
+        'It will link your telescope to your account automatically.',
         style: tt.bodyMedium,
       ),
       const SizedBox(height: 20),

@@ -289,16 +289,15 @@ class _SetupWallState extends State<_SetupWall> {
       detail: 'Run the installer on the Mac connected to your telescope.',
     ),
     (
-      icon: Icons.open_in_browser_outlined,
-      label: 'Open the dashboard',
-      detail:
-          'The installer opens localhost:5173 in your browser automatically.',
+      icon: Icons.sync_outlined,
+      label: 'Node software starts',
+      detail: 'The installer starts the node software automatically.',
     ),
     (
       icon: Icons.link_outlined,
       label: 'Connect your telescope',
       detail:
-          'Come back here and tap "Connect telescope" — you\'ll need localhost:5173 open too.',
+          'Come back here and tap "Connect telescope" to link your account.',
     ),
   ];
 
@@ -309,16 +308,15 @@ class _SetupWallState extends State<_SetupWall> {
       detail: 'Open the downloaded .pkg and follow the steps.',
     ),
     (
-      icon: Icons.open_in_browser_outlined,
-      label: 'Your browser will open',
-      detail:
-          'The installer launches localhost:5173 automatically when done.',
+      icon: Icons.sync_outlined,
+      label: 'Node software starts',
+      detail: 'The installer starts the node software automatically when done.',
     ),
     (
       icon: Icons.link_outlined,
       label: 'Come back here and tap Connect',
       detail:
-          'Tap "Connect telescope" below, get your activation code, and paste it into the dashboard.',
+          'Tap "Connect telescope" below, enter your activation code, and your telescope links automatically.',
     ),
   ];
 

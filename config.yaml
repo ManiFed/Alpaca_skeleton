@@ -103,9 +103,9 @@ photometry:
   solve_field_path: /opt/homebrew/bin/solve-field
   solver: astrometry
   target:
-    dec_deg: 25.92019
-    name: T CrB
-    ra_deg: 239.87567
+    dec_deg: null
+    name: ''
+    ra_deg: null
 pier_cam:
   bin: 2
   device_index: 0

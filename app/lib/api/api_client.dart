@@ -188,6 +188,9 @@ class ApiClient {
   /// Cancel a node's active vacation.
   Future<void> cancelNodeVacation(String nodeId) => _delete('/me/nodes/$nodeId/vacation');
 
+  /// Disconnect a node from this account.
+  Future<void> disconnectNode(String nodeId) => _delete('/me/nodes/$nodeId');
+
   /// Fetch sky quality (mpsas + bortle) for a lat/lon without starting a session.
   Future<Map<String, dynamic>> skyQuality(double lat, double lon) =>
       _get('/sky-quality', {'lat': lat, 'lon': lon});

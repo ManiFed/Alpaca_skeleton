@@ -115,6 +115,7 @@ _state: dict[str, Any] = {
     },
     "aavso": {
         "last_submission": None,   # most recent submit() result dict
+        "recent_submissions": {},  # {target_name: bjd} — dedup gate
     },
 }
 _state_lock = threading.Lock()
@@ -617,6 +618,42 @@ def _on_new_fits(info: dict) -> None:
         _enqueue_photometry(path)
 
 
+def _maybe_aavso_submit(result: dict, cfg: dict) -> dict:
+    """Submit to AAVSO unless this target was already submitted recently.
+
+    Repeated submissions of the same target from the same node within a short
+    window provide no additional value to AAVSO's database.  The minimum
+    interval is configurable via aavso.min_submit_interval_hours (default 2 h).
+    """
+    target = result.get("target_name", "")
+    bjd    = float(result.get("bjd", 0.0))
+    min_interval_bjd = float(
+        cfg.get("aavso", {}).get("min_submit_interval_hours", 2.0)
+    ) / 24.0
+
+    with _state_lock:
+        last_bjd = _state["aavso"]["recent_submissions"].get(target)
+
+    if last_bjd is not None and (bjd - last_bjd) < min_interval_bjd:
+        gap_min = (bjd - last_bjd) * 1440
+        logger.info(
+            "AAVSO submission skipped: %s already submitted %.0f min ago "
+            "(min interval %.0f min) — increase aavso.min_submit_interval_hours to override",
+            target, gap_min, min_interval_bjd * 1440,
+        )
+        return {
+            "status": "skipped", "accepted": 0, "rejected": 0,
+            "file_path": None, "response_path": None, "record_path": None,
+            "message": f"duplicate suppressed: {target} submitted {gap_min:.0f} min ago",
+        }
+
+    sub = _aavso_submit(result, cfg)
+    if sub.get("status") not in ("error",):
+        with _state_lock:
+            _state["aavso"]["recent_submissions"][target] = bjd
+    return sub
+
+
 def _run_photometry_bg(fits_path: str) -> None:
     """Run the photometry pipeline in a background thread and store the result."""
     with _state_lock:
@@ -638,7 +675,7 @@ def _run_photometry_bg(fits_path: str) -> None:
                 with _state_lock:
                     _state["photometry"]["last_export"] = export_path
             if cfg.get("aavso", {}).get("observer_code", "").strip():
-                sub = _aavso_submit(result, cfg)
+                sub = _maybe_aavso_submit(result, cfg)
                 with _state_lock:
                     _state["aavso"]["last_submission"] = sub
                 logger.info(
@@ -1619,7 +1656,8 @@ def _pier_cam_loop() -> None:
 
 @app.route("/")
 def index():
-    return render_template_string(_HTML)
+    from flask import abort
+    abort(403)
 
 
 @app.route("/api/status")
@@ -8868,7 +8906,7 @@ def launch(port: int = 5173) -> None:
 
     flask_thread = threading.Thread(
         target=lambda: app.run(
-            host="0.0.0.0", port=port, debug=False,
+            host="127.0.0.1", port=port, debug=False,
             threaded=True, use_reloader=False,
         ),
         daemon=True,
@@ -8884,8 +8922,7 @@ def launch(port: int = 5173) -> None:
         except Exception:
             time.sleep(0.25)
 
-    print(f"\n  NODE v1  →  {url}\n", file=sys.__stdout__)
-    webbrowser.open(url)
+    print(f"\n  NODE v1 running\n", file=sys.__stdout__)
 
     try:
         while True:

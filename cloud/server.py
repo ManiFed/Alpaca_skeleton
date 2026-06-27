@@ -980,6 +980,20 @@ def api_me_cancel_vacation(user, node_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/v1/me/nodes/<node_id>", methods=["DELETE"])
+@auth.require_member
+def api_me_disconnect_node(user, node_id):
+    """Remove this member's claim on a node (disconnect it from their account)."""
+    if not _assert_owns_node(user["user_id"], node_id):
+        return jsonify({"error": "node not found"}), 404
+    db.execute(
+        "DELETE FROM node_members WHERE node_id = %s AND user_id = %s",
+        (node_id, user["user_id"]),
+    )
+    logger.info("Node %s disconnected by member %s", node_id, user["user_id"])
+    return jsonify({"ok": True})
+
+
 @app.route("/api/v1/sky-quality", methods=["GET"])
 def api_sky_quality():
     """Return light pollution data for a lat/lon (used by the Start Tonight sheet).
