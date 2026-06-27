@@ -85,8 +85,17 @@ def time_criticality(target: dict) -> float:
 
 
 def historical_neglect(target: dict, window_days: int = 30) -> float:
-    """Fraction of expected observations that the network has missed over a
-    rolling window.  1.0 = severely under-observed; 0.0 = at or above cadence."""
+    """Fraction of expected observations missed over a rolling window.
+
+    Blends two signals (equal weight when external data is available):
+      internal — our own measurements vs cadence-based expected count
+      external — global community coverage via AAVSO / ALeRCE
+
+    The external signal prevents the snowball effect where a target scores as
+    neglected only because our nodes were clouded out.
+    """
+    from cloud import external_coverage
+
     cadence_h = max(1.0, float(target.get("cadence_hours", 24.0)))
     expected = window_days * 24.0 / cadence_h
     cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
@@ -96,7 +105,12 @@ def historical_neglect(target: dict, window_days: int = 30) -> float:
         (target["name"], cutoff),
     )
     actual = float(row["cnt"]) if row and row["cnt"] else 0.0
-    return max(0.0, min(1.0, 1.0 - actual / max(1.0, expected)))
+    internal = max(0.0, min(1.0, 1.0 - actual / max(1.0, expected)))
+
+    ext = external_coverage.external_neglect(target, window_days)
+    if ext is not None:
+        return 0.5 * internal + 0.5 * ext
+    return internal
 
 
 def coverage_gap(target: dict) -> float:

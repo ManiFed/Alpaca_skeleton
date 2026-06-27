@@ -638,6 +638,18 @@ def api_lightcurve(target_name: str):
     return jsonify({"target": target_name, "n": len(points), "points": points})
 
 
+@app.route("/api/v1/lightcurves/<path:target_name>/consensus", methods=["GET"])
+def api_consensus_lightcurve(target_name: str):
+    """
+    Inverse-variance-weighted consensus light curve for epochs where 2+ nodes
+    observed the same target in the same co-temporal window (~43 min).
+    Each point carries n_nodes and node_ids so callers can filter by coverage.
+    """
+    days = float(request.args.get("days", 365))
+    points = data_pipeline.consensus_light_curve(target_name, days)
+    return jsonify({"target": target_name, "n": len(points), "points": points})
+
+
 @app.route("/api/v1/network/status", methods=["GET"])
 def api_network_status():
     nodes = [registry.public_view(n) for n in registry.list_nodes()]

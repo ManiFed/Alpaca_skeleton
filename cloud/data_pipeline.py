@@ -16,6 +16,7 @@ compare against) are submitted after a configurable hold-back window.
 
 import json
 import logging
+import math
 import re
 import statistics
 from datetime import datetime, timedelta, timezone
@@ -173,6 +174,71 @@ def light_curve(target_name: str, days: float = 365.0) -> list:
         latest = max(r["bjd"] for r in rows)
         rows = [r for r in rows if latest - r["bjd"] <= days]
     return rows
+
+
+def compute_consensus(target_name: str, bjd_center: float) -> Optional[dict]:
+    """
+    Inverse-variance-weighted consensus of all consistent co-temporal measurements.
+
+    Returns a dict with bjd, magnitude, uncertainty, n_nodes, node_ids when 2+
+    consistent measurements exist in the cross-validation window; else None.
+    """
+    rows = db.query(
+        """SELECT node_id, bjd, magnitude, uncertainty FROM measurements
+           WHERE target_name = %s
+             AND bjd BETWEEN %s AND %s
+             AND validation_status = 'consistent'
+             AND quality_flag IN ('good', 'acceptable')""",
+        (target_name,
+         bjd_center - XVAL_WINDOW_DAYS,
+         bjd_center + XVAL_WINDOW_DAYS),
+    )
+    if len(rows) < 2:
+        return None
+
+    weights  = [1.0 / max(r["uncertainty"] ** 2, 1e-6) for r in rows]
+    w_total  = sum(weights)
+    mag_mean = sum(w * r["magnitude"] for w, r in zip(weights, rows)) / w_total
+    bjd_mean = sum(w * r["bjd"] for w, r in zip(weights, rows)) / w_total
+
+    formal_unc  = 1.0 / math.sqrt(w_total)
+    scatter     = statistics.stdev([r["magnitude"] for r in rows])
+    uncertainty = max(formal_unc, scatter / math.sqrt(len(rows)))
+
+    node_ids = sorted({r["node_id"] for r in rows})
+    return {
+        "bjd":         round(bjd_mean, 6),
+        "magnitude":   round(mag_mean, 4),
+        "uncertainty": round(uncertainty, 4),
+        "n_nodes":     len(node_ids),
+        "node_ids":    node_ids,
+    }
+
+
+def consensus_light_curve(target_name: str, days: float = 365.0) -> list:
+    """
+    Time-ordered list of consensus points for epochs where 2+ consistent
+    measurements exist in the same co-temporal window (~43 min).
+    """
+    rows = db.query(
+        """SELECT bjd FROM measurements
+           WHERE target_name = %s AND validation_status = 'consistent'
+             AND quality_flag IN ('good', 'acceptable')
+           ORDER BY bjd""",
+        (target_name,),
+    )
+    if not rows:
+        return []
+    if days:
+        latest = max(r["bjd"] for r in rows)
+        rows = [r for r in rows if latest - r["bjd"] <= days]
+
+    clusters: list[float] = []
+    for r in rows:
+        if not clusters or r["bjd"] - clusters[-1] > XVAL_WINDOW_DAYS:
+            clusters.append(r["bjd"])
+
+    return [p for p in (compute_consensus(target_name, c) for c in clusters) if p]
 
 
 # ── AAVSO batch submission ─────────────────────────────────────────────────────
