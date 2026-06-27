@@ -269,13 +269,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
 // ── Setup wall ────────────────────────────────────────────────────────────────
 
-class _SetupWall extends StatelessWidget {
+class _SetupWall extends StatefulWidget {
   const _SetupWall();
+
+  @override
+  State<_SetupWall> createState() => _SetupWallState();
+}
+
+class _SetupWallState extends State<_SetupWall> {
+  bool _downloaded = false;
 
   static String get _downloadUrl =>
       '${AppConfig.apiBase}/download/node-agent';
 
-  static const _steps = [
+  static const _stepsBeforeDownload = [
     (
       icon: Icons.download_outlined,
       label: 'Download & install',
@@ -285,15 +292,50 @@ class _SetupWall extends StatelessWidget {
       icon: Icons.open_in_browser_outlined,
       label: 'Open the dashboard',
       detail:
-          'The installer opens localhost:5173 in your browser. A setup prompt will ask for an activation code.',
+          'The installer opens localhost:5173 in your browser automatically.',
     ),
     (
       icon: Icons.link_outlined,
       label: 'Connect your telescope',
       detail:
-          'Tap "Connect telescope" below, choose your scope and location, then copy the code and paste it into the dashboard prompt.',
+          'Come back here and tap "Connect telescope" — you\'ll need localhost:5173 open too.',
     ),
   ];
+
+  static const _stepsAfterDownload = [
+    (
+      icon: Icons.download_done_outlined,
+      label: 'Run the installer',
+      detail: 'Open the downloaded .pkg and follow the steps.',
+    ),
+    (
+      icon: Icons.open_in_browser_outlined,
+      label: 'Your browser will open',
+      detail:
+          'The installer launches localhost:5173 automatically when done.',
+    ),
+    (
+      icon: Icons.link_outlined,
+      label: 'Come back here and tap Connect',
+      detail:
+          'Tap "Connect telescope" below, get your activation code, and paste it into the dashboard.',
+    ),
+  ];
+
+  Future<void> _onDownload() async {
+    await launchUrl(
+      Uri.parse(_downloadUrl),
+      mode: LaunchMode.externalApplication,
+    );
+    if (mounted) setState(() => _downloaded = true);
+  }
+
+  Future<void> _onConnect() async {
+    final claimed = await showClaimSheet(context);
+    if (claimed && mounted) {
+      context.read<AppState>().refreshNodes();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -383,11 +425,14 @@ class _SetupWall extends StatelessWidget {
                           ),
                           padding: const EdgeInsets.all(20),
                           child: Column(
-                            children: List.generate(_steps.length, (i) {
-                              final step = _steps[i];
+                            children: List.generate(3, (i) {
+                              final steps = _downloaded
+                                  ? _stepsAfterDownload
+                                  : _stepsBeforeDownload;
+                              final step = steps[i];
                               return Padding(
                                 padding: EdgeInsets.only(
-                                    bottom: i < _steps.length - 1 ? 20 : 0),
+                                    bottom: i < 2 ? 20 : 0),
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -449,66 +494,91 @@ class _SetupWall extends StatelessWidget {
 
                     const SizedBox(height: 28),
 
-                    // Download button
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: () => launchUrl(
-                          Uri.parse(_downloadUrl),
-                          mode: LaunchMode.externalApplication,
-                        ),
-                        icon: const Icon(Icons.download_outlined, size: 18),
-                        label: const Text('Download Node Software'),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: BSTheme.btnPrimary,
-                          foregroundColor: BSTheme.btnPrimaryFg,
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                          textStyle: const TextStyle(
-                            fontFamily: 'Geist',
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // Connect telescope (opens claim sheet)
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () async {
-                          final claimed = await showClaimSheet(context);
-                          if (claimed && context.mounted) {
-                            context.read<AppState>().refreshNodes();
-                          }
-                        },
-                        icon: const Icon(Icons.link_outlined, size: 18),
-                        label: const Text('Connect telescope'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: BSTheme.accent,
-                          side: BorderSide(
-                              color: BSTheme.accent.withValues(alpha: 0.4)),
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                          textStyle: const TextStyle(
-                            fontFamily: 'Geist',
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                    if (!_downloaded) ...[
+                      // Before download: download is primary
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _onDownload,
+                          icon: const Icon(Icons.download_outlined, size: 18),
+                          label: const Text('Download Node Software'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: BSTheme.btnPrimary,
+                            foregroundColor: BSTheme.btnPrimaryFg,
+                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            textStyle: const TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _onConnect,
+                          icon: const Icon(Icons.link_outlined, size: 18),
+                          label: const Text('Already installed — connect telescope'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: BSTheme.accent,
+                            side: BorderSide(color: BSTheme.accent.withValues(alpha: 0.4)),
+                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            textStyle: const TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ] else ...[
+                      // After download: connect is primary
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _onConnect,
+                          icon: const Icon(Icons.link_outlined, size: 18),
+                          label: const Text('Connect telescope'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: BSTheme.btnPrimary,
+                            foregroundColor: BSTheme.btnPrimaryFg,
+                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            textStyle: const TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: _onDownload,
+                        icon: const Icon(Icons.download_outlined, size: 15),
+                        label: const Text('Download again'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: BSTheme.ink3,
+                          textStyle: const TextStyle(
+                            fontFamily: 'Geist',
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
 
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
 
-                    // Already linked? Re-check.
                     TextButton(
                       onPressed: () => context.read<AppState>().refreshNodes(),
                       child: const Text(

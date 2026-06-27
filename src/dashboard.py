@@ -4285,6 +4285,24 @@ html[data-night] img, html[data-night] video { filter: none; }
   </div>
 </div>
 
+<!-- Setup banner — visible until activation code is entered or node is registered -->
+<div id="setupBanner" style="display:none;flex-direction:row;background:linear-gradient(90deg,rgba(160,185,255,0.12),rgba(160,185,255,0.06));
+     border-bottom:1px solid rgba(160,185,255,0.2);padding:10px 20px;
+     align-items:center;gap:12px;font-size:13px;">
+  <span style="color:rgba(160,185,255,0.9);">&#9679;</span>
+  <span style="color:#c8d8ff;flex:1;">
+    <strong style="color:#fff;">Not connected to The Telescope Net.</strong>
+    &nbsp;Get your activation code from <a href="https://app.thetelescope.net" target="_blank" style="color:#a0b9ff;">app.thetelescope.net</a>
+    → Connect telescope, then paste it here.
+  </span>
+  <button onclick="openWelcomeModal()"
+    style="background:#a0b9ff;color:#000814;border:none;border-radius:6px;
+           padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;
+           letter-spacing:0.3px;white-space:nowrap;">
+    Enter code
+  </button>
+</div>
+
 <!-- Main grid -->
 <div class="main" id="mainGrid">
 
@@ -8670,6 +8688,15 @@ function closeWelcomeModal() {
   document.getElementById('welcomeModal').classList.add('hidden');
 }
 
+function _isPlaceholderCode(code) {
+  return !code || code === 'ACTIVATION_CODE_PLACEHOLDER' || code.trim() === '';
+}
+
+function openWelcomeModal() {
+  document.getElementById('welcomeModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('welcomeCodeInput').focus(), 80);
+}
+
 async function _checkFirstRun() {
   try {
     const [cfgR, cloudR] = await Promise.all([
@@ -8679,14 +8706,15 @@ async function _checkFirstRun() {
     if (!cfgR.ok) return;
     const cfg = await cfgR.json();
     const cloudCfg = cfg.cloud || {};
-    // Already have a code saved or already registered → don't show
-    if (cloudCfg.activation_code) return;
-    if (cloudR && cloudR.ok) {
-      const cs = await cloudR.json();
-      if (cs.registered) return;
+    const registered = cloudR && cloudR.ok && (await cloudR.json()).registered;
+    const hasCode = !_isPlaceholderCode(cloudCfg.activation_code);
+    const setupBanner = document.getElementById('setupBanner');
+    if (registered || hasCode) {
+      if (setupBanner) setupBanner.style.display = 'none';
+      return;
     }
-    document.getElementById('welcomeModal').classList.remove('hidden');
-    setTimeout(() => document.getElementById('welcomeCodeInput').focus(), 80);
+    if (setupBanner) setupBanner.style.display = 'flex';
+    openWelcomeModal();
   } catch (_) {}
 }
 
