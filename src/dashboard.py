@@ -672,6 +672,7 @@ def _run_photometry_bg(fits_path: str) -> None:
                     "magnitude":    result["magnitude"],
                     "uncertainty":  result["uncertainty"],
                     "quality_flag": result["quality_flag"],
+                    "sky_mag":      result.get("sky_mag"),
                 })
                 if len(hist) > 20:
                     del hist[:-20]
@@ -5373,12 +5374,16 @@ function renderNowObserving(s) {
     `<span style="font-size:18px;font-weight:700;color:${col};">${last.magnitude.toFixed(3)}</span>` +
     `<span style="font-size:11px;color:var(--dim);margin-left:3px;">±${last.uncertainty.toFixed(3)} mag</span>`;
 
+  const skyVals = history.map(h => h.sky_mag).filter(v => v != null);
+  const skyStr  = skyVals.length
+    ? `  ·  sky ${(skyVals.reduce((a,b)=>a+b,0)/skyVals.length).toFixed(1)} mag/″²`
+    : "";
   if (history.length > 1) {
     const mags = history.map(h => h.magnitude);
     statsEl.textContent =
-      `${history.length} measurements  ·  range ${Math.min(...mags).toFixed(3)}–${Math.max(...mags).toFixed(3)}`;
+      `${history.length} measurements  ·  range ${Math.min(...mags).toFixed(3)}–${Math.max(...mags).toFixed(3)}${skyStr}`;
   } else {
-    statsEl.textContent = "First measurement this session";
+    statsEl.textContent = `First measurement this session${skyStr}`;
   }
 
   if (history.length < 2) { spark.innerHTML = ""; return; }

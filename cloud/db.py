@@ -395,6 +395,7 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str]] = [
     ("nodes", "session_site_name",    "TEXT DEFAULT ''"),
     ("nodes", "previous_locations",   "TEXT DEFAULT '[]'"),
     ("activation_codes", "portable",  "INTEGER DEFAULT 0"),
+    ("measurements",     "sky_mag",   "DOUBLE PRECISION"),
 ]
 
 

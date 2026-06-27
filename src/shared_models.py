@@ -274,6 +274,7 @@ class Measurement:
     zero_point: Optional[float] = None
     zp_scatter: Optional[float] = None
     fits_file: str = ""
+    sky_mag: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

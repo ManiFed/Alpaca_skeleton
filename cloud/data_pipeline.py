@@ -69,12 +69,12 @@ def ingest_measurement(node_id: str, payload: dict,
             """INSERT INTO measurements
                    (node_id, target_name, bjd, magnitude, uncertainty, filter,
                     airmass, fwhm, snr, comparison_stars, quality_flag,
-                    zero_point, zp_scatter, fits_file, conditions, received_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    zero_point, zp_scatter, fits_file, sky_mag, conditions, received_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (m.node_id, m.target_name, m.bjd, m.magnitude, m.uncertainty,
              m.filter, m.airmass, m.fwhm, m.snr, m.comparison_stars,
              m.quality_flag, m.zero_point, m.zp_scatter, m.fits_file,
-             json.dumps(conditions or {}), _now()),
+             m.sky_mag, json.dumps(conditions or {}), _now()),
             returning_id=True,
         )
     except Exception as exc:

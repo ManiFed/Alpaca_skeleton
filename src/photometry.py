@@ -397,6 +397,13 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
         snr, n_comp_used, airmass, quality_flag,
     )
 
+    # ── Step 8b: Sky surface brightness ──────────────────────────────────────
+    pixel_scale = float(phot_cfg.get("pixel_scale", 2.4))
+    if bkg_med > 0 and pixel_scale > 0:
+        sky_mag = round(zero_point - 2.5 * math.log10(bkg_med) + 5.0 * math.log10(pixel_scale), 2)
+    else:
+        sky_mag = None
+
     # ── Step 9: Patrol check (opt-in) ────────────────────────────────────────
     patrol_alerts: list = []
     if phot_cfg.get("patrol_enabled", False):
@@ -426,6 +433,7 @@ def run_pipeline(fits_path: str, config: dict) -> Optional[dict]:
         "zero_point":       round(zero_point, 3),
         "zp_scatter":       round(zp_scatter, 3),
         "fits_file":        os.path.basename(fits_path),
+        "sky_mag":          sky_mag,
         "patrol_alerts":    patrol_alerts,
     }
 

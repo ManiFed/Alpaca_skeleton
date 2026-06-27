@@ -849,6 +849,33 @@ def api_admin_tuning_rollback():
     return jsonify({"restored_weights": tuning.active_obs_weights(_config)})
 
 
+@app.route("/api/v1/admin/sky-quality", methods=["GET"])
+@require_admin
+def api_admin_sky_quality():
+    """Per-node sky brightness stats. ?days=N (default 30)."""
+    days = float(request.args.get("days", 30))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = db.query(
+        """SELECT m.node_id, n.city, n.country, n.light_pollution_mpsas AS declared_mpsas,
+                  COUNT(*) AS n_frames,
+                  AVG(m.sky_mag) AS mean_sky_mag,
+                  MIN(m.sky_mag) AS best_sky_mag,
+                  MAX(m.sky_mag) AS worst_sky_mag,
+                  MAX(m.received_at) AS last_seen
+             FROM measurements m
+             LEFT JOIN nodes n USING (node_id)
+            WHERE m.sky_mag IS NOT NULL AND m.received_at > %s
+            GROUP BY m.node_id, n.city, n.country, n.light_pollution_mpsas
+            ORDER BY mean_sky_mag DESC NULLS LAST""",
+        (cutoff,),
+    )
+    for r in rows:
+        for k in ("mean_sky_mag", "best_sky_mag", "worst_sky_mag"):
+            if r.get(k) is not None:
+                r[k] = round(float(r[k]), 2)
+    return jsonify({"days": days, "nodes": rows})
+
+
 @app.route("/api/v1/admin/patrol", methods=["GET"])
 @require_admin
 def api_admin_patrol():
