@@ -2644,7 +2644,6 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           _pushed = false;
           _pushing = false;
           _codeCopied = false;
-          _pairCtrl.clear();
           _resetLocation();
           _locationCtrl.clear();
           _resetScope();
