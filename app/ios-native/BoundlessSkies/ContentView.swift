@@ -940,17 +940,17 @@ struct DashboardView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 14) {
                     hero
-                    statsGrid
+                    readinessPanel
                     timelinePanel
-                    targetsPanel
-                    alertsPanel
+                    evidencePanel
                 }
-                .padding()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
             .background(AppTheme.night)
-            .navigationTitle("Tonight")
+            .navigationTitle("Tonight Brief")
             .toolbar {
                 refreshButton { await load() }
                 ToolbarItem(placement: .topBarLeading) {
@@ -974,68 +974,143 @@ struct DashboardView: View {
     }
 
     private var hero: some View {
-        panel {
-            Label("Network readiness", systemImage: "moon.stars.fill")
-                .font(.headline)
-            Text(appState.hasNode == true ? "Your telescope network is connected." : "Connect a node to start observing.")
-                .foregroundStyle(AppTheme.ink2)
-            Button("Go to Nodes") { selectedTab = 1 }
-        }
-    }
+        OpsPanel(accent: readinessColor) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("TONIGHT BRIEF")
+                            .opsLabel()
+                        Text(headline)
+                            .font(.system(size: 34, weight: .black, design: .rounded))
+                            .foregroundStyle(AppTheme.ink)
+                            .lineSpacing(0)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(summary)
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.ink2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    SignalPill(text: "\(onlineNodes)/\(stats.nodeCount) LIVE", color: readinessColor)
+                }
 
-    private var statsGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            StatTile(title: "Observations", value: "\(stats.totalObservations)")
-            StatTile(title: "AAVSO sent", value: "\(stats.aavsoSubmitted)")
-            StatTile(title: "Targets", value: "\(stats.targetsObserved)")
-            StatTile(title: "Clear nights", value: "\(stats.clearNights)")
-        }
-    }
-
-    private var timelinePanel: some View {
-        panel {
-            PanelHeader(title: "Tonight's plan", systemImage: "clock")
-            if timeline.isEmpty {
-                EmptyLine("No planned observations yet.")
-            } else {
-                ForEach(timeline.prefix(5)) { item in
-                    row(title: item.target, subtitle: "\(compactDate(item.startTime)) • \(item.expCount)x \(Int(item.expDur))s • \(item.filter)", accessory: item.reason)
+                HStack(spacing: 10) {
+                    OpsMetric(title: "Observations", value: "\(stats.totalObservations)", color: AppTheme.sky)
+                    OpsMetric(title: "AAVSO", value: "\(stats.aavsoSubmitted)", color: AppTheme.accent)
+                    OpsMetric(title: "Alerts", value: "\(unreadCount)", color: unreadCount == 0 ? AppTheme.accent : AppTheme.danger)
                 }
             }
         }
     }
 
-    private var targetsPanel: some View {
-        panel {
-            HStack {
-                PanelHeader(title: "Priority targets", systemImage: "scope")
-                Spacer()
-                Button("View all") { showingTargetsList = true }
-                    .font(.caption.weight(.semibold))
-            }
-            ForEach(targets.prefix(8)) { target in
-                Button {
-                    selectedTarget = target
-                } label: {
-                    row(title: target.name, subtitle: "\(target.scienceProgram.ifEmpty(target.targetType)) • \(target.nMeasurements) measurements", accessory: target.bestScore.map { String(format: "%.0f", $0) } ?? "")
+    private var readinessPanel: some View {
+        OpsPanel(accent: actionCount == 0 ? AppTheme.accent : AppTheme.warm) {
+            VStack(alignment: .leading, spacing: 12) {
+                OpsHeader(kicker: "READINESS", title: "What needs attention", systemImage: "checklist")
+                IntentRow(
+                    systemImage: actionCount == 0 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
+                    color: actionCount == 0 ? AppTheme.accent : AppTheme.warm,
+                    title: actionCount == 0 ? "No blocking actions" : "\(actionCount) thing\(actionCount == 1 ? "" : "s") to check",
+                    subtitle: actionCount == 0 ? "Your network can accept tonight's assignments." : "Open Telescopes or Alerts before the next observing window."
+                )
+                Button { selectedTab = unreadCount > 0 ? 3 : 1 } label: {
+                    HStack {
+                        Text(unreadCount > 0 ? "Review alerts" : "Review telescopes")
+                            .font(.subheadline.weight(.bold))
+                        Spacer()
+                        Image(systemName: "arrow.right")
+                    }
+                    .padding(12)
+                    .foregroundStyle(AppTheme.night)
+                    .background(AppTheme.ink, in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
             }
         }
     }
 
-    private var alertsPanel: some View {
-        panel {
-            PanelHeader(title: "Alerts", systemImage: "bell")
-            if notifications.isEmpty {
-                EmptyLine("No alerts yet.")
-            } else {
-                ForEach(notifications.prefix(3)) { notification in
-                    row(title: notification.title, subtitle: compactDate(notification.sentAt), accessory: notification.read ? "Read" : "New")
+    private var timelinePanel: some View {
+        OpsPanel(accent: AppTheme.sky) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    OpsHeader(kicker: "PLAN", title: "What the network will try", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                    Spacer()
+                    Button("Targets") { showingTargetsList = true }
+                        .font(.caption.weight(.bold))
                 }
-                Button("Open all alerts") { selectedTab = 3 }
+                if timeline.isEmpty {
+                    ForEach(targets.prefix(4)) { target in
+                        Button { selectedTarget = target } label: {
+                            IntentRow(
+                                systemImage: "scope",
+                                color: target.priority > 0.7 ? AppTheme.warm : AppTheme.sky,
+                                title: target.name,
+                                subtitle: "\(target.scienceProgram.ifEmpty(target.targetType)) · priority \(Int(target.priority * 100)) · \(target.nMeasurements) measurements"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if targets.isEmpty { EmptyLine("No planned observations yet.") }
+                } else {
+                    ForEach(timeline.prefix(5)) { item in
+                        Button {
+                            if let target = targets.first(where: { $0.name == item.target }) { selectedTarget = target }
+                        } label: {
+                            IntentRow(
+                                systemImage: "clock",
+                                color: AppTheme.sky,
+                                title: item.target.ifEmpty("Scheduled target"),
+                                subtitle: "\(compactDate(item.startTime)) · \(item.expCount)x \(Int(item.expDur))s\(item.filter.isEmpty ? "" : " · \(item.filter)")\(item.reason.isEmpty ? "" : " · \(item.reason)")"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
         }
+    }
+
+    private var evidencePanel: some View {
+        OpsPanel(accent: AppTheme.accent) {
+            VStack(alignment: .leading, spacing: 12) {
+                OpsHeader(kicker: "EVIDENCE", title: "What changed in the sky", systemImage: "waveform.path.ecg")
+                HStack(spacing: 10) {
+                    OpsMetric(title: "Targets", value: "\(stats.targetsObserved)", color: AppTheme.warm)
+                    OpsMetric(title: "Clear nights", value: "\(stats.clearNights)", color: AppTheme.sky)
+                }
+                if notifications.isEmpty {
+                    EmptyLine("No recent alerts or receipts.")
+                } else {
+                    ForEach(notifications.prefix(3)) { notification in
+                        IntentRow(
+                            systemImage: notification.read ? "envelope.open" : "dot.radiowaves.left.and.right",
+                            color: notification.read ? AppTheme.ink3 : AppTheme.accent,
+                            title: notification.title,
+                            subtitle: "\(compactDate(notification.sentAt)) · \(notification.read ? "read" : "new")"
+                        )
+                    }
+                    Button("Open all alerts") { selectedTab = 3 }
+                        .font(.caption.weight(.bold))
+                }
+            }
+        }
+    }
+
+    private var onlineNodes: Int { appState.hasNode == true ? max(stats.nodeCount, 1) : 0 }
+    private var unreadCount: Int { notifications.filter { !$0.read }.count }
+    private var actionCount: Int { (appState.hasNode == true ? 0 : 1) + unreadCount }
+    private var readinessColor: Color { actionCount == 0 ? AppTheme.accent : AppTheme.warm }
+    private var headline: String {
+        if appState.hasNode != true { return "Connect a telescope to start observing." }
+        if actionCount > 0 { return "Tonight needs attention before it runs." }
+        if stats.totalObservations > 0 { return "Your network is producing useful measurements." }
+        return "Your telescopes are ready for tonight."
+    }
+    private var summary: String {
+        if let target = targets.sorted(by: { $0.priority > $1.priority }).first {
+            return "\(target.name) is the highest-priority target in the current queue."
+        }
+        return "The app now focuses on readiness, intent, and evidence instead of generic status cards."
     }
 
     private func load() async {
@@ -1230,19 +1305,30 @@ struct NodesView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if nodes.isEmpty && !isLoading {
-                    Text("No telescopes connected yet.")
-                        .foregroundStyle(AppTheme.ink2)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    OpsPanel(accent: nodesReady ? AppTheme.accent : AppTheme.warm) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            OpsHeader(kicker: "TELESCOPES", title: nodesReady ? "Network ready" : "Connect or review nodes", systemImage: "dot.radiowaves.left.and.right")
+                            Text(nodesReady ? "\(nodes.filter { $0.online }.count) of \(nodes.count) telescopes are live." : "Every node card explains its state, consequence, and next useful action.")
+                                .font(.subheadline)
+                                .foregroundStyle(AppTheme.ink2)
+                        }
+                    }
+                    if nodes.isEmpty && !isLoading {
+                        EmptyLine("No telescopes connected yet.")
+                            .padding(.top, 12)
+                    }
+                    ForEach(nodes) { node in
+                        Button { managingNode = node } label: { NodeCard(node: node) }
+                            .buttonStyle(.plain)
+                    }
                 }
-                ForEach(nodes) { node in
-                    Button { managingNode = node } label: { NodeCard(node: node) }
-                        .buttonStyle(.plain)
-                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
-            .scrollContentBackground(.hidden)
             .background(AppTheme.night)
-            .navigationTitle("Nodes")
+            .navigationTitle("Telescopes")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: onAccount) {
@@ -1264,6 +1350,10 @@ struct NodesView: View {
         }
     }
 
+    private var nodesReady: Bool {
+        !nodes.isEmpty && nodes.allSatisfy { $0.online && !$0.isOnVacation }
+    }
+
     private func load() async {
         isLoading = true
         defer { isLoading = false }
@@ -1280,26 +1370,63 @@ struct NodeCard: View {
     let node: MemberNode
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(node.telescopeModel.ifEmpty("Telescope node"))
-                    .font(.headline)
-                Spacer()
-                StatusBadge(text: node.status, good: node.online)
+        OpsPanel(accent: statusColor) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(statusColor)
+                        .frame(width: 42, height: 42)
+                        .background(statusColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(node.telescopeModel.ifEmpty("Telescope node"))
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(AppTheme.ink)
+                        Text(node.location)
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.ink2)
+                    }
+                    Spacer()
+                    SignalPill(text: statusText, color: statusColor)
+                }
+                IntentRow(systemImage: actionIcon, color: statusColor, title: actionTitle, subtitle: actionDetail)
+                HStack(spacing: 8) {
+                    MiniDatum(label: "heartbeat", value: compactDate(node.lastHeartbeat).ifEmpty("unknown"))
+                    MiniDatum(label: "node", value: node.nodeId)
+                    if node.portable {
+                        MiniDatum(label: "mode", value: node.sessionCity.isEmpty ? "portable" : node.sessionCity)
+                    }
+                }
             }
-            Text(node.location)
-                .foregroundStyle(AppTheme.ink2)
-            if node.portable {
-                Label(node.sessionCity.isEmpty ? "Portable node" : "Session in \(node.sessionCity)", systemImage: "location")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.sky)
-            }
-            Text("Last heartbeat \(compactDate(node.lastHeartbeat).ifEmpty("unknown"))")
-                .font(.caption)
-                .foregroundStyle(AppTheme.ink3)
         }
-        .padding(.vertical, 8)
         .accessibilityElement(children: .combine)
+    }
+
+    private var statusColor: Color {
+        if !node.online { return AppTheme.danger }
+        if node.isOnVacation { return AppTheme.warm }
+        if node.isSleeping { return AppTheme.sky }
+        return AppTheme.accent
+    }
+
+    private var statusText: String { node.status.ifEmpty(node.online ? "online" : "offline").uppercased() }
+    private var actionIcon: String {
+        if !node.online { return "powerplug" }
+        if node.portable && node.isSleeping { return "location.viewfinder" }
+        if node.isOnVacation { return "pause.circle" }
+        return "checkmark.seal"
+    }
+    private var actionTitle: String {
+        if !node.online { return "Node needs attention" }
+        if node.portable && node.isSleeping { return "Set tonight's observing site" }
+        if node.isOnVacation { return "Vacation mode is active" }
+        return "Accepting assignments"
+    }
+    private var actionDetail: String {
+        if !node.online { return "Check power, network, or the node software before dark." }
+        if node.portable && node.isSleeping { return "Portable nodes need a current location before they can run." }
+        if node.isOnVacation { return node.vacationUntil.isEmpty ? "This telescope is paused." : "Paused until \(node.vacationUntil)." }
+        return "This telescope can be scheduled for useful observations."
     }
 }
 
@@ -1730,33 +1857,50 @@ struct ObservationsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if !nights.isEmpty {
-                    Section("Nights") {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    OpsPanel(accent: AppTheme.accent) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            OpsHeader(kicker: "EVIDENCE", title: "Measurements with provenance", systemImage: "waveform.path.ecg")
+                            Text("Each record shows target, magnitude, uncertainty, node, quality, and submission state.")
+                                .font(.subheadline)
+                                .foregroundStyle(AppTheme.ink2)
+                        }
+                    }
+                    if !nights.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack {
+                            HStack(spacing: 10) {
                                 ForEach(nights.prefix(12)) { night in
-                                    VStack(alignment: .leading) {
-                                        Text(night.night).font(.caption.bold())
-                                        Text("\(night.nObservations) obs").foregroundStyle(AppTheme.ink2)
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(night.night)
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(night.wasClear ? AppTheme.ink : AppTheme.ink3)
+                                        Text("\(night.nObservations) obs")
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(night.wasClear ? AppTheme.accent : AppTheme.ink3)
                                     }
-                                    .padding(10)
-                                    .background(AppTheme.surface2, in: RoundedRectangle(cornerRadius: 8))
+                                    .frame(width: 86, alignment: .leading)
+                                    .padding(11)
+                                    .background(AppTheme.surface2, in: RoundedRectangle(cornerRadius: 10))
+                                    .overlay(RoundedRectangle(cornerRadius: 10).stroke((night.wasClear ? AppTheme.accent : AppTheme.ink).opacity(0.16)))
                                 }
                             }
                         }
                     }
-                }
-                Section("Recent observations") {
+                    if observations.isEmpty {
+                        EmptyLine("No observations yet.")
+                            .padding(.top, 12)
+                    }
                     ForEach(observations) { observation in
                         Button { selectedTarget = observation.targetName } label: {
-                            row(title: observation.targetName, subtitle: "\(observation.filter) • \(String(format: "%.3f", observation.magnitude)) ± \(String(format: "%.3f", observation.uncertainty))", accessory: observation.aavsoSubmitted ? "AAVSO" : observation.qualityFlag)
+                            ObservationEvidenceCard(observation: observation)
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
-            .scrollContentBackground(.hidden)
             .background(AppTheme.night)
             .navigationTitle("Data")
             .toolbar {
@@ -1786,6 +1930,46 @@ struct ObservationsView: View {
             observations = try await obs
             nights = try await nightData
         } catch { appState.handleAuthError(error) }
+    }
+}
+
+struct ObservationEvidenceCard: View {
+    let observation: ObservationRecord
+
+    var body: some View {
+        OpsPanel(accent: magColor) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "sparkle.magnifyingglass")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(magColor)
+                        .frame(width: 42, height: 42)
+                        .background(magColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(observation.targetName.ifEmpty("Unknown target"))
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(AppTheme.ink)
+                        Text("\(String(format: "%.3f", observation.magnitude)) mag")
+                            .font(.system(size: 28, weight: .black, design: .rounded))
+                            .foregroundStyle(magColor)
+                    }
+                    Spacer()
+                    SignalPill(text: observation.aavsoSubmitted ? "AAVSO" : observation.qualityFlag.ifEmpty("PENDING").uppercased(), color: observation.aavsoSubmitted ? AppTheme.accent : AppTheme.warm)
+                }
+                HStack(spacing: 8) {
+                    MiniDatum(label: "uncertainty", value: "± \(String(format: "%.3f", observation.uncertainty))")
+                    MiniDatum(label: "node", value: observation.nodeId.ifEmpty("unknown"))
+                    MiniDatum(label: "filter", value: observation.filter.ifEmpty("none"))
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var magColor: Color {
+        if observation.magnitude < 8 { return AppTheme.warm }
+        if observation.magnitude < 11 { return AppTheme.sky }
+        return AppTheme.ink2
     }
 }
 
@@ -2081,6 +2265,148 @@ struct MeView: View {
 
 // MARK: - Shared UI
 
+struct OpsPanel<Content: View>: View {
+    let accent: Color
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            ZStack(alignment: .leading) {
+                AppTheme.surface.opacity(0.96)
+                accent.opacity(0.055)
+                Rectangle()
+                    .fill(accent)
+                    .frame(width: 3)
+            },
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(accent.opacity(0.22)))
+        .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 10)
+    }
+}
+
+struct OpsHeader: View {
+    let kicker: String
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(AppTheme.ink2)
+                .frame(width: 32, height: 32)
+                .background(AppTheme.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(kicker)
+                    .opsLabel()
+                Text(title)
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(AppTheme.ink)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct IntentRow: View {
+    let systemImage: String
+    let color: Color
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(color)
+                .frame(width: 32, height: 32)
+                .background(color.opacity(0.11), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(AppTheme.ink)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.ink2)
+                    .lineLimit(3)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(10)
+        .background(color.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.16)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct SignalPill: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.black))
+            .kerning(0.7)
+            .foregroundStyle(color)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.34)))
+    }
+}
+
+struct OpsMetric: View {
+    let title: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.ink3)
+            Text(value)
+                .font(.title3.weight(.black))
+                .foregroundStyle(color)
+                .monospacedDigit()
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.ink.opacity(0.10)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct MiniDatum: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.ink3)
+                .lineLimit(1)
+            Text(value)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(AppTheme.ink2)
+                .lineLimit(1)
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.ink.opacity(0.10)))
+    }
+}
+
 func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: 12, content: content)
         .padding()
@@ -2170,6 +2496,13 @@ func refreshButton(_ action: @escaping () async -> Void) -> some ToolbarContent 
 }
 
 extension View {
+    func opsLabel() -> some View {
+        self
+            .font(.caption2.weight(.black))
+            .kerning(1.1)
+            .foregroundStyle(AppTheme.ink3)
+    }
+
     func nativeField() -> some View {
         self
             .padding(14)
