@@ -1,18 +1,16 @@
 API_BASE   := https://api.thetelescope.net
 BASE_HREF  := /
 
-# Build the Flutter PWA and commit the output so Railway picks it up
+# Build the Flutter PWA locally for verification.
 .PHONY: build-web
 build-web:
 	cd app && flutter build web --release \
 		--base-href=$(BASE_HREF) \
 		--dart-define=API_BASE=$(API_BASE)
 
-# Build + stage + commit + push in one shot
+# Railway now builds the Flutter PWA from source via Dockerfile.app.
 .PHONY: deploy-web
-deploy-web: build-web
-	git add app/build/web/
-	git commit -m "chore: rebuild Flutter web for production"
+deploy-web:
 	git push origin main
 
 # Deploy the cloud server to Railway
