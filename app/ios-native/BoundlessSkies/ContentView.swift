@@ -1135,6 +1135,7 @@ struct DashboardView: View {
             }
             .background(AppTheme.night)
             .navigationTitle("Tonight Brief")
+            .toolbar(.hidden, for: .navigationBar)
             .toolbar {
                 refreshButton { await load() }
                 ToolbarItem(placement: .topBarLeading) {
@@ -1160,6 +1161,12 @@ struct DashboardView: View {
     private var hero: some View {
         OpsPanel(accent: readinessColor) {
             VStack(alignment: .leading, spacing: 18) {
+                NetworkRadarView(
+                    online: onlineNodes,
+                    targets: targets.count,
+                    alerts: unreadCount,
+                    accent: readinessColor
+                )
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("TONIGHT BRIEF")
@@ -1493,7 +1500,19 @@ struct NodesView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     OpsPanel(accent: nodesReady ? AppTheme.accent : AppTheme.warm) {
                         VStack(alignment: .leading, spacing: 10) {
-                            OpsHeader(kicker: "TELESCOPES", title: nodesReady ? "Network ready" : "Connect or review nodes", systemImage: "dot.radiowaves.left.and.right")
+                            HStack(alignment: .center) {
+                                OpsHeader(kicker: "TELESCOPES", title: nodesReady ? "Network ready" : "Connect or review nodes", systemImage: "dot.radiowaves.left.and.right")
+                                Spacer()
+                                Button { showingClaim = true } label: {
+                                    Label("Connect", systemImage: "plus")
+                                        .font(.caption.weight(.black))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
+                                        .foregroundStyle(AppTheme.night)
+                                        .background(AppTheme.ink, in: RoundedRectangle(cornerRadius: 8))
+                                }
+                                .buttonStyle(.plain)
+                            }
                             Text(nodesReady ? "\(nodes.filter { $0.online }.count) of \(nodes.count) telescopes are live." : "Every node card explains its state, consequence, and next useful action.")
                                 .font(.subheadline)
                                 .foregroundStyle(AppTheme.ink2)
@@ -1513,6 +1532,7 @@ struct NodesView: View {
             }
             .background(AppTheme.night)
             .navigationTitle("Telescopes")
+            .toolbar(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: onAccount) {
@@ -2087,6 +2107,7 @@ struct ObservationsView: View {
             }
             .background(AppTheme.night)
             .navigationTitle("Data")
+            .toolbar(.hidden, for: .navigationBar)
             .toolbar {
                 Button(action: onAccount) {
                     Label("Account", systemImage: "person.crop.circle")
@@ -2166,17 +2187,38 @@ struct NotificationsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(notifications) { notification in
-                    Button { Task { await markRead(notification) } } label: {
-                        row(title: notification.title, subtitle: compactDate(notification.sentAt), accessory: notification.read ? "Read" : "New")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    OpsPanel(accent: notifications.contains { !$0.read } ? AppTheme.danger : AppTheme.accent) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            OpsHeader(kicker: "TRANSMISSIONS", title: notifications.contains { !$0.read } ? "Actionable alerts" : "All quiet", systemImage: "bell.and.waves.left.and.right")
+                            Text(notifications.isEmpty ? "When the network needs you, it will show up here." : "Tap an incoming transmission to mark it received.")
+                                .font(.subheadline)
+                                .foregroundStyle(AppTheme.ink2)
+                        }
                     }
-                    .buttonStyle(.plain)
+                    if notifications.isEmpty {
+                        EmptyLine("No alerts yet.")
+                            .padding(.top, 12)
+                    }
+                    ForEach(notifications) { notification in
+                        Button { Task { await markRead(notification) } } label: {
+                            IntentRow(
+                                systemImage: notification.read ? "envelope.open" : "dot.radiowaves.left.and.right",
+                                color: notification.read ? AppTheme.ink3 : AppTheme.danger,
+                                title: notification.title,
+                                subtitle: "\(compactDate(notification.sentAt)) · \(notification.read ? "read" : "new")"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
-            .scrollContentBackground(.hidden)
             .background(AppTheme.night)
             .navigationTitle("Alerts")
+            .toolbar(.hidden, for: .navigationBar)
             .toolbar {
                 Button(action: onAccount) {
                     Label("Account", systemImage: "person.crop.circle")
@@ -2449,6 +2491,79 @@ struct MeView: View {
 
 // MARK: - Shared UI
 
+struct NetworkRadarView: View {
+    let online: Int
+    let targets: Int
+    let alerts: Int
+    let accent: Color
+
+    private let points: [(CGFloat, CGFloat, Color)] = [
+        (0.18, 0.36, AppTheme.sky),
+        (0.34, 0.68, AppTheme.accent),
+        (0.56, 0.28, AppTheme.warm),
+        (0.78, 0.55, AppTheme.sky),
+        (0.66, 0.78, AppTheme.accent),
+    ]
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(AppTheme.night.opacity(0.78))
+            GeometryReader { proxy in
+                let size = min(proxy.size.width, proxy.size.height)
+                let center = CGPoint(x: proxy.size.width * 0.5, y: proxy.size.height * 0.54)
+                ZStack {
+                    ForEach([CGFloat(0.28), CGFloat(0.48), CGFloat(0.68), CGFloat(0.88)], id: \.self) { scale in
+                        Circle()
+                            .stroke(AppTheme.ink.opacity(0.08), lineWidth: 1)
+                            .frame(width: size * scale, height: size * scale)
+                            .position(center)
+                    }
+                    Path { path in
+                        path.move(to: CGPoint(x: center.x, y: center.y - size * 0.44))
+                        path.addLine(to: CGPoint(x: center.x, y: center.y + size * 0.44))
+                        path.move(to: CGPoint(x: center.x - size * 0.44, y: center.y))
+                        path.addLine(to: CGPoint(x: center.x + size * 0.44, y: center.y))
+                    }
+                    .stroke(AppTheme.ink.opacity(0.10), style: StrokeStyle(lineWidth: 1, dash: [4, 6]))
+                    ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                        Circle()
+                            .fill(point.2)
+                            .frame(width: 8, height: 8)
+                            .shadow(color: point.2.opacity(0.75), radius: 7)
+                            .position(x: proxy.size.width * point.0, y: proxy.size.height * point.1)
+                    }
+                    if alerts > 0 {
+                        Circle()
+                            .stroke(AppTheme.danger, lineWidth: 2)
+                            .frame(width: 30, height: 30)
+                            .position(x: proxy.size.width * 0.78, y: proxy.size.height * 0.55)
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+
+            VStack {
+                HStack {
+                    Text("NETWORK SKY PLOT")
+                        .opsLabel()
+                    Spacer()
+                    SignalPill(text: alerts > 0 ? "\(alerts) ALERTS" : "CLEAR", color: alerts > 0 ? AppTheme.danger : accent)
+                }
+                Spacer()
+                HStack(spacing: 8) {
+                    MiniDatum(label: "online", value: "\(online)")
+                    MiniDatum(label: "targets", value: "\(targets)")
+                    MiniDatum(label: "state", value: alerts > 0 ? "review" : "ready")
+                }
+            }
+            .padding(12)
+        }
+        .frame(height: 190)
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(accent.opacity(0.24)))
+    }
+}
+
 struct OpsPanel<Content: View>: View {
     let accent: Color
     @ViewBuilder let content: Content
@@ -2470,6 +2585,20 @@ struct OpsPanel<Content: View>: View {
             in: RoundedRectangle(cornerRadius: 12)
         )
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(accent.opacity(0.22)))
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 4) {
+                Rectangle().fill(accent.opacity(0.55)).frame(width: 18, height: 2)
+                Rectangle().fill(accent.opacity(0.25)).frame(width: 8, height: 2)
+            }
+            .padding(10)
+        }
+        .overlay(alignment: .bottomLeading) {
+            HStack(spacing: 4) {
+                Rectangle().fill(accent.opacity(0.28)).frame(width: 8, height: 2)
+                Rectangle().fill(accent.opacity(0.55)).frame(width: 18, height: 2)
+            }
+            .padding(10)
+        }
         .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 10)
     }
 }
