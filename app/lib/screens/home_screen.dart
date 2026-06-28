@@ -66,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
       icon: Icons.satellite_alt_outlined,
       sel: Icons.satellite_alt
     ),
+    (title: 'Me', icon: Icons.person_outline, sel: Icons.person),
   ];
 
   @override
@@ -91,6 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final pages = [
       DashboardTab(onNavigateToTab: (_) => _showAlertsSheet()),
       const NodesTab(),
+      const MeScreen(showAppBar: false),
     ];
 
     return Stack(
@@ -180,13 +182,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   tooltip: 'Account',
                   onSelected: (v) {
-                    if (v == 'me') {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const MeScreen(),
-                        ),
-                      );
-                    } else if (v == 'signout') {
+                    if (v == 'signout') {
                       context.read<AppState>().signOut();
                     }
                   },
@@ -194,13 +190,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     PopupMenuItem<String>(
                       enabled: false,
                       child: Text(name.isEmpty ? 'Signed in' : name),
-                    ),
-                    const PopupMenuItem<String>(
-                      value: 'me',
-                      child: ListTile(
-                        leading: Icon(Icons.person_outline),
-                        title: Text('Me'),
-                      ),
                     ),
                     const PopupMenuItem<String>(
                       value: 'signout',
@@ -224,7 +213,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   _ReadinessRail(
                     index: _index,
                     tabs: _tabs,
-                    unread: state.unreadNotifications,
                     nodesReady: state.hasNode,
                     onSelect: (i) {
                       setState(() => _index = i);
@@ -292,14 +280,12 @@ class _ReadinessRail extends StatelessWidget {
   const _ReadinessRail({
     required this.index,
     required this.tabs,
-    required this.unread,
     required this.nodesReady,
     required this.onSelect,
   });
 
   final int index;
   final List<({IconData icon, IconData sel, String title})> tabs;
-  final int unread;
   final bool nodesReady;
   final ValueChanged<int> onSelect;
 
@@ -334,7 +320,7 @@ class _ReadinessRail extends StatelessWidget {
                   selected: index == i,
                   icon: index == i ? tabs[i].sel : tabs[i].icon,
                   label: tabs[i].title,
-                  badge: i == 3 && unread > 0 ? unread : null,
+                  badge: null,
                   onTap: () => onSelect(i),
                 ),
               ),

@@ -6,9 +6,11 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/async_view.dart';
 
-/// Profile + cumulative-stats screen, pushed from the account menu.
+/// Profile + cumulative-stats screen.
 class MeScreen extends StatefulWidget {
-  const MeScreen({super.key});
+  const MeScreen({super.key, this.showAppBar = true});
+
+  final bool showAppBar;
 
   @override
   State<MeScreen> createState() => _MeScreenState();
@@ -39,7 +41,7 @@ class _MeScreenState extends State<MeScreen> {
     final name = member?.displayName ?? 'stargazer';
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Me')),
+      appBar: widget.showAppBar ? AppBar(title: const Text('Me')) : null,
       body: AsyncView<MemberStats>(
         future: _future,
         onRefresh: _refresh,
