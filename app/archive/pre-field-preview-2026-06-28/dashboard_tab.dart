@@ -9,8 +9,8 @@ import '../widgets/aladin_sky.dart';
 import '../widgets/glass.dart';
 import 'target_detail_screen.dart';
 
-/// "Tonight" — operational observing plan with telescope status, field preview,
-/// active target details, and recent observations grouped into one workspace.
+/// "Tonight" — live mission-control dashboard. No scrolling: a hero stat band
+/// over the Aladin sky, then an asymmetric two-column glass layout.
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key, this.onNavigateToTab});
 
@@ -140,7 +140,6 @@ class _DashboardView extends StatefulWidget {
 class _DashboardViewState extends State<_DashboardView> {
   static const _delays = [0, 180, 300, 420];
   final List<bool> _visible = [false, false, false, false];
-  bool _myObservationsOnly = true;
 
   @override
   void initState() {
@@ -170,18 +169,16 @@ class _DashboardViewState extends State<_DashboardView> {
   Widget build(BuildContext context) {
     final topPad = MediaQuery.of(context).padding.top + kToolbarHeight;
     final bottomPad = MediaQuery.of(context).padding.bottom + 64;
+    final name = context.select<AppState, String>(
+      (s) => s.member?.displayName ?? '',
+    );
+
     final online = widget.data.nodes.where((n) => n.online).length;
     final unread = widget.data.alerts.where((a) => !a.read).length;
     final totalNodes = widget.data.nodes.length;
     final needsAction = widget.data.nodes.where(_nodeNeedsAction).toList();
     final priorityTargets = [...widget.data.targets]
       ..sort((a, b) => b.priority.compareTo(a.priority));
-    final selectedPlan =
-        widget.data.timeline.isEmpty ? null : widget.data.timeline.first;
-    final selectedTarget = _selectedTargetForPlan(
-      selectedPlan,
-      priorityTargets,
-    );
 
     return RefreshIndicator(
       onRefresh: widget.onRefresh,
@@ -192,91 +189,66 @@ class _DashboardViewState extends State<_DashboardView> {
             padding: EdgeInsets.fromLTRB(16, topPad + 12, 16, bottomPad + 18),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
+                _fadeUp(
+                  0,
+                  _TonightBriefHero(
+                    name: name,
+                    online: online,
+                    totalNodes: totalNodes,
+                    obs24h: widget.data.recentObs.length,
+                    unread: unread,
+                    actionCount: needsAction.length,
+                    topTarget: priorityTargets.isEmpty
+                        ? null
+                        : priorityTargets.first,
+                    onAlertsTap: () => widget.onNavigateToTab?.call(3),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    final wide = constraints.maxWidth >= 1040;
-                    final telescopePanel = _fadeUp(
-                      0,
-                      _TelescopeOpsPanel(
+                    final wide = constraints.maxWidth >= 760;
+                    final readiness = _fadeUp(
+                      1,
+                      _ReadinessPanel(
                         nodes: widget.data.nodes,
-                        unread: unread,
+                        alerts: widget.data.alerts,
                         onOpenAlerts: () => widget.onNavigateToTab?.call(3),
                       ),
                     );
-                    final planPanel = _fadeUp(
-                      1,
-                      _ObservingPlanPanel(
+                    final plan = _fadeUp(
+                      2,
+                      _PlanPanel(
                         timeline: widget.data.timeline,
                         targets: priorityTargets,
-                        selectedPlan: selectedPlan,
-                      ),
-                    );
-                    final fieldPreview = _fadeUp(
-                      2,
-                      _FieldPreviewPanel(
-                        plan: selectedPlan,
-                        target: selectedTarget,
-                      ),
-                    );
-                    final targetPanel = _fadeUp(
-                      2,
-                      _SelectedTargetPanel(
-                        plan: selectedPlan,
-                        target: selectedTarget,
-                      ),
-                    );
-                    final observations = _fadeUp(
-                      3,
-                      _RecentObservationsPanel(
-                        obs: widget.data.recentObs,
-                        myObservationsOnly: _myObservationsOnly,
-                        onMyObservationsOnlyChanged: (value) {
-                          setState(() => _myObservationsOnly = value);
-                        },
                       ),
                     );
                     if (!wide) {
                       return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          telescopePanel,
-                          const SizedBox(height: 10),
-                          planPanel,
-                          const SizedBox(height: 10),
-                          fieldPreview,
-                          const SizedBox(height: 10),
-                          targetPanel,
-                          const SizedBox(height: 10),
-                          observations,
+                          readiness,
+                          const SizedBox(height: 12),
+                          plan,
                         ],
                       );
                     }
-                    return Column(
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(width: 260, child: telescopePanel),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  planPanel,
-                                  const SizedBox(height: 10),
-                                  fieldPreview,
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            SizedBox(width: 330, child: targetPanel),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        observations,
+                        Expanded(flex: 44, child: readiness),
+                        const SizedBox(width: 12),
+                        Expanded(flex: 56, child: plan),
                       ],
                     );
                   },
+                ),
+                const SizedBox(height: 12),
+                _fadeUp(
+                  3,
+                  _EvidencePanel(
+                    obs: widget.data.recentObs,
+                    targets: priorityTargets,
+                  ),
                 ),
               ]),
             ),
@@ -287,134 +259,256 @@ class _DashboardViewState extends State<_DashboardView> {
   }
 }
 
-Target? _selectedTargetForPlan(TimelineItem? plan, List<Target> targets) {
-  if (targets.isEmpty) return null;
-  if (plan == null) return targets.first;
-  for (final target in targets) {
-    if (target.targetId == plan.targetId ||
-        target.name.toLowerCase() == plan.target.toLowerCase()) {
-      return target;
-    }
-  }
-  return targets.first;
-}
+bool _nodeNeedsAction(Node node) =>
+    !node.online || node.isSleeping || node.isOnVacation;
 
-class _TelescopeOpsPanel extends StatelessWidget {
-  const _TelescopeOpsPanel({
-    required this.nodes,
+class _TonightBriefHero extends StatelessWidget {
+  const _TonightBriefHero({
+    required this.name,
+    required this.online,
+    required this.totalNodes,
+    required this.obs24h,
     required this.unread,
-    required this.onOpenAlerts,
+    required this.actionCount,
+    required this.topTarget,
+    required this.onAlertsTap,
   });
 
-  final List<Node> nodes;
+  final String name;
+  final int online;
+  final int totalNodes;
+  final int obs24h;
   final int unread;
-  final VoidCallback onOpenAlerts;
+  final int actionCount;
+  final Target? topTarget;
+  final VoidCallback onAlertsTap;
+
+  String get _firstName {
+    final trimmed = name.trim();
+    return trimmed.isEmpty ? '' : trimmed.split(' ').first;
+  }
+
+  String get _headline {
+    if (totalNodes == 0) return 'Connect a telescope to start observing.';
+    if (actionCount > 0) return 'Tonight needs $actionCount check.';
+    if (obs24h > 0) return 'Your network produced data today.';
+    if (online > 0) return 'Your telescopes are ready for tonight.';
+    return 'Your telescopes need attention.';
+  }
+
+  String get _summary {
+    final target = topTarget?.name;
+    if (actionCount > 0) {
+      return 'Resolve the action below before the observing window opens.';
+    }
+    if (target != null && target.isNotEmpty) {
+      return '$target is the highest-priority target in the current queue.';
+    }
+    return 'Nothing urgent is waiting. Check the plan and recent evidence.';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final node = nodes.isEmpty ? null : nodes.first;
-    final online = nodes.where((n) => n.online).length;
-    final selectedLabel = node?.nodeId.isNotEmpty == true
-        ? node!.nodeId
-        : nodes.length > 1
-            ? 'All telescopes'
-            : 'No telescope';
+    final readinessColor = actionCount > 0
+        ? BSTheme.warm
+        : totalNodes > 0 && online == totalNodes
+            ? BSTheme.success
+            : BSTheme.danger;
 
     return _OpsPanel(
+      accent: readinessColor,
       padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _WorkbenchHeader(
-            title: 'Telescope',
-            trailing: '$online/${nodes.length} online',
-            color: online == nodes.length && nodes.isNotEmpty
-                ? BSTheme.success
-                : BSTheme.warm,
+          SizedBox(
+            height: 238,
+            child: _MissionField(
+              accent: readinessColor,
+              alerts: unread,
+              online: online,
+              targets: topTarget == null ? 0 : 1,
+            ),
           ),
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'LIVE SKY CONTROL',
+                            style: TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 2.0,
+                              color: BSTheme.accent,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _headline.toUpperCase(),
+                            style: const TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 34,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0,
+                              height: 1.02,
+                              color: BSTheme.ink,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            _summary,
+                            style: const TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 14,
+                              height: 1.45,
+                              color: BSTheme.ink2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _StatusPill(
+                      label: totalNodes == 0 ? 'SETUP' : '$online/$totalNodes LIVE',
+                      color: readinessColor,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ControlReadout(
+                        label: 'OBS',
+                        value: '$obs24h',
+                        color: BSTheme.sky,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _ControlReadout(
+                        label: 'TARGET',
+                        value: topTarget == null ? '0' : 'LIVE',
+                        color: BSTheme.warm,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _ControlReadout(
+                        label: 'ALERTS',
+                        value: '$unread',
+                        color: unread > 0 ? BSTheme.danger : BSTheme.success,
+                        onTap: onAlertsTap,
+                      ),
+                    ),
+                  ],
+                ),
+                if (topTarget != null) ...[
+                  const SizedBox(height: 14),
+                  _PriorityTrack(target: topTarget!),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MissionField extends StatelessWidget {
+  const _MissionField({
+    required this.accent,
+    required this.alerts,
+    required this.online,
+    required this.targets,
+  });
+
+  final Color accent;
+  final int alerts;
+  final int online;
+  final int targets;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const AladinSky(),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  BSTheme.night.withValues(alpha: 0.18),
+                  BSTheme.night.withValues(alpha: 0.58),
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: accent.withValues(alpha: 0.24)),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
                   children: [
-                    LiveDot(
-                      color: node?.online == true
-                          ? BSTheme.success
-                          : BSTheme.danger,
+                    const Text(
+                      'ALADIN LIVE SKY',
+                      style: TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.8,
+                        color: BSTheme.ink3,
+                      ),
+                    ),
+                    const Spacer(),
+                    _StatusPill(
+                      label: alerts > 0 ? '$alerts ALERTS' : 'CLEAR',
+                      color: alerts > 0 ? BSTheme.danger : accent,
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MiniDatum(label: 'online', value: '$online'),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        selectedLabel,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontFamily: 'Geist',
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: BSTheme.ink,
-                        ),
-                      ),
+                      child: _MiniDatum(label: 'targets', value: '$targets'),
                     ),
-                    Text(
-                      node?.online == true ? 'Online' : 'Offline',
-                      style: TextStyle(
-                        fontFamily: 'Geist',
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: node?.online == true
-                            ? BSTheme.success
-                            : BSTheme.danger,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _MiniDatum(
+                        label: 'state',
+                        value: alerts > 0 ? 'review' : 'ready',
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  node?.location ?? 'Connect a node to begin observing.',
-                  style: const TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 12,
-                    color: BSTheme.ink3,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                _KeyValueLine(
-                  label: 'Status',
-                  value: _nodeStatus(node),
-                  color: node?.online == true ? BSTheme.success : BSTheme.warm,
-                ),
-                _KeyValueLine(
-                  label: 'Mount',
-                  value: node?.online == true ? 'Tracking' : 'Waiting',
-                  color: node?.online == true ? BSTheme.success : BSTheme.ink3,
-                ),
-                _KeyValueLine(
-                  label: 'Dome',
-                  value: node?.online == true ? 'Open' : 'Unknown',
-                  color: node?.online == true ? BSTheme.success : BSTheme.ink3,
-                ),
-                _KeyValueLine(
-                  label: 'Camera',
-                  value: node?.online == true ? '-20.3 °C' : 'Unknown',
-                ),
-                const SizedBox(height: 16),
-                const _SectionLabel('Conditions'),
-                const SizedBox(height: 8),
-                const _KeyValueLine(
-                  label: 'Sky',
-                  value: 'Clear',
-                  color: BSTheme.success,
-                ),
-                const _KeyValueLine(label: 'Seeing', value: '2.1"'),
-                const _KeyValueLine(label: 'Humidity', value: '34%'),
-                const _KeyValueLine(label: 'Moon', value: '12% · 108° away'),
-                const SizedBox(height: 16),
-                GestureDetector(
-                  onTap: onOpenAlerts,
-                  child: _AlertSummary(unread: unread),
-                ),
               ],
             ),
           ),
@@ -424,510 +518,93 @@ class _TelescopeOpsPanel extends StatelessWidget {
   }
 }
 
-class _ObservingPlanPanel extends StatelessWidget {
-  const _ObservingPlanPanel({
-    required this.timeline,
-    required this.targets,
-    required this.selectedPlan,
+class _ControlReadout extends StatelessWidget {
+  const _ControlReadout({
+    required this.label,
+    required this.value,
+    required this.color,
+    this.onTap,
   });
 
-  final List<TimelineItem> timeline;
-  final List<Target> targets;
-  final TimelineItem? selectedPlan;
+  final String label;
+  final String value;
+  final Color color;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final rows = timeline.isNotEmpty ? timeline.take(4).toList() : <TimelineItem>[];
-    final targetFallback = targets.take(4).toList();
-
-    return _OpsPanel(
-      padding: EdgeInsets.zero,
+    final child = Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: BSTheme.night.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: color.withValues(alpha: 0.30)),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _WorkbenchHeader(
-            title: "Tonight's observing plan",
-            subtitle: _tonightRange(),
-            trailing: timeline.isNotEmpty
-                ? '${timeline.length} targets'
-                : '${targetFallback.length} targets',
-          ),
-          const _PlanHeaderRow(),
-          if (rows.isNotEmpty)
-            ...rows.map((item) {
-              return _PlanTimelineRow(
-                item: item,
-                selected: selectedPlan == item,
-              );
-            })
-          else if (targetFallback.isNotEmpty)
-            ...targetFallback.map((target) {
-              return _PlanTargetRow(target: target);
-            })
-          else
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: _EmptyLine('No scheduled assignments yet.'),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FieldPreviewPanel extends StatelessWidget {
-  const _FieldPreviewPanel({required this.plan, required this.target});
-
-  final TimelineItem? plan;
-  final Target? target;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasPointing = plan != null && (plan!.ra != 0 || plan!.dec != 0);
-    final label = plan?.target ?? target?.name ?? 'Next target';
-
-    return _OpsPanel(
-      padding: EdgeInsets.zero,
-      child: SizedBox(
-        height: 300,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _WorkbenchHeader(
-              title: 'Field preview',
-              subtitle: hasPointing ? label : 'Waiting for pointing solution',
-              trailing: hasPointing ? '12° FoV · DSS2' : null,
-            ),
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  AladinSky(
-                    ra: hasPointing ? plan!.ra : null,
-                    dec: hasPointing ? plan!.dec : null,
-                    fov: 12,
-                    targetLabel: label,
-                    drift: !hasPointing,
-                  ),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          BSTheme.night.withValues(alpha: 0.10),
-                          BSTheme.night.withValues(alpha: 0.55),
-                        ],
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                      ),
-                    ),
-                  ),
-                  Center(
-                    child: IgnorePointer(
-                      child: Container(
-                        width: 72,
-                        height: 72,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: BSTheme.sky.withValues(alpha: 0.78),
-                            width: 1.4,
-                          ),
-                        ),
-                        child: Center(
-                          child: Container(
-                            width: 6,
-                            height: 6,
-                            decoration: const BoxDecoration(
-                              color: BSTheme.sky,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 16,
-                    right: 16,
-                    bottom: 14,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            hasPointing
-                                ? 'RA ${_formatRa(plan!.ra)} · Dec ${_formatDec(plan!.dec)}'
-                                : 'The preview will lock to the active target when coordinates are available.',
-                            style: const TextStyle(
-                              fontFamily: 'Geist',
-                              fontSize: 12,
-                              color: BSTheme.ink2,
-                            ),
-                          ),
-                        ),
-                        if (hasPointing)
-                          const Text(
-                            'target overlay',
-                            style: TextStyle(
-                              fontFamily: 'Geist',
-                              fontSize: 11,
-                              color: BSTheme.ink3,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SelectedTargetPanel extends StatelessWidget {
-  const _SelectedTargetPanel({required this.plan, required this.target});
-
-  final TimelineItem? plan;
-  final Target? target;
-
-  @override
-  Widget build(BuildContext context) {
-    final title = plan?.target ?? target?.name ?? 'No target selected';
-    final targetType = target?.targetType.isNotEmpty == true
-        ? target!.targetType
-        : 'Target';
-
-    return _OpsPanel(
-      padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _WorkbenchHeader(title: 'Selected target'),
-          Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                    color: BSTheme.ink,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _programSummary(target, targetType),
-                  style: const TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 13,
-                    color: BSTheme.ink3,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const _SectionLabel('Coordinates'),
-                const SizedBox(height: 8),
-                _KeyValueLine(
-                  label: 'RA',
-                  value: plan == null ? '—' : _formatRa(plan!.ra),
-                ),
-                _KeyValueLine(
-                  label: 'Dec',
-                  value: plan == null ? '—' : _formatDec(plan!.dec),
-                ),
-                _KeyValueLine(
-                  label: 'Magnitude',
-                  value: target?.mag == null
-                      ? '—'
-                      : '${target!.mag!.toStringAsFixed(2)} ${target!.magBand}',
-                ),
-                const SizedBox(height: 16),
-                const _SectionLabel('Transit event'),
-                const SizedBox(height: 8),
-                _KeyValueLine(label: 'Start', value: plan?.startTime ?? '—'),
-                _KeyValueLine(
-                  label: 'Exposure',
-                  value: plan == null
-                      ? '—'
-                      : '${plan!.expDur.toStringAsFixed(0)} s',
-                ),
-                _KeyValueLine(
-                  label: 'Images',
-                  value: plan == null ? '—' : '${plan!.expCount}',
-                ),
-                _KeyValueLine(
-                  label: 'Filter',
-                  value: plan?.filter.isNotEmpty == true
-                      ? plan!.filter.toUpperCase()
-                      : '—',
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RecentObservationsPanel extends StatelessWidget {
-  const _RecentObservationsPanel({
-    required this.obs,
-    required this.myObservationsOnly,
-    required this.onMyObservationsOnlyChanged,
-  });
-
-  final List<Observation> obs;
-  final bool myObservationsOnly;
-  final ValueChanged<bool> onMyObservationsOnlyChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _OpsPanel(
-      padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _WorkbenchHeader(
-            title: 'Recent observations',
-            subtitle: myObservationsOnly ? 'My observations' : 'All observations',
-            trailingWidget: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Checkbox(
-                  value: myObservationsOnly,
-                  onChanged: (value) =>
-                      onMyObservationsOnlyChanged(value ?? true),
-                  visualDensity: VisualDensity.compact,
-                  side: const BorderSide(color: BSTheme.glassBorder),
-                  activeColor: BSTheme.accent,
-                ),
-                const Text(
-                  'My observations only',
-                  style: TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 12,
-                    color: BSTheme.ink2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const _ObservationHeaderRow(),
-          if (obs.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: _EmptyLine('No measurements yet today.'),
-            )
-          else
-            ...obs.take(6).map((o) => _ObservationTableRow(obs: o)),
-        ],
-      ),
-    );
-  }
-}
-
-class _WorkbenchHeader extends StatelessWidget {
-  const _WorkbenchHeader({
-    required this.title,
-    this.subtitle,
-    this.trailing,
-    this.trailingWidget,
-    this.color,
-  });
-
-  final String title;
-  final String? subtitle;
-  final String? trailing;
-  final Widget? trailingWidget;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: const BoxDecoration(
-        color: BSTheme.surface2,
-        border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
-      ),
-      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            title,
+            label,
             style: const TextStyle(
               fontFamily: 'Geist',
-              fontSize: 15,
+              fontSize: 10,
               fontWeight: FontWeight.w900,
-              color: BSTheme.ink,
+              letterSpacing: 1.0,
+              color: BSTheme.ink3,
             ),
           ),
-          if (subtitle != null) ...[
-            const SizedBox(width: 10),
-            Text(
-              subtitle!,
-              style: const TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 12,
-                color: BSTheme.ink3,
-              ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              color: color,
             ),
-          ],
-          const Spacer(),
-          if (trailingWidget != null)
-            trailingWidget!
-          else if (trailing != null)
-            Text(
-              trailing!,
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: color ?? BSTheme.ink3,
-              ),
-            ),
+          ),
         ],
       ),
     );
+    if (onTap == null) return child;
+    return GestureDetector(onTap: onTap, child: child);
   }
 }
 
-class _PlanHeaderRow extends StatelessWidget {
-  const _PlanHeaderRow();
+class _MiniDatum extends StatelessWidget {
+  const _MiniDatum({required this.label, required this.value});
+
+  final String label;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
-        color: BSTheme.night,
-        border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
-      ),
-      child: const Row(
-        children: [
-          SizedBox(width: 20),
-          Expanded(flex: 42, child: _TableHeaderText('Target')),
-          Expanded(flex: 18, child: _TableHeaderText('Type')),
-          Expanded(flex: 24, child: _TableHeaderText('Window (UTC)')),
-          Expanded(flex: 16, child: _TableHeaderText('Status')),
-        ],
-      ),
-    );
-  }
-}
-
-class _PlanTimelineRow extends StatelessWidget {
-  const _PlanTimelineRow({required this.item, required this.selected});
-
-  final TimelineItem item;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final duration = item.estimatedMinutes;
-    final status = selected ? 'In progress' : 'Pending';
-    return Container(
-      minHeight: selected ? 96 : 72,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.all(9),
       decoration: BoxDecoration(
-        color: selected ? BSTheme.sky.withValues(alpha: 0.08) : BSTheme.surface,
-        border: const Border(bottom: BorderSide(color: BSTheme.glassBorder)),
+        color: BSTheme.night.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: BSTheme.ink.withValues(alpha: 0.10)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 20,
-            child: LiveDot(
-              color: selected ? BSTheme.sky : BSTheme.ink3,
-              size: selected ? 7 : 5,
+          Text(
+            label,
+            style: const TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 9,
+              color: BSTheme.ink3,
             ),
           ),
-          Expanded(
-            flex: 42,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.target.isEmpty ? 'Scheduled target' : item.target,
-                  style: const TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    color: BSTheme.ink,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '${item.expCount} images · ${item.expDur.toStringAsFixed(0)}s · ${item.filter.isEmpty ? 'open' : item.filter.toUpperCase()}',
-                  style: const TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 12,
-                    color: BSTheme.ink3,
-                  ),
-                ),
-                if (selected) ...[
-                  const SizedBox(height: 10),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      minHeight: 3,
-                      value: 0.28,
-                      backgroundColor: BSTheme.glassBorder,
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(BSTheme.sky),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${duration.toStringAsFixed(0)} min planned · target overlay active',
-                    style: const TextStyle(
-                      fontFamily: 'Geist',
-                      fontSize: 11,
-                      color: BSTheme.ink3,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const Expanded(
-            flex: 18,
-            child: Text(
-              'Transit',
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 13,
-                color: BSTheme.ink2,
-              ),
-            ),
-          ),
-          Expanded(
-            flex: 24,
-            child: Text(
-              item.startTime.isEmpty ? '—' : item.startTime,
-              style: const TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: BSTheme.ink,
-              ),
-            ),
-          ),
-          Expanded(
-            flex: 16,
-            child: Text(
-              status,
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: selected ? BSTheme.sky : BSTheme.ink3,
-              ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              color: BSTheme.ink2,
             ),
           ),
         ],
@@ -936,8 +613,8 @@ class _PlanTimelineRow extends StatelessWidget {
   }
 }
 
-class _PlanTargetRow extends StatelessWidget {
-  const _PlanTargetRow({required this.target});
+class _PriorityTrack extends StatelessWidget {
+  const _PriorityTrack({required this.target});
 
   final Target target;
 
@@ -945,214 +622,43 @@ class _PlanTargetRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final priority = (target.priority * 100).clamp(0, 100).round();
     return Container(
-      minHeight: 72,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      decoration: const BoxDecoration(
-        color: BSTheme.surface,
-        border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: BSTheme.night.withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: BSTheme.ink.withValues(alpha: 0.12)),
       ),
       child: Row(
         children: [
-          const SizedBox(width: 20, child: LiveDot(color: BSTheme.ink3, size: 5)),
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: BSTheme.warm,
+            ),
+          ),
+          const SizedBox(width: 8),
           Expanded(
-            flex: 42,
             child: Text(
               target.name,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontFamily: 'Geist',
-                fontSize: 15,
+                fontSize: 12,
                 fontWeight: FontWeight.w900,
                 color: BSTheme.ink,
               ),
             ),
           ),
-          Expanded(
-            flex: 18,
-            child: Text(
-              target.targetType.isEmpty ? 'Target' : target.targetType,
-              style: const TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 13,
-                color: BSTheme.ink2,
-              ),
-            ),
-          ),
-          const Expanded(
-            flex: 24,
-            child: Text(
-              'Pending',
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 13,
-                color: BSTheme.ink3,
-              ),
-            ),
-          ),
-          Expanded(
-            flex: 16,
-            child: Text(
-              'P$priority',
-              style: const TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 13,
-                color: BSTheme.ink3,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ObservationHeaderRow extends StatelessWidget {
-  const _ObservationHeaderRow();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
-        color: BSTheme.night,
-        border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
-      ),
-      child: const Row(
-        children: [
-          Expanded(flex: 18, child: _TableHeaderText('Received')),
-          Expanded(flex: 28, child: _TableHeaderText('Target')),
-          Expanded(flex: 15, child: _TableHeaderText('Filter')),
-          Expanded(flex: 16, child: _TableHeaderText('Magnitude')),
-          Expanded(flex: 23, child: _TableHeaderText('Result')),
-        ],
-      ),
-    );
-  }
-}
-
-class _ObservationTableRow extends StatelessWidget {
-  const _ObservationTableRow({required this.obs});
-
-  final Observation obs;
-
-  @override
-  Widget build(BuildContext context) {
-    final result = obs.aavsoSubmitted ? 'Submitted' : 'Measured';
-    return Container(
-      minHeight: 58,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      decoration: const BoxDecoration(
-        color: BSTheme.surface,
-        border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
-      ),
-      child: Row(
-        children: [
-          Expanded(flex: 18, child: _TableText(_shortDate(obs.receivedAt))),
-          Expanded(
-            flex: 28,
-            child: _TableText(obs.targetName, strong: true),
-          ),
-          Expanded(
-            flex: 15,
-            child: _TableText(obs.filter.isEmpty ? 'CV' : obs.filter),
-          ),
-          Expanded(
-            flex: 16,
-            child: _TableText(obs.magnitude.toStringAsFixed(3)),
-          ),
-          Expanded(
-            flex: 23,
-            child: Text(
-              result,
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: obs.aavsoSubmitted ? BSTheme.success : BSTheme.warm,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TableHeaderText extends StatelessWidget {
-  const _TableHeaderText(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      overflow: TextOverflow.ellipsis,
-      style: const TextStyle(
-        fontFamily: 'Geist',
-        fontSize: 11,
-        fontWeight: FontWeight.w800,
-        color: BSTheme.ink3,
-      ),
-    );
-  }
-}
-
-class _TableText extends StatelessWidget {
-  const _TableText(this.text, {this.strong = false});
-
-  final String text;
-  final bool strong;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        fontFamily: 'Geist',
-        fontSize: 13,
-        fontWeight: strong ? FontWeight.w800 : FontWeight.w500,
-        color: strong ? BSTheme.ink : BSTheme.ink2,
-      ),
-    );
-  }
-}
-
-class _KeyValueLine extends StatelessWidget {
-  const _KeyValueLine({
-    required this.label,
-    required this.value,
-    this.color,
-  });
-
-  final String label;
-  final String value;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 12,
-                color: BSTheme.ink3,
-              ),
-            ),
-          ),
+          const SizedBox(width: 8),
           Text(
-            value,
-            style: TextStyle(
+            '$priority',
+            style: const TextStyle(
               fontFamily: 'Geist',
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: color ?? BSTheme.ink2,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              color: BSTheme.ink3,
             ),
           ),
         ],
@@ -1160,95 +666,6 @@ class _KeyValueLine extends StatelessWidget {
     );
   }
 }
-
-class _AlertSummary extends StatelessWidget {
-  const _AlertSummary({required this.unread});
-
-  final int unread;
-
-  @override
-  Widget build(BuildContext context) {
-    final clear = unread == 0;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: (clear ? BSTheme.success : BSTheme.danger)
-            .withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-          color: (clear ? BSTheme.success : BSTheme.danger)
-              .withValues(alpha: 0.24),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              clear ? 'All systems nominal.' : '$unread alerts need review.',
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 12,
-                color: clear ? BSTheme.ink3 : BSTheme.ink,
-              ),
-            ),
-          ),
-          _StatusPill(
-            label: clear ? '0 active' : '$unread active',
-            color: clear ? BSTheme.success : BSTheme.danger,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-String _nodeStatus(Node? node) {
-  if (node == null) return 'Not connected';
-  if (!node.online) return 'Offline';
-  if (node.isSleeping) return 'Sleeping';
-  if (node.isOnVacation) return 'Vacation';
-  return 'Observing';
-}
-
-String _tonightRange() {
-  final now = DateTime.now();
-  final tomorrow = now.add(const Duration(days: 1));
-  return '${DateFormat.MMMd().format(now)} – ${DateFormat.MMMd().format(tomorrow)}';
-}
-
-String _formatRa(double raDeg) {
-  final totalSeconds = (raDeg / 15.0 * 3600).round();
-  final hours = (totalSeconds ~/ 3600) % 24;
-  final minutes = (totalSeconds % 3600) ~/ 60;
-  final seconds = totalSeconds % 60;
-  return '${hours}h ${minutes.toString().padLeft(2, '0')}m ${seconds.toString().padLeft(2, '0')}s';
-}
-
-String _formatDec(double decDeg) {
-  final sign = decDeg < 0 ? '-' : '+';
-  final abs = decDeg.abs();
-  final degrees = abs.floor();
-  final totalMinutes = ((abs - degrees) * 60).round();
-  final minutes = totalMinutes % 60;
-  final carry = totalMinutes ~/ 60;
-  return '$sign${(degrees + carry).toString().padLeft(2, '0')}° ${minutes.toString().padLeft(2, '0')}′';
-}
-
-String _programSummary(Target? target, String fallbackType) {
-  if (target == null) return fallbackType;
-  final program = target.scienceProgram.replaceAll('_', ' ');
-  if (program.isEmpty) return fallbackType;
-  return '$fallbackType · $program';
-}
-
-String _shortDate(String value) {
-  final parsed = DateTime.tryParse(value);
-  if (parsed == null) return value.isEmpty ? '—' : value;
-  return DateFormat.MMMd().add_Hm().format(parsed.toLocal());
-}
-
-bool _nodeNeedsAction(Node node) =>
-    !node.online || node.isSleeping || node.isOnVacation;
 
 class _ReadinessPanel extends StatelessWidget {
   const _ReadinessPanel({

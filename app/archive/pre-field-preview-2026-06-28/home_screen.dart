@@ -13,8 +13,9 @@ import 'dashboard_tab.dart';
 import 'me_screen.dart';
 import 'nodes_tab.dart';
 import 'notifications_tab.dart';
+import 'observations_tab.dart';
 
-/// The signed-in shell: operational workspace with alerts in the top bar.
+/// The signed-in shell: Aladin sky behind every tab, frosted-glass chrome.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -29,34 +30,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final tab = state.takePendingTab();
     if (tab == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (tab >= _tabs.length) {
-        _showAlertsSheet();
-        return;
-      }
-      if (tab != _index) setState(() => _index = tab);
+      if (mounted && tab != _index) setState(() => _index = tab);
     });
-  }
-
-  Future<void> _showAlertsSheet() async {
-    context.read<AppState>().refreshUnreadNotifications();
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: BSTheme.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: const BorderSide(color: BSTheme.glassBorder),
-          ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
-            child: const NotificationsTab(),
-          ),
-        );
-      },
-    );
-    if (mounted) context.read<AppState>().refreshUnreadNotifications();
   }
 
   static const _tabs = [
@@ -65,6 +40,16 @@ class _HomeScreenState extends State<HomeScreen> {
       title: 'Telescopes',
       icon: Icons.satellite_alt_outlined,
       sel: Icons.satellite_alt
+    ),
+    (
+      title: 'Observations',
+      icon: Icons.show_chart_outlined,
+      sel: Icons.show_chart
+    ),
+    (
+      title: 'Alerts',
+      icon: Icons.notifications_outlined,
+      sel: Icons.notifications
     ),
   ];
 
@@ -89,15 +74,26 @@ class _HomeScreenState extends State<HomeScreen> {
     final name = state.member?.displayName ?? '';
 
     final pages = [
-      DashboardTab(onNavigateToTab: (_) => _showAlertsSheet()),
+      DashboardTab(onNavigateToTab: (i) => setState(() => _index = i)),
       const NodesTab(),
+      const ObservationsTab(),
+      const NotificationsTab(),
     ];
 
     return Stack(
       children: [
+        // Live sky or painted glow background — shared by every tab.
         Positioned.fill(
-          child: Container(color: BSTheme.night),
+          child: kIsWeb
+              ? const AladinSky()
+              : CustomPaint(painter: _NightGlowPainter()),
         ),
+        // Dark veil — heavier than login so content stays readable.
+        Positioned.fill(
+          child: Container(color: const Color(0xEE030404)),
+        ),
+        // Film grain — organic texture over everything.
+        const Positioned.fill(child: GrainOverlay()),
         Scaffold(
           backgroundColor: Colors.transparent,
           extendBodyBehindAppBar: true,
@@ -138,29 +134,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             actions: [
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: IconButton(
-                  tooltip: 'Alerts',
-                  onPressed: _showAlertsSheet,
-                  icon: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      const Icon(Icons.notifications_none, color: BSTheme.ink2),
-                      if (state.unreadNotifications > 0)
-                        Positioned(
-                          right: -2,
-                          top: -2,
-                          child: _UnreadBadge(
-                            text: state.unreadNotifications > 9
-                                ? '9+'
-                                : '${state.unreadNotifications}',
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
               Padding(
                 padding: const EdgeInsets.only(right: 16),
                 child: PopupMenuButton<String>(
@@ -228,6 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     nodesReady: state.hasNode,
                     onSelect: (i) {
                       setState(() => _index = i);
+                      if (i == 3) state.refreshUnreadNotifications();
                     },
                   ),
                   Expanded(child: content),
@@ -259,17 +233,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: List.generate(_tabs.length, (i) {
                             final selected = _index == i;
                             final tab = _tabs[i];
+                            final showBadge =
+                                i == 3 && state.unreadNotifications > 0;
                             return Expanded(
                               child: _BottomNavItem(
                                 selected: selected,
                                 title: tab.title,
                                 icon: selected ? tab.sel : tab.icon,
-                                showBadge: false,
+                                showBadge: showBadge,
                                 badgeText: state.unreadNotifications > 9
                                     ? '9+'
                                     : '${state.unreadNotifications}',
                                 onTap: () {
                                   setState(() => _index = i);
+                                  if (i == 3) {
+                                    state.refreshUnreadNotifications();
+                                  }
                                 },
                               ),
                             );
