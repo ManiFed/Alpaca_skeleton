@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
+import '../widgets/aladin_sky.dart';
 import '../widgets/glass.dart';
 import 'target_detail_screen.dart';
 
@@ -188,24 +189,25 @@ class _DashboardViewState extends State<_DashboardView> {
             padding: EdgeInsets.fromLTRB(16, topPad + 12, 16, bottomPad + 18),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
+                _fadeUp(
+                  0,
+                  _TonightBriefHero(
+                    name: name,
+                    online: online,
+                    totalNodes: totalNodes,
+                    obs24h: widget.data.recentObs.length,
+                    unread: unread,
+                    actionCount: needsAction.length,
+                    topTarget: priorityTargets.isEmpty
+                        ? null
+                        : priorityTargets.first,
+                    onAlertsTap: () => widget.onNavigateToTab?.call(3),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    final wide = constraints.maxWidth >= 1040;
-                    final hero = _fadeUp(
-                      0,
-                      _TonightBriefHero(
-                        name: name,
-                        online: online,
-                        totalNodes: totalNodes,
-                        obs24h: widget.data.recentObs.length,
-                        unread: unread,
-                        actionCount: needsAction.length,
-                        topTarget: priorityTargets.isEmpty
-                            ? null
-                            : priorityTargets.first,
-                        onAlertsTap: () => widget.onNavigateToTab?.call(3),
-                      ),
-                    );
+                    final wide = constraints.maxWidth >= 760;
                     final readiness = _fadeUp(
                       1,
                       _ReadinessPanel(
@@ -214,75 +216,39 @@ class _DashboardViewState extends State<_DashboardView> {
                         onOpenAlerts: () => widget.onNavigateToTab?.call(3),
                       ),
                     );
-                    final inspector = _fadeUp(
+                    final plan = _fadeUp(
                       2,
-                      _InspectorPanel(
+                      _PlanPanel(
                         timeline: widget.data.timeline,
                         targets: priorityTargets,
-                        topTarget: priorityTargets.isEmpty
-                            ? null
-                            : priorityTargets.first,
                       ),
                     );
                     if (!wide) {
                       return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          hero,
-                          const SizedBox(height: 10),
                           readiness,
-                          const SizedBox(height: 10),
-                          inspector,
-                          const SizedBox(height: 10),
-                          _fadeUp(
-                            3,
-                            _EvidencePanel(
-                              obs: widget.data.recentObs,
-                              targets: priorityTargets,
-                            ),
-                          ),
+                          const SizedBox(height: 12),
+                          plan,
                         ],
                       );
                     }
                     return Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          width: 210,
-                          child: _fadeUp(
-                            0,
-                            _WorkbenchExplorer(
-                              selected: 'Tonight.md',
-                              unread: unread,
-                              nodes: widget.data.nodes.length,
-                              targets: priorityTargets.length,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              hero,
-                              const SizedBox(height: 10),
-                              readiness,
-                              const SizedBox(height: 10),
-                              _fadeUp(
-                                3,
-                                _EvidencePanel(
-                                  obs: widget.data.recentObs,
-                                  targets: priorityTargets,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        SizedBox(width: 320, child: inspector),
+                        Expanded(flex: 44, child: readiness),
+                        const SizedBox(width: 12),
+                        Expanded(flex: 56, child: plan),
                       ],
                     );
                   },
+                ),
+                const SizedBox(height: 12),
+                _fadeUp(
+                  3,
+                  _EvidencePanel(
+                    obs: widget.data.recentObs,
+                    targets: priorityTargets,
+                  ),
                 ),
               ]),
             ),
@@ -350,33 +316,18 @@ class _TonightBriefHero extends StatelessWidget {
             : BSTheme.danger;
 
     return _OpsPanel(
+      accent: readinessColor,
       padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            height: 34,
-            decoration: const BoxDecoration(
-              color: BSTheme.surface2,
-              border: Border(
-                bottom: BorderSide(color: BSTheme.glassBorder),
-              ),
-            ),
-            child: Row(
-              children: const [
-                SizedBox(width: 10),
-                Icon(Icons.description_outlined, size: 15, color: BSTheme.ink3),
-                SizedBox(width: 7),
-                Text(
-                  'Tonight.md',
-                  style: TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: BSTheme.ink,
-                  ),
-                ),
-              ],
+          SizedBox(
+            height: 238,
+            child: _MissionField(
+              accent: readinessColor,
+              alerts: unread,
+              online: online,
+              targets: topTarget == null ? 0 : 1,
             ),
           ),
           Padding(
@@ -391,27 +342,25 @@ class _TonightBriefHero extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            _firstName.isEmpty
-                                ? 'workspace / tonight'
-                                : 'workspace / ${_firstName.toLowerCase()} / tonight',
+                          const Text(
+                            'LIVE SKY CONTROL',
                             style: TextStyle(
                               fontFamily: 'Geist',
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0,
-                              color: BSTheme.ink3,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 2.0,
+                              color: BSTheme.accent,
                             ),
                           ),
-                          const SizedBox(height: 6),
+                          const SizedBox(height: 8),
                           Text(
-                            _headline,
+                            _headline.toUpperCase(),
                             style: const TextStyle(
                               fontFamily: 'Geist',
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
+                              fontSize: 34,
+                              fontWeight: FontWeight.w900,
                               letterSpacing: 0,
-                              height: 1.1,
+                              height: 1.02,
                               color: BSTheme.ink,
                             ),
                           ),
@@ -430,17 +379,17 @@ class _TonightBriefHero extends StatelessWidget {
                     ),
                     const SizedBox(width: 12),
                     _StatusPill(
-                      label: totalNodes == 0 ? 'setup' : '$online/$totalNodes online',
+                      label: totalNodes == 0 ? 'SETUP' : '$online/$totalNodes LIVE',
                       color: readinessColor,
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 18),
                 Row(
                   children: [
                     Expanded(
                       child: _ControlReadout(
-                        label: 'observations',
+                        label: 'OBS',
                         value: '$obs24h',
                         color: BSTheme.sky,
                       ),
@@ -448,15 +397,15 @@ class _TonightBriefHero extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: _ControlReadout(
-                        label: 'queue',
-                        value: topTarget == null ? '0' : 'active',
+                        label: 'TARGET',
+                        value: topTarget == null ? '0' : 'LIVE',
                         color: BSTheme.warm,
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: _ControlReadout(
-                        label: 'alerts',
+                        label: 'ALERTS',
                         value: '$unread',
                         color: unread > 0 ? BSTheme.danger : BSTheme.success,
                         onTap: onAlertsTap,
@@ -477,125 +426,92 @@ class _TonightBriefHero extends StatelessWidget {
   }
 }
 
-class _WorkbenchExplorer extends StatelessWidget {
-  const _WorkbenchExplorer({
-    required this.selected,
-    required this.unread,
-    required this.nodes,
+class _MissionField extends StatelessWidget {
+  const _MissionField({
+    required this.accent,
+    required this.alerts,
+    required this.online,
     required this.targets,
   });
 
-  final String selected;
-  final int unread;
-  final int nodes;
+  final Color accent;
+  final int alerts;
+  final int online;
   final int targets;
 
   @override
   Widget build(BuildContext context) {
-    return _OpsPanel(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              'EXPLORER',
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.8,
-                color: BSTheme.ink3,
+          const AladinSky(),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  BSTheme.night.withValues(alpha: 0.18),
+                  BSTheme.night.withValues(alpha: 0.58),
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          _ExplorerRow(
-            icon: Icons.description_outlined,
-            label: 'Tonight.md',
-            selected: selected == 'Tonight.md',
-          ),
-          _ExplorerRow(
-            icon: Icons.table_chart_outlined,
-            label: 'Queue',
-            meta: '$targets',
-          ),
-          _ExplorerRow(
-            icon: Icons.settings_input_component_outlined,
-            label: 'Nodes',
-            meta: '$nodes',
-          ),
-          _ExplorerRow(
-            icon: Icons.show_chart_outlined,
-            label: 'Observations',
-          ),
-          _ExplorerRow(
-            icon: Icons.notifications_none_outlined,
-            label: 'Alerts',
-            meta: unread == 0 ? null : '$unread',
-            color: unread == 0 ? null : BSTheme.danger,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ExplorerRow extends StatelessWidget {
-  const _ExplorerRow({
-    required this.icon,
-    required this.label,
-    this.selected = false,
-    this.meta,
-    this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final String? meta;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final rowColor = color ?? (selected ? BSTheme.ink : BSTheme.ink2);
-    return Container(
-      height: 30,
-      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: selected ? BSTheme.surface2 : Colors.transparent,
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(
-          color: selected ? BSTheme.glassBorder : Colors.transparent,
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 15, color: rowColor),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                color: rowColor,
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: accent.withValues(alpha: 0.24)),
               ),
             ),
           ),
-          if (meta != null)
-            Text(
-              meta!,
-              style: TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 11,
-                color: color ?? BSTheme.ink3,
-              ),
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'ALADIN LIVE SKY',
+                      style: TextStyle(
+                        fontFamily: 'Geist',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.8,
+                        color: BSTheme.ink3,
+                      ),
+                    ),
+                    const Spacer(),
+                    _StatusPill(
+                      label: alerts > 0 ? '$alerts ALERTS' : 'CLEAR',
+                      color: alerts > 0 ? BSTheme.danger : accent,
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MiniDatum(label: 'online', value: '$online'),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _MiniDatum(label: 'targets', value: '$targets'),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _MiniDatum(
+                        label: 'state',
+                        value: alerts > 0 ? 'review' : 'ready',
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
+          ),
         ],
       ),
     );
@@ -632,8 +548,8 @@ class _ControlReadout extends StatelessWidget {
             style: const TextStyle(
               fontFamily: 'Geist',
               fontSize: 10,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.0,
               color: BSTheme.ink3,
             ),
           ),
@@ -642,9 +558,9 @@ class _ControlReadout extends StatelessWidget {
             value,
             style: TextStyle(
               fontFamily: 'Geist',
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-              color: BSTheme.ink,
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              color: color,
             ),
           ),
         ],
@@ -652,6 +568,48 @@ class _ControlReadout extends StatelessWidget {
     );
     if (onTap == null) return child;
     return GestureDetector(onTap: onTap, child: child);
+  }
+}
+
+class _MiniDatum extends StatelessWidget {
+  const _MiniDatum({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: BSTheme.night.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: BSTheme.ink.withValues(alpha: 0.10)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 9,
+              color: BSTheme.ink3,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              color: BSTheme.ink2,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -688,7 +646,7 @@ class _PriorityTrack extends StatelessWidget {
               style: const TextStyle(
                 fontFamily: 'Geist',
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w900,
                 color: BSTheme.ink,
               ),
             ),
@@ -699,7 +657,7 @@ class _PriorityTrack extends StatelessWidget {
             style: const TextStyle(
               fontFamily: 'Geist',
               fontSize: 11,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w900,
               color: BSTheme.ink3,
             ),
           ),
@@ -774,16 +732,11 @@ class _ReadinessPanel extends StatelessWidget {
   }
 }
 
-class _InspectorPanel extends StatelessWidget {
-  const _InspectorPanel({
-    required this.timeline,
-    required this.targets,
-    required this.topTarget,
-  });
+class _PlanPanel extends StatelessWidget {
+  const _PlanPanel({required this.timeline, required this.targets});
 
   final List<TimelineItem> timeline;
   final List<Target> targets;
-  final Target? topTarget;
 
   @override
   Widget build(BuildContext context) {
@@ -793,26 +746,12 @@ class _InspectorPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _PanelHeader(
-            label: 'INSPECTOR',
-            title: topTarget?.name ?? 'No target selected',
-            icon: Icons.manage_search_outlined,
+          const _PanelHeader(
+            label: 'PLAN',
+            title: 'What the network will try',
+            icon: Icons.route_outlined,
           ),
           const SizedBox(height: 12),
-          if (topTarget != null) ...[
-            _InspectorDatum(label: 'Program', value: _programLabel(topTarget!.scienceProgram)),
-            _InspectorDatum(
-              label: 'Priority',
-              value: '${(topTarget!.priority * 100).clamp(0, 100).round()}',
-            ),
-            _InspectorDatum(
-              label: 'Measurements',
-              value: '${topTarget!.nMeasurements}',
-            ),
-            const SizedBox(height: 12),
-          ],
-          const _SectionLabel('Queue'),
-          const SizedBox(height: 8),
           if (planItems.isEmpty)
             ...targets.take(3).map((target) => _TargetIntentRow(target: target))
           else
@@ -820,78 +759,6 @@ class _InspectorPanel extends StatelessWidget {
           if (planItems.isEmpty && targets.isEmpty)
             const _EmptyLine('No scheduled assignments yet.'),
         ],
-      ),
-    );
-  }
-}
-
-String _programLabel(String program) {
-  return switch (program) {
-    'exoplanet_transits' => 'Exoplanet transit',
-    'transient_follow_up' => 'Transient follow-up',
-    'variable_stars' => 'Variable star',
-    '' => 'Unspecified',
-    _ => program.replaceAll('_', ' '),
-  };
-}
-
-class _InspectorDatum extends StatelessWidget {
-  const _InspectorDatum({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 32,
-      decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: BSTheme.glassBorder),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                fontFamily: 'Geist',
-                fontSize: 12,
-                color: BSTheme.ink3,
-              ),
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(
-              fontFamily: 'Geist',
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: BSTheme.ink,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontFamily: 'Geist',
-        fontSize: 10,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.8,
-        color: BSTheme.ink3,
       ),
     );
   }
@@ -949,22 +816,85 @@ class _OpsPanel extends StatelessWidget {
   const _OpsPanel({
     required this.child,
     this.padding = const EdgeInsets.all(16),
+    this.accent = BSTheme.accent,
   });
 
   final Widget child;
   final EdgeInsets padding;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: BSTheme.surface,
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: BSTheme.glassBorder),
-      ),
-      child: child,
+    return Stack(
+      children: [
+        Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            color: BSTheme.surface.withValues(alpha: 0.88),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: accent.withValues(alpha: 0.24)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x73000000),
+                blurRadius: 22,
+                offset: Offset(0, 13),
+              ),
+            ],
+          ),
+          child: child,
+        ),
+        Positioned(
+          left: 0,
+          top: 0,
+          child: _CornerMark(color: accent),
+        ),
+        Positioned(
+          right: 0,
+          bottom: 0,
+          child: Transform.rotate(
+            angle: 3.14159,
+            child: _CornerMark(color: accent),
+          ),
+        ),
+      ],
     );
+  }
+}
+
+class _CornerMark extends StatelessWidget {
+  const _CornerMark({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: CustomPaint(
+        size: const Size(22, 22),
+        painter: _CornerMarkPainter(color: color),
+      ),
+    );
+  }
+}
+
+class _CornerMarkPainter extends CustomPainter {
+  const _CornerMarkPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.72)
+      ..strokeWidth = 1.6
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(Offset.zero, Offset(size.width, 0), paint);
+    canvas.drawLine(Offset.zero, Offset(0, size.height), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CornerMarkPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
 
@@ -1005,8 +935,8 @@ class _PanelHeader extends StatelessWidget {
                 style: const TextStyle(
                   fontFamily: 'Geist',
                   fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.8,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.2,
                   color: BSTheme.ink3,
                 ),
               ),
@@ -1016,7 +946,7 @@ class _PanelHeader extends StatelessWidget {
                 style: const TextStyle(
                   fontFamily: 'Geist',
                   fontSize: 16,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w900,
                   letterSpacing: 0,
                   color: BSTheme.ink,
                 ),
