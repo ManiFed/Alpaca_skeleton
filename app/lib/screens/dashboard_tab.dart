@@ -793,7 +793,7 @@ class _InspectorPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _PanelHeader(
+          _PanelHeader(
             label: 'INSPECTOR',
             title: topTarget?.name ?? 'No target selected',
             icon: Icons.manage_search_outlined,
