@@ -400,7 +400,7 @@ class _TelescopeOpsPanel extends StatelessWidget {
                   value: node?.online == true ? '-20.3 °C' : 'Unknown',
                 ),
                 const SizedBox(height: 16),
-                const _SectionLabel('Conditions'),
+                _SectionLabel('Conditions'),
                 const SizedBox(height: 8),
                 const _KeyValueLine(
                   label: 'Sky',
@@ -629,7 +629,7 @@ class _SelectedTargetPanel extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 18),
-                const _SectionLabel('Coordinates'),
+                _SectionLabel('Coordinates'),
                 const SizedBox(height: 8),
                 _KeyValueLine(
                   label: 'RA',
@@ -646,7 +646,7 @@ class _SelectedTargetPanel extends StatelessWidget {
                       : '${target!.mag!.toStringAsFixed(2)} ${target!.magBand}',
                 ),
                 const SizedBox(height: 16),
-                const _SectionLabel('Transit event'),
+                _SectionLabel('Transit event'),
                 const SizedBox(height: 8),
                 _KeyValueLine(label: 'Start', value: plan?.startTime ?? '—'),
                 _KeyValueLine(
@@ -832,7 +832,7 @@ class _PlanTimelineRow extends StatelessWidget {
     final duration = item.estimatedMinutes;
     final status = selected ? 'In progress' : 'Pending';
     return Container(
-      minHeight: selected ? 96 : 72,
+      constraints: BoxConstraints(minHeight: selected ? 96 : 72),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(
         color: selected ? BSTheme.sky.withValues(alpha: 0.08) : BSTheme.surface,
@@ -945,7 +945,7 @@ class _PlanTargetRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final priority = (target.priority * 100).clamp(0, 100).round();
     return Container(
-      minHeight: 72,
+      constraints: const BoxConstraints(minHeight: 72),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: const BoxDecoration(
         color: BSTheme.surface,
@@ -1039,7 +1039,7 @@ class _ObservationTableRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final result = obs.aavsoSubmitted ? 'Submitted' : 'Measured';
     return Container(
-      minHeight: 58,
+      constraints: const BoxConstraints(minHeight: 58),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       decoration: const BoxDecoration(
         color: BSTheme.surface,
