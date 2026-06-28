@@ -15,7 +15,7 @@ import 'nodes_tab.dart';
 import 'notifications_tab.dart';
 import 'observations_tab.dart';
 
-/// The signed-in shell: IDE-style workbench around telescope operations.
+/// The signed-in shell: Aladin sky behind every tab, frosted-glass chrome.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -82,9 +82,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Stack(
       children: [
+        // Live sky or painted glow background — shared by every tab.
         Positioned.fill(
-          child: Container(color: BSTheme.night),
+          child: kIsWeb
+              ? const AladinSky()
+              : CustomPaint(painter: _NightGlowPainter()),
         ),
+        // Dark veil — heavier than login so content stays readable.
+        Positioned.fill(
+          child: Container(color: const Color(0xEE030404)),
+        ),
+        // Film grain — organic texture over everything.
+        const Positioned.fill(child: GrainOverlay()),
         Scaffold(
           backgroundColor: Colors.transparent,
           extendBodyBehindAppBar: true,
@@ -97,7 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
                 child: Container(
                   decoration: const BoxDecoration(
-                    color: BSTheme.surface,
+                    color: Color(0xD9030404),
                     border: Border(
                       bottom: BorderSide(color: BSTheme.glassBorder, width: 1),
                     ),
@@ -113,24 +122,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 const LiveDot(color: BSTheme.accent, size: 7),
                 const SizedBox(width: 10),
                 Text(
-                  'telescope.network',
+                  'TELESCOPE // ${_tabs[_index].title.toUpperCase()}',
                   style: const TextStyle(
                     fontFamily: 'Geist',
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.2,
                     color: BSTheme.ink,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  _tabs[_index].title,
-                  style: const TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0,
-                    color: BSTheme.ink3,
                   ),
                 ),
               ],
@@ -143,9 +141,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(3),
+                      borderRadius: BorderRadius.circular(4),
                       border: Border.all(color: BSTheme.glassBorder),
-                      color: BSTheme.surface2,
+                      color: BSTheme.ink.withValues(alpha: 0.04),
                     ),
                     child: const Icon(
                       Icons.person_outline,
@@ -219,7 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
                   child: Container(
                     decoration: const BoxDecoration(
-                      color: BSTheme.surface,
+                      color: Color(0xF2030404),
                       border: Border(
                         top: BorderSide(
                           color: BSTheme.glassBorder,
@@ -287,12 +285,12 @@ class _ReadinessRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 88,
+      width: 104,
       margin: EdgeInsets.only(
         top: MediaQuery.of(context).padding.top + kToolbarHeight,
       ),
       decoration: const BoxDecoration(
-        color: BSTheme.surface,
+        color: Color(0xF0030404),
         border: Border(
           right: BorderSide(color: BSTheme.glassBorder, width: 1),
         ),
@@ -303,7 +301,7 @@ class _ReadinessRail extends StatelessWidget {
           children: [
             const SizedBox(height: 14),
             _RailStateBadge(
-              label: nodesReady ? 'READY' : 'SETUP',
+              label: nodesReady ? 'OPS READY' : 'SETUP',
               color: nodesReady ? BSTheme.success : BSTheme.warm,
             ),
             const SizedBox(height: 14),
@@ -336,20 +334,20 @@ class _RailStateBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 62,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+      width: 78,
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(3),
-        color: BSTheme.surface2,
-        border: Border.all(color: BSTheme.glassBorder),
+        color: color.withValues(alpha: 0.10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Text(
         label,
         style: TextStyle(
           fontFamily: 'Geist',
-          fontSize: 9,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.8,
           color: color,
         ),
       ),
@@ -377,17 +375,19 @@ class _RailItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: selected ? BSTheme.surface2 : Colors.transparent,
+        color: selected ? BSTheme.ink.withValues(alpha: 0.07) : Colors.transparent,
         borderRadius: BorderRadius.circular(3),
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(3),
           child: Container(
-            height: 58,
+            height: 68,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(3),
               border: Border.all(
-                color: selected ? BSTheme.glassBorder : Colors.transparent,
+                color: selected
+                    ? BSTheme.accent.withValues(alpha: 0.34)
+                    : Colors.transparent,
               ),
             ),
             child: Stack(
@@ -406,7 +406,7 @@ class _RailItem extends StatelessWidget {
                     Icon(
                       icon,
                       color: selected ? BSTheme.accent : BSTheme.ink3,
-                      size: 19,
+                      size: 21,
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -416,8 +416,8 @@ class _RailItem extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontFamily: 'Geist',
-                        fontSize: 8.5,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                         color: selected ? BSTheme.ink : BSTheme.ink3,
                       ),

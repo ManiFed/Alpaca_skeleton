@@ -1,21 +1,21 @@
 import 'package:flutter/material.dart';
 
 class BSTheme {
-  // IDE workbench tokens: neutral, dense, and status-led.
-  static const Color night = Color(0xFF1E1F22);
-  static const Color surface = Color(0xFF25262A);
-  static const Color surface2 = Color(0xFF2B2D31);
-  static const Color ink = Color(0xFFD7D9DD);
-  static const Color ink2 = Color(0xCCAEB4BE);
-  static const Color ink3 = Color(0x997C828D);
-  static const Color accent = Color(0xFF89D185);
-  static const Color sky = Color(0xFF75BEFF);
-  static const Color warm = Color(0xFFDDB16A);
-  static const Color success = accent;
+  // Operations-console tokens: restrained, legible, and status-led.
+  static const Color night = Color(0xFF030404);
+  static const Color surface = Color(0xFF0B0D0D);
+  static const Color surface2 = Color(0xFF141616);
+  static const Color ink = Color(0xFFF4EFD9);
+  static const Color ink2 = Color(0xA6F4EFD9); // 65% opacity
+  static const Color ink3 = Color(0x66F4EFD9); // 40% opacity
+  static const Color accent = Color(0xFF25E8A0);
+  static const Color sky = Color(0xFF45B8FF);
+  static const Color warm = Color(0xFFFF8E38);
+  static const Color success = Color(0xFF5BD6A6);
   static const Color warning = warm;
-  static const Color danger = Color(0xFFE06C75);
-  static const Color glassBorder = Color(0xFF3A3D43);
-  static const Color glassBg = Color(0xFF202124);
+  static const Color danger = Color(0xFFFF6B6B);
+  static const Color glassBorder = Color(0x33F4EFD9);
+  static const Color glassBg = Color(0x0AF4EFD9);
   static const Color btnPrimary = ink;
   static const Color btnPrimaryFg = night;
 
@@ -142,7 +142,7 @@ class BSTheme {
         elevation: 0,
         margin: const EdgeInsets.symmetric(vertical: 6),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(3),
+          borderRadius: BorderRadius.circular(10),
           side: const BorderSide(color: glassBorder, width: 1),
         ),
       ),
@@ -157,7 +157,7 @@ class BSTheme {
             fontWeight: FontWeight.w500,
             letterSpacing: 0,
           ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           elevation: 0,
         ),
       ),
@@ -174,31 +174,31 @@ class BSTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: surface2,
+        fillColor: const Color(0x0EF1F0E8),
         contentPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(3),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: glassBorder, width: 1),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(3),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: glassBorder, width: 1),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(3),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: accent, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(3),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: danger, width: 1),
         ),
         focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(3),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: danger, width: 1.5),
         ),
         hintStyle: const TextStyle(
           fontFamily: _font,
-          color: ink3,
+          color: Color(0x59F2F5FF), // 35% opacity
           fontSize: 15,
         ),
         prefixIconColor: ink3,

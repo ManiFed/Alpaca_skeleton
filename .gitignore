@@ -1,6 +1,7 @@
 .DS_Store
 */.DS_Store
 .codex/
+.superpowers/
 __pycache__/
 *.pyc
 venv/
