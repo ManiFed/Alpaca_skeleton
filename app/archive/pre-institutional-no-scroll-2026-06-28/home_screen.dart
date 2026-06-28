@@ -920,7 +920,7 @@ class _NightGlowPainter extends CustomPainter {
           center: Alignment.topCenter,
           radius: 0.9,
           colors: [
-            BSTheme.accent.withValues(alpha: 0.035),
+            const Color(0xFF8FD9FF).withValues(alpha: 0.08),
             Colors.transparent,
           ],
         ).createShader(Offset.zero & size),
@@ -932,7 +932,7 @@ class _NightGlowPainter extends CustomPainter {
           center: const Alignment(-1.0, 1.2),
           radius: 0.8,
           colors: [
-            BSTheme.surface2.withValues(alpha: 0.16),
+            const Color(0xFFFFC07A).withValues(alpha: 0.05),
             Colors.transparent,
           ],
         ).createShader(Offset.zero & size),

@@ -367,18 +367,17 @@ class _PrimaryButton extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Background painter — subtle radial glow
+// Background painter — institutional graphite glow
 // ---------------------------------------------------------------------------
 
 class _NightGlowPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    // Top-center blue glow
     final topGlow = RadialGradient(
       center: Alignment.topCenter,
       radius: 0.9,
       colors: [
-        const Color(0xFF8FD9FF).withValues(alpha: 0.06),
+        BSTheme.accent.withValues(alpha: 0.03),
         Colors.transparent,
       ],
     );
@@ -386,12 +385,11 @@ class _NightGlowPainter extends CustomPainter {
       Offset.zero & size,
       Paint()..shader = topGlow.createShader(Offset.zero & size),
     );
-    // Bottom-left warm glow
     final warmGlow = RadialGradient(
       center: const Alignment(-1.0, 1.2),
       radius: 0.8,
       colors: [
-        const Color(0xFFFFC07A).withValues(alpha: 0.04),
+        BSTheme.surface2.withValues(alpha: 0.14),
         Colors.transparent,
       ],
     );

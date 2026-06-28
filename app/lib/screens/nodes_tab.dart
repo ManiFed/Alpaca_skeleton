@@ -2324,7 +2324,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           Row(
             children: [
               const Icon(Icons.check_circle_outline,
-                  size: 18, color: Colors.green),
+                  size: 18, color: BSTheme.success),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -2546,7 +2546,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           Row(
             children: [
               const Icon(Icons.check_circle_outline,
-                  size: 18, color: Colors.green),
+                  size: 18, color: BSTheme.success),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -2595,7 +2595,8 @@ class _ClaimSheetState extends State<_ClaimSheet> {
   List<Widget> _buildCodeSection(TextTheme tt, BuildContext context) {
     if (_pushed) {
       return [
-        const Icon(Icons.check_circle_outline, color: Colors.green, size: 48),
+        const Icon(Icons.check_circle_outline,
+            color: BSTheme.success, size: 48),
         const SizedBox(height: 16),
         Text('Telescope connected!', style: tt.titleLarge),
         const SizedBox(height: 8),
@@ -2652,7 +2653,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
                 icon: Icon(
                   _codeCopied ? Icons.check_circle : Icons.copy_outlined,
                   size: 18,
-                  color: _codeCopied ? Colors.greenAccent : null,
+                  color: _codeCopied ? BSTheme.success : null,
                 ),
                 tooltip: _codeCopied ? 'Copied!' : 'Copy',
               ),

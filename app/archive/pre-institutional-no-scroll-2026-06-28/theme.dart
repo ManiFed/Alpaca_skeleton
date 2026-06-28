@@ -1,21 +1,21 @@
 import 'package:flutter/material.dart';
 
 class BSTheme {
-  // Institutional operations tokens: graphite, dense, minimal accent.
-  static const Color night = Color(0xFF0F1114);
-  static const Color surface = Color(0xFF171A1E);
-  static const Color surface2 = Color(0xFF1D2126);
-  static const Color ink = Color(0xFFE1E4E8);
-  static const Color ink2 = Color(0xB8C8CDD3);
-  static const Color ink3 = Color(0x7E8A929B);
-  static const Color accent = Color(0xFF7FA6C7);
-  static const Color sky = accent;
-  static const Color warm = Color(0xFFAAA38F);
-  static const Color success = Color(0xFFBFC6CD);
+  // Operations-console tokens: restrained, legible, and status-led.
+  static const Color night = Color(0xFF030404);
+  static const Color surface = Color(0xFF0B0D0D);
+  static const Color surface2 = Color(0xFF141616);
+  static const Color ink = Color(0xFFF4EFD9);
+  static const Color ink2 = Color(0xA6F4EFD9); // 65% opacity
+  static const Color ink3 = Color(0x66F4EFD9); // 40% opacity
+  static const Color accent = Color(0xFF25E8A0);
+  static const Color sky = Color(0xFF45B8FF);
+  static const Color warm = Color(0xFFFF8E38);
+  static const Color success = Color(0xFF5BD6A6);
   static const Color warning = warm;
-  static const Color danger = Color(0xFFC08C8C);
-  static const Color glassBorder = Color(0xFF2B3036);
-  static const Color glassBg = Color(0xFF15181C);
+  static const Color danger = Color(0xFFFF6B6B);
+  static const Color glassBorder = Color(0x33F4EFD9);
+  static const Color glassBg = Color(0x0AF4EFD9);
   static const Color btnPrimary = ink;
   static const Color btnPrimaryFg = night;
 

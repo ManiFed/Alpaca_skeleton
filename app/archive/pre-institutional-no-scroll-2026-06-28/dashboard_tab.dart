@@ -169,7 +169,11 @@ class _DashboardViewState extends State<_DashboardView> {
   @override
   Widget build(BuildContext context) {
     final topPad = MediaQuery.of(context).padding.top + kToolbarHeight;
+    final bottomPad = MediaQuery.of(context).padding.bottom + 64;
+    final online = widget.data.nodes.where((n) => n.online).length;
     final unread = widget.data.alerts.where((a) => !a.read).length;
+    final totalNodes = widget.data.nodes.length;
+    final needsAction = widget.data.nodes.where(_nodeNeedsAction).toList();
     final priorityTargets = [...widget.data.targets]
       ..sort((a, b) => b.priority.compareTo(a.priority));
     final selectedPlan =
@@ -179,65 +183,60 @@ class _DashboardViewState extends State<_DashboardView> {
       priorityTargets,
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 1040;
-        final telescopePanel = _fadeUp(
-          0,
-          _TelescopeOpsPanel(
-            nodes: widget.data.nodes,
-            unread: unread,
-            onOpenAlerts: () => widget.onNavigateToTab?.call(3),
-          ),
-        );
-        final planPanel = _fadeUp(
-          1,
-          _ObservingPlanPanel(
-            timeline: widget.data.timeline,
-            targets: priorityTargets,
-            selectedPlan: selectedPlan,
-          ),
-        );
-        final fieldPreview = _fadeUp(
-          2,
-          _FieldPreviewPanel(
-            plan: selectedPlan,
-            target: selectedTarget,
-            height: wide ? null : 300,
-          ),
-        );
-        final targetPanel = _fadeUp(
-          2,
-          _SelectedTargetPanel(
-            plan: selectedPlan,
-            target: selectedTarget,
-          ),
-        );
-        final observations = _fadeUp(
-          3,
-          _RecentObservationsPanel(
-            obs: widget.data.recentObs,
-            maxRows: wide ? 3 : 6,
-            myObservationsOnly: _myObservationsOnly,
-            onMyObservationsOnlyChanged: (value) {
-              setState(() => _myObservationsOnly = value);
-            },
-          ),
-        );
-
-        if (!wide) {
-          final bottomPad = MediaQuery.of(context).padding.bottom + 64;
-          return RefreshIndicator(
-            onRefresh: widget.onRefresh,
-            child: CustomScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              slivers: [
-                SliverPadding(
-                  padding:
-                      EdgeInsets.fromLTRB(14, topPad + 10, 14, bottomPad + 14),
-                  sliver: SliverList(
-                    delegate: SliverChildListDelegate([
-                      Column(
+    return RefreshIndicator(
+      onRefresh: widget.onRefresh,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(16, topPad + 12, 16, bottomPad + 18),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 1040;
+                    final telescopePanel = _fadeUp(
+                      0,
+                      _TelescopeOpsPanel(
+                        nodes: widget.data.nodes,
+                        unread: unread,
+                        onOpenAlerts: () => widget.onNavigateToTab?.call(3),
+                      ),
+                    );
+                    final planPanel = _fadeUp(
+                      1,
+                      _ObservingPlanPanel(
+                        timeline: widget.data.timeline,
+                        targets: priorityTargets,
+                        selectedPlan: selectedPlan,
+                      ),
+                    );
+                    final fieldPreview = _fadeUp(
+                      2,
+                      _FieldPreviewPanel(
+                        plan: selectedPlan,
+                        target: selectedTarget,
+                      ),
+                    );
+                    final targetPanel = _fadeUp(
+                      2,
+                      _SelectedTargetPanel(
+                        plan: selectedPlan,
+                        target: selectedTarget,
+                      ),
+                    );
+                    final observations = _fadeUp(
+                      3,
+                      _RecentObservationsPanel(
+                        obs: widget.data.recentObs,
+                        myObservationsOnly: _myObservationsOnly,
+                        onMyObservationsOnlyChanged: (value) {
+                          setState(() => _myObservationsOnly = value);
+                        },
+                      ),
+                    );
+                    if (!wide) {
+                      return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           telescopePanel,
@@ -250,50 +249,40 @@ class _DashboardViewState extends State<_DashboardView> {
                           const SizedBox(height: 10),
                           observations,
                         ],
-                      ),
-                    ]),
-                  ),
+                      );
+                    }
+                    return Column(
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(width: 260, child: telescopePanel),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  planPanel,
+                                  const SizedBox(height: 10),
+                                  fieldPreview,
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            SizedBox(width: 330, child: targetPanel),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        observations,
+                      ],
+                    );
+                  },
                 ),
-              ],
+              ]),
             ),
-          );
-        }
-
-        final availableHeight = constraints.maxHeight - topPad - 22;
-        final observationHeight =
-            (availableHeight * 0.22).clamp(142.0, 190.0);
-
-        return Padding(
-          padding: EdgeInsets.fromLTRB(12, topPad + 10, 12, 12),
-          child: Column(
-            children: [
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    SizedBox(width: 258, child: telescopePanel),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(flex: 56, child: planPanel),
-                          const SizedBox(height: 10),
-                          Expanded(flex: 44, child: fieldPreview),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    SizedBox(width: 326, child: targetPanel),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(height: observationHeight, child: observations),
-            ],
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 }
@@ -339,10 +328,12 @@ class _TelescopeOpsPanel extends StatelessWidget {
           _WorkbenchHeader(
             title: 'Telescope',
             trailing: '$online/${nodes.length} online',
-            color: BSTheme.ink3,
+            color: online == nodes.length && nodes.isNotEmpty
+                ? BSTheme.success
+                : BSTheme.warm,
           ),
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -350,8 +341,8 @@ class _TelescopeOpsPanel extends StatelessWidget {
                   children: [
                     LiveDot(
                       color: node?.online == true
-                          ? BSTheme.accent
-                          : BSTheme.ink3,
+                          ? BSTheme.success
+                          : BSTheme.danger,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -372,7 +363,9 @@ class _TelescopeOpsPanel extends StatelessWidget {
                         fontFamily: 'Geist',
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
-                        color: BSTheme.ink2,
+                        color: node?.online == true
+                            ? BSTheme.success
+                            : BSTheme.danger,
                       ),
                     ),
                   ],
@@ -390,17 +383,17 @@ class _TelescopeOpsPanel extends StatelessWidget {
                 _KeyValueLine(
                   label: 'Status',
                   value: _nodeStatus(node),
-                  color: node?.online == true ? BSTheme.ink : BSTheme.ink3,
+                  color: node?.online == true ? BSTheme.success : BSTheme.warm,
                 ),
                 _KeyValueLine(
                   label: 'Mount',
                   value: node?.online == true ? 'Tracking' : 'Waiting',
-                  color: node?.online == true ? BSTheme.ink2 : BSTheme.ink3,
+                  color: node?.online == true ? BSTheme.success : BSTheme.ink3,
                 ),
                 _KeyValueLine(
                   label: 'Dome',
                   value: node?.online == true ? 'Open' : 'Unknown',
-                  color: node?.online == true ? BSTheme.ink2 : BSTheme.ink3,
+                  color: node?.online == true ? BSTheme.success : BSTheme.ink3,
                 ),
                 _KeyValueLine(
                   label: 'Camera',
@@ -412,7 +405,7 @@ class _TelescopeOpsPanel extends StatelessWidget {
                 const _KeyValueLine(
                   label: 'Sky',
                   value: 'Clear',
-                  color: BSTheme.ink2,
+                  color: BSTheme.success,
                 ),
                 const _KeyValueLine(label: 'Seeing', value: '2.1"'),
                 const _KeyValueLine(label: 'Humidity', value: '34%'),
@@ -483,115 +476,112 @@ class _ObservingPlanPanel extends StatelessWidget {
 }
 
 class _FieldPreviewPanel extends StatelessWidget {
-  const _FieldPreviewPanel({
-    required this.plan,
-    required this.target,
-    this.height,
-  });
+  const _FieldPreviewPanel({required this.plan, required this.target});
 
   final TimelineItem? plan;
   final Target? target;
-  final double? height;
 
   @override
   Widget build(BuildContext context) {
     final hasPointing = plan != null && (plan!.ra != 0 || plan!.dec != 0);
     final label = plan?.target ?? target?.name ?? 'Next target';
-    final body = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _WorkbenchHeader(
-          title: 'Field preview',
-          subtitle: hasPointing ? label : 'Waiting for pointing solution',
-          trailing: hasPointing ? '12° FoV · DSS2' : null,
-        ),
-        Expanded(
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              AladinSky(
-                ra: hasPointing ? plan!.ra : null,
-                dec: hasPointing ? plan!.dec : null,
-                fov: 12,
-                targetLabel: label,
-                drift: !hasPointing,
-              ),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      BSTheme.night.withValues(alpha: 0.10),
-                      BSTheme.night.withValues(alpha: 0.55),
-                    ],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                ),
-              ),
-              Center(
-                child: IgnorePointer(
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: BSTheme.accent.withValues(alpha: 0.64),
-                        width: 1.2,
-                      ),
-                    ),
-                    child: Center(
-                      child: Container(
-                        width: 5,
-                        height: 5,
-                        decoration: const BoxDecoration(
-                          color: BSTheme.accent,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 14,
-                right: 14,
-                bottom: 12,
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        hasPointing
-                            ? 'RA ${_formatRa(plan!.ra)} · Dec ${_formatDec(plan!.dec)}'
-                            : 'Preview locks to active target when coordinates are available.',
-                        style: const TextStyle(
-                          fontFamily: 'Geist',
-                          fontSize: 11,
-                          color: BSTheme.ink2,
-                        ),
-                      ),
-                    ),
-                    if (hasPointing)
-                      const Text(
-                        'target overlay',
-                        style: TextStyle(
-                          fontFamily: 'Geist',
-                          fontSize: 10,
-                          color: BSTheme.ink3,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
 
     return _OpsPanel(
       padding: EdgeInsets.zero,
-      child: height == null ? body : SizedBox(height: height, child: body),
+      child: SizedBox(
+        height: 300,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _WorkbenchHeader(
+              title: 'Field preview',
+              subtitle: hasPointing ? label : 'Waiting for pointing solution',
+              trailing: hasPointing ? '12° FoV · DSS2' : null,
+            ),
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  AladinSky(
+                    ra: hasPointing ? plan!.ra : null,
+                    dec: hasPointing ? plan!.dec : null,
+                    fov: 12,
+                    targetLabel: label,
+                    drift: !hasPointing,
+                  ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          BSTheme.night.withValues(alpha: 0.10),
+                          BSTheme.night.withValues(alpha: 0.55),
+                        ],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                    ),
+                  ),
+                  Center(
+                    child: IgnorePointer(
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: BSTheme.sky.withValues(alpha: 0.78),
+                            width: 1.4,
+                          ),
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: BSTheme.sky,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 14,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            hasPointing
+                                ? 'RA ${_formatRa(plan!.ra)} · Dec ${_formatDec(plan!.dec)}'
+                                : 'The preview will lock to the active target when coordinates are available.',
+                            style: const TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 12,
+                              color: BSTheme.ink2,
+                            ),
+                          ),
+                        ),
+                        if (hasPointing)
+                          const Text(
+                            'target overlay',
+                            style: TextStyle(
+                              fontFamily: 'Geist',
+                              fontSize: 11,
+                              color: BSTheme.ink3,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -616,7 +606,7 @@ class _SelectedTargetPanel extends StatelessWidget {
         children: [
           _WorkbenchHeader(title: 'Selected target'),
           Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(18),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -624,7 +614,7 @@ class _SelectedTargetPanel extends StatelessWidget {
                   title,
                   style: const TextStyle(
                     fontFamily: 'Geist',
-                    fontSize: 21,
+                    fontSize: 24,
                     fontWeight: FontWeight.w900,
                     color: BSTheme.ink,
                   ),
@@ -638,7 +628,7 @@ class _SelectedTargetPanel extends StatelessWidget {
                     color: BSTheme.ink3,
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 18),
                 _SectionLabel('Coordinates'),
                 const SizedBox(height: 8),
                 _KeyValueLine(
@@ -655,7 +645,7 @@ class _SelectedTargetPanel extends StatelessWidget {
                       ? '—'
                       : '${target!.mag!.toStringAsFixed(2)} ${target!.magBand}',
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 _SectionLabel('Transit event'),
                 const SizedBox(height: 8),
                 _KeyValueLine(label: 'Start', value: plan?.startTime ?? '—'),
@@ -689,13 +679,11 @@ class _RecentObservationsPanel extends StatelessWidget {
     required this.obs,
     required this.myObservationsOnly,
     required this.onMyObservationsOnlyChanged,
-    this.maxRows = 6,
   });
 
   final List<Observation> obs;
   final bool myObservationsOnly;
   final ValueChanged<bool> onMyObservationsOnlyChanged;
-  final int maxRows;
 
   @override
   Widget build(BuildContext context) {
@@ -736,7 +724,7 @@ class _RecentObservationsPanel extends StatelessWidget {
               child: _EmptyLine('No measurements yet today.'),
             )
           else
-            ...obs.take(maxRows).map((o) => _ObservationTableRow(obs: o)),
+            ...obs.take(6).map((o) => _ObservationTableRow(obs: o)),
         ],
       ),
     );
@@ -761,8 +749,8 @@ class _WorkbenchHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: const BoxDecoration(
         color: BSTheme.surface2,
         border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
@@ -773,7 +761,7 @@ class _WorkbenchHeader extends StatelessWidget {
             title,
             style: const TextStyle(
               fontFamily: 'Geist',
-              fontSize: 14,
+              fontSize: 15,
               fontWeight: FontWeight.w900,
               color: BSTheme.ink,
             ),
@@ -814,8 +802,8 @@ class _PlanHeaderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 30,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       decoration: const BoxDecoration(
         color: BSTheme.night,
         border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
@@ -844,8 +832,8 @@ class _PlanTimelineRow extends StatelessWidget {
     final duration = item.estimatedMinutes;
     final status = selected ? 'In progress' : 'Pending';
     return Container(
-      constraints: BoxConstraints(minHeight: selected ? 84 : 58),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      constraints: BoxConstraints(minHeight: selected ? 96 : 72),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(
         color: selected ? BSTheme.sky.withValues(alpha: 0.08) : BSTheme.surface,
         border: const Border(bottom: BorderSide(color: BSTheme.glassBorder)),
@@ -868,7 +856,7 @@ class _PlanTimelineRow extends StatelessWidget {
                   item.target.isEmpty ? 'Scheduled target' : item.target,
                   style: const TextStyle(
                     fontFamily: 'Geist',
-                    fontSize: 14,
+                    fontSize: 15,
                     fontWeight: FontWeight.w900,
                     color: BSTheme.ink,
                   ),
@@ -899,7 +887,7 @@ class _PlanTimelineRow extends StatelessWidget {
                     '${duration.toStringAsFixed(0)} min planned · target overlay active',
                     style: const TextStyle(
                       fontFamily: 'Geist',
-                      fontSize: 10,
+                      fontSize: 11,
                       color: BSTheme.ink3,
                     ),
                   ),
@@ -957,8 +945,8 @@ class _PlanTargetRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final priority = (target.priority * 100).clamp(0, 100).round();
     return Container(
-      constraints: const BoxConstraints(minHeight: 58),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      constraints: const BoxConstraints(minHeight: 72),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: const BoxDecoration(
         color: BSTheme.surface,
         border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
@@ -1023,8 +1011,8 @@ class _ObservationHeaderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 30,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       decoration: const BoxDecoration(
         color: BSTheme.night,
         border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
@@ -1051,8 +1039,8 @@ class _ObservationTableRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final result = obs.aavsoSubmitted ? 'Submitted' : 'Measured';
     return Container(
-      constraints: const BoxConstraints(minHeight: 44),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      constraints: const BoxConstraints(minHeight: 58),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       decoration: const BoxDecoration(
         color: BSTheme.surface,
         border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
@@ -1145,7 +1133,7 @@ class _KeyValueLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
         children: [
           Expanded(
@@ -1182,14 +1170,14 @@ class _AlertSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     final clear = unread == 0;
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: BSTheme.surface2,
+        color: (clear ? BSTheme.success : BSTheme.danger)
+            .withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(
-          color: clear
-              ? BSTheme.glassBorder
-              : BSTheme.danger.withValues(alpha: 0.32),
+          color: (clear ? BSTheme.success : BSTheme.danger)
+              .withValues(alpha: 0.24),
         ),
       ),
       child: Row(
@@ -1206,7 +1194,7 @@ class _AlertSummary extends StatelessWidget {
           ),
           _StatusPill(
             label: clear ? '0 active' : '$unread active',
-            color: clear ? BSTheme.ink3 : BSTheme.danger,
+            color: clear ? BSTheme.success : BSTheme.danger,
           ),
         ],
       ),
