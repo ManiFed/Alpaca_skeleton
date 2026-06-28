@@ -326,6 +326,82 @@ class Target {
       );
 }
 
+/// Public catalogue details for a selected object (GET /objects/<name>).
+class ObjectDetails {
+  final String name;
+  final String canonicalName;
+  final String objectType;
+  final String spectralType;
+  final double? raDeg;
+  final double? decDeg;
+  final List<String> aliases;
+  final List<String> publicSources;
+  final Map<String, dynamic> magnitudes;
+  final String hostName;
+  final double? distancePc;
+  final double? vMag;
+  final double? periodDays;
+  final double? transitDurationHours;
+  final double? transitDepthPpm;
+  final double? radiusEarth;
+  final double? massEarth;
+  final int? discoveryYear;
+  final String discoveryMethod;
+
+  const ObjectDetails({
+    required this.name,
+    required this.canonicalName,
+    required this.objectType,
+    required this.spectralType,
+    required this.raDeg,
+    required this.decDeg,
+    required this.aliases,
+    required this.publicSources,
+    required this.magnitudes,
+    required this.hostName,
+    required this.distancePc,
+    required this.vMag,
+    required this.periodDays,
+    required this.transitDurationHours,
+    required this.transitDepthPpm,
+    required this.radiusEarth,
+    required this.massEarth,
+    required this.discoveryYear,
+    required this.discoveryMethod,
+  });
+
+  factory ObjectDetails.fromJson(Map<String, dynamic> j) => ObjectDetails(
+        name: _asStr(j['name']),
+        canonicalName: _asStr(j['canonical_name']),
+        objectType: _asStr(j['object_type']),
+        spectralType: _asStr(j['spectral_type']),
+        raDeg: j['ra_deg'] == null ? null : _asDouble(j['ra_deg']),
+        decDeg: j['dec_deg'] == null ? null : _asDouble(j['dec_deg']),
+        aliases: ((j['aliases'] as List?) ?? []).map(_asStr).toList(),
+        publicSources:
+            ((j['public_sources'] as List?) ?? []).map(_asStr).toList(),
+        magnitudes: (j['magnitudes'] is Map)
+            ? Map<String, dynamic>.from(j['magnitudes'] as Map)
+            : <String, dynamic>{},
+        hostName: _asStr(j['host_name']),
+        distancePc: j['distance_pc'] == null ? null : _asDouble(j['distance_pc']),
+        vMag: j['v_mag'] == null ? null : _asDouble(j['v_mag']),
+        periodDays: j['period_days'] == null ? null : _asDouble(j['period_days']),
+        transitDurationHours: j['transit_duration_hours'] == null
+            ? null
+            : _asDouble(j['transit_duration_hours']),
+        transitDepthPpm: j['transit_depth_ppm'] == null
+            ? null
+            : _asDouble(j['transit_depth_ppm']),
+        radiusEarth:
+            j['radius_earth'] == null ? null : _asDouble(j['radius_earth']),
+        massEarth: j['mass_earth'] == null ? null : _asDouble(j['mass_earth']),
+        discoveryYear:
+            j['discovery_year'] == null ? null : _asInt(j['discovery_year']),
+        discoveryMethod: _asStr(j['discovery_method']),
+      );
+}
+
 /// One planned observation in tonight's timeline (GET /me/timeline).
 class TimelineItem {
   final String nodeId;

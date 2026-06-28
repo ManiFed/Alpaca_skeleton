@@ -250,5 +250,11 @@ class ApiClient {
         .toList();
   }
 
+  /// Public catalogue details for one object (GET /objects/<name>).
+  Future<ObjectDetails> objectDetails(String objectName) async {
+    final path = '/objects/${Uri.encodeComponent(objectName)}';
+    return ObjectDetails.fromJson(await _get(path));
+  }
+
   void close() => _http.close();
 }

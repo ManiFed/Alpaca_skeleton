@@ -141,6 +141,7 @@ class _DashboardViewState extends State<_DashboardView> {
   static const _delays = [0, 180, 300, 420];
   final List<bool> _visible = [false, false, false, false];
   bool _myObservationsOnly = true;
+  String? _selectedTargetName;
 
   @override
   void initState() {
@@ -173,10 +174,11 @@ class _DashboardViewState extends State<_DashboardView> {
     final priorityTargets = [...widget.data.targets]
       ..sort((a, b) => b.priority.compareTo(a.priority));
     final selectedPlan =
-        widget.data.timeline.isEmpty ? null : widget.data.timeline.first;
+        _selectedPlan(widget.data.timeline, _selectedTargetName);
     final selectedTarget = _selectedTargetForPlan(
       selectedPlan,
       priorityTargets,
+      selectedName: _selectedTargetName,
     );
 
     return LayoutBuilder(
@@ -196,6 +198,8 @@ class _DashboardViewState extends State<_DashboardView> {
             timeline: widget.data.timeline,
             targets: priorityTargets,
             selectedPlan: selectedPlan,
+            selectedTarget: selectedTarget,
+            onSelectTarget: (name) => setState(() => _selectedTargetName = name),
           ),
         );
         final fieldPreview = _fadeUp(
@@ -211,6 +215,9 @@ class _DashboardViewState extends State<_DashboardView> {
           _SelectedTargetPanel(
             plan: selectedPlan,
             target: selectedTarget,
+            targets: priorityTargets,
+            selectedName: _selectedTargetName,
+            onSelectTarget: (name) => setState(() => _selectedTargetName = name),
           ),
         );
         final observations = _fadeUp(
@@ -298,8 +305,32 @@ class _DashboardViewState extends State<_DashboardView> {
   }
 }
 
-Target? _selectedTargetForPlan(TimelineItem? plan, List<Target> targets) {
+TimelineItem? _selectedPlan(List<TimelineItem> timeline, String? selectedName) {
+  if (timeline.isEmpty) return null;
+  if (selectedName == null || selectedName.isEmpty) return timeline.first;
+  for (final item in timeline) {
+    if (item.target.toLowerCase() == selectedName.toLowerCase() ||
+        item.targetId.toLowerCase() == selectedName.toLowerCase()) {
+      return item;
+    }
+  }
+  return null;
+}
+
+Target? _selectedTargetForPlan(
+  TimelineItem? plan,
+  List<Target> targets, {
+  String? selectedName,
+}) {
   if (targets.isEmpty) return null;
+  if (selectedName != null && selectedName.isNotEmpty) {
+    for (final target in targets) {
+      if (target.name.toLowerCase() == selectedName.toLowerCase() ||
+          target.targetId.toLowerCase() == selectedName.toLowerCase()) {
+        return target;
+      }
+    }
+  }
   if (plan == null) return targets.first;
   for (final target in targets) {
     if (target.targetId == plan.targetId ||
@@ -436,11 +467,15 @@ class _ObservingPlanPanel extends StatelessWidget {
     required this.timeline,
     required this.targets,
     required this.selectedPlan,
+    required this.selectedTarget,
+    required this.onSelectTarget,
   });
 
   final List<TimelineItem> timeline;
   final List<Target> targets;
   final TimelineItem? selectedPlan;
+  final Target? selectedTarget;
+  final ValueChanged<String> onSelectTarget;
 
   @override
   Widget build(BuildContext context) {
@@ -465,11 +500,16 @@ class _ObservingPlanPanel extends StatelessWidget {
               return _PlanTimelineRow(
                 item: item,
                 selected: selectedPlan == item,
+                onTap: () => onSelectTarget(item.target),
               );
             })
           else if (targetFallback.isNotEmpty)
             ...targetFallback.map((target) {
-              return _PlanTargetRow(target: target);
+              return _PlanTargetRow(
+                target: target,
+                selected: selectedTarget?.targetId == target.targetId,
+                onTap: () => onSelectTarget(target.name),
+              );
             })
           else
             const Padding(
@@ -596,17 +636,63 @@ class _FieldPreviewPanel extends StatelessWidget {
   }
 }
 
-class _SelectedTargetPanel extends StatelessWidget {
-  const _SelectedTargetPanel({required this.plan, required this.target});
+class _SelectedTargetPanel extends StatefulWidget {
+  const _SelectedTargetPanel({
+    required this.plan,
+    required this.target,
+    required this.targets,
+    required this.selectedName,
+    required this.onSelectTarget,
+  });
 
   final TimelineItem? plan;
   final Target? target;
+  final List<Target> targets;
+  final String? selectedName;
+  final ValueChanged<String> onSelectTarget;
+
+  @override
+  State<_SelectedTargetPanel> createState() => _SelectedTargetPanelState();
+}
+
+class _SelectedTargetPanelState extends State<_SelectedTargetPanel> {
+  late Future<ObjectDetails?> _detailsFuture;
+  String? _loadedName;
+
+  @override
+  void initState() {
+    super.initState();
+    _detailsFuture = _loadDetails();
+  }
+
+  @override
+  void didUpdateWidget(_SelectedTargetPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final name = _title;
+    if (name != _loadedName) {
+      _detailsFuture = _loadDetails();
+    }
+  }
+
+  String get _title =>
+      widget.plan?.target ?? widget.target?.name ?? widget.selectedName ?? '';
+
+  Future<ObjectDetails?> _loadDetails() async {
+    final name = _title;
+    _loadedName = name;
+    if (name.isEmpty) return null;
+    try {
+      return await context.read<AppState>().api.objectDetails(name);
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final title = plan?.target ?? target?.name ?? 'No target selected';
-    final targetType = target?.targetType.isNotEmpty == true
-        ? target!.targetType
+    final title = _title.isEmpty ? 'No target selected' : _title;
+    final targetType = widget.target?.targetType.isNotEmpty == true
+        ? widget.target!.targetType
         : 'Target';
 
     return _OpsPanel(
@@ -614,7 +700,14 @@ class _SelectedTargetPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _WorkbenchHeader(title: 'Selected target'),
+          _WorkbenchHeader(
+            title: 'Selected target',
+            trailingWidget: _TargetPickerButton(
+              targets: widget.targets,
+              selectedName: title,
+              onSelectTarget: widget.onSelectTarget,
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.all(14),
             child: Column(
@@ -631,7 +724,7 @@ class _SelectedTargetPanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _programSummary(target, targetType),
+                  _programSummary(widget.target, targetType),
                   style: const TextStyle(
                     fontFamily: 'Geist',
                     fontSize: 13,
@@ -643,43 +736,181 @@ class _SelectedTargetPanel extends StatelessWidget {
                 const SizedBox(height: 8),
                 _KeyValueLine(
                   label: 'RA',
-                  value: plan == null ? '—' : _formatRa(plan!.ra),
+                  value: widget.plan == null ? '—' : _formatRa(widget.plan!.ra),
                 ),
                 _KeyValueLine(
                   label: 'Dec',
-                  value: plan == null ? '—' : _formatDec(plan!.dec),
+                  value:
+                      widget.plan == null ? '—' : _formatDec(widget.plan!.dec),
                 ),
                 _KeyValueLine(
                   label: 'Magnitude',
-                  value: target?.mag == null
+                  value: widget.target?.mag == null
                       ? '—'
-                      : '${target!.mag!.toStringAsFixed(2)} ${target!.magBand}',
+                      : '${widget.target!.mag!.toStringAsFixed(2)} ${widget.target!.magBand}',
                 ),
                 const SizedBox(height: 12),
-                _SectionLabel('Transit event'),
+                _SectionLabel('Scheduled observation'),
                 const SizedBox(height: 8),
-                _KeyValueLine(label: 'Start', value: plan?.startTime ?? '—'),
+                _KeyValueLine(label: 'Start', value: widget.plan?.startTime ?? '—'),
                 _KeyValueLine(
                   label: 'Exposure',
-                  value: plan == null
+                  value: widget.plan == null
                       ? '—'
-                      : '${plan!.expDur.toStringAsFixed(0)} s',
+                      : '${widget.plan!.expDur.toStringAsFixed(0)} s',
                 ),
                 _KeyValueLine(
                   label: 'Images',
-                  value: plan == null ? '—' : '${plan!.expCount}',
+                  value: widget.plan == null ? '—' : '${widget.plan!.expCount}',
                 ),
                 _KeyValueLine(
                   label: 'Filter',
-                  value: plan?.filter.isNotEmpty == true
-                      ? plan!.filter.toUpperCase()
+                  value: widget.plan?.filter.isNotEmpty == true
+                      ? widget.plan!.filter.toUpperCase()
                       : '—',
+                ),
+                const SizedBox(height: 12),
+                FutureBuilder<ObjectDetails?>(
+                  future: _detailsFuture,
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const _CatalogueLoading();
+                    }
+                    final details = snap.data;
+                    if (details == null) {
+                      return const _EmptyLine('Public catalogue lookup unavailable.');
+                    }
+                    return _CatalogueDetails(details: details);
+                  },
                 ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _TargetPickerButton extends StatelessWidget {
+  const _TargetPickerButton({
+    required this.targets,
+    required this.selectedName,
+    required this.onSelectTarget,
+  });
+
+  final List<Target> targets;
+  final String selectedName;
+  final ValueChanged<String> onSelectTarget;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Select target',
+      icon: const Icon(Icons.track_changes, color: BSTheme.ink2, size: 20),
+      color: BSTheme.surface2,
+      onSelected: onSelectTarget,
+      itemBuilder: (context) => targets.take(40).map((target) {
+        return PopupMenuItem<String>(
+          value: target.name,
+          child: Text(
+            target.name,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'Geist',
+              color: target.name == selectedName ? BSTheme.sky : BSTheme.ink,
+              fontWeight:
+                  target.name == selectedName ? FontWeight.w900 : FontWeight.w700,
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _CatalogueLoading extends StatelessWidget {
+  const _CatalogueLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.only(top: 4),
+      child: LinearProgressIndicator(
+        minHeight: 2,
+        backgroundColor: BSTheme.glassBorder,
+        valueColor: AlwaysStoppedAnimation<Color>(BSTheme.sky),
+      ),
+    );
+  }
+}
+
+class _CatalogueDetails extends StatelessWidget {
+  const _CatalogueDetails({required this.details});
+
+  final ObjectDetails details;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[
+      if (details.canonicalName.isNotEmpty)
+        _KeyValueLine(label: 'Catalog name', value: details.canonicalName),
+      if (details.objectType.isNotEmpty)
+        _KeyValueLine(label: 'Object type', value: details.objectType),
+      if (details.spectralType.isNotEmpty)
+        _KeyValueLine(label: 'Spectrum', value: details.spectralType),
+      if (details.raDeg != null)
+        _KeyValueLine(label: 'RA catalog', value: _formatRa(details.raDeg!)),
+      if (details.decDeg != null)
+        _KeyValueLine(label: 'Dec catalog', value: _formatDec(details.decDeg!)),
+      if (details.hostName.isNotEmpty)
+        _KeyValueLine(label: 'Host star', value: details.hostName),
+      if (details.periodDays != null)
+        _KeyValueLine(
+          label: 'Period',
+          value: '${details.periodDays!.toStringAsFixed(5)} d',
+        ),
+      if (details.transitDurationHours != null)
+        _KeyValueLine(
+          label: 'Transit duration',
+          value: '${details.transitDurationHours!.toStringAsFixed(2)} h',
+        ),
+      if (details.transitDepthPpm != null)
+        _KeyValueLine(
+          label: 'Transit depth',
+          value: '${details.transitDepthPpm!.toStringAsFixed(0)} ppm',
+        ),
+      if (details.distancePc != null)
+        _KeyValueLine(
+          label: 'Distance',
+          value: '${details.distancePc!.toStringAsFixed(1)} pc',
+        ),
+      if (details.discoveryYear != null)
+        _KeyValueLine(label: 'Discovered', value: '${details.discoveryYear}'),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionLabel('Public catalogues'),
+        const SizedBox(height: 8),
+        if (rows.isEmpty)
+          const _EmptyLine('No public catalogue fields returned.')
+        else
+          ...rows,
+        if (details.publicSources.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            details.publicSources.join(' · '),
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Geist',
+              fontSize: 10,
+              color: BSTheme.ink3,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -834,23 +1065,32 @@ class _PlanHeaderRow extends StatelessWidget {
 }
 
 class _PlanTimelineRow extends StatelessWidget {
-  const _PlanTimelineRow({required this.item, required this.selected});
+  const _PlanTimelineRow({
+    required this.item,
+    required this.selected,
+    required this.onTap,
+  });
 
   final TimelineItem item;
   final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final duration = item.estimatedMinutes;
     final status = selected ? 'In progress' : 'Pending';
-    return Container(
-      constraints: BoxConstraints(minHeight: selected ? 84 : 58),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: selected ? BSTheme.sky.withValues(alpha: 0.08) : BSTheme.surface,
-        border: const Border(bottom: BorderSide(color: BSTheme.glassBorder)),
-      ),
-      child: Row(
+    final type = _timelineType(item);
+    return Material(
+      color: selected ? BSTheme.sky.withValues(alpha: 0.08) : BSTheme.surface,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          constraints: BoxConstraints(minHeight: selected ? 84 : 58),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
+          ),
+          child: Row(
         children: [
           SizedBox(
             width: 20,
@@ -907,11 +1147,11 @@ class _PlanTimelineRow extends StatelessWidget {
               ],
             ),
           ),
-          const Expanded(
+          Expanded(
             flex: 18,
             child: Text(
-              'Transit',
-              style: TextStyle(
+              type,
+              style: const TextStyle(
                 fontFamily: 'Geist',
                 fontSize: 13,
                 color: BSTheme.ink2,
@@ -944,28 +1184,45 @@ class _PlanTimelineRow extends StatelessWidget {
           ),
         ],
       ),
+        ),
+      ),
     );
   }
 }
 
 class _PlanTargetRow extends StatelessWidget {
-  const _PlanTargetRow({required this.target});
+  const _PlanTargetRow({
+    required this.target,
+    required this.selected,
+    required this.onTap,
+  });
 
   final Target target;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final priority = (target.priority * 100).clamp(0, 100).round();
-    return Container(
-      constraints: const BoxConstraints(minHeight: 58),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: const BoxDecoration(
-        color: BSTheme.surface,
-        border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
-      ),
-      child: Row(
+    return Material(
+      color: selected ? BSTheme.sky.withValues(alpha: 0.08) : BSTheme.surface,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 58),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: BSTheme.glassBorder)),
+          ),
+          child: Row(
         children: [
-          const SizedBox(width: 20, child: LiveDot(color: BSTheme.ink3, size: 5)),
+          SizedBox(
+            width: 20,
+            child: LiveDot(
+              color: selected ? BSTheme.sky : BSTheme.ink3,
+              size: selected ? 7 : 5,
+            ),
+          ),
           Expanded(
             flex: 42,
             child: Text(
@@ -1013,8 +1270,18 @@ class _PlanTargetRow extends StatelessWidget {
           ),
         ],
       ),
+        ),
+      ),
     );
   }
+}
+
+String _timelineType(TimelineItem item) {
+  final note = item.notes.toLowerCase();
+  final match = RegExp(r'type=([a-z0-9_-]+)').firstMatch(note);
+  if (match != null) return match.group(1)!.trim().toUpperCase();
+  if (item.explanation.containsKey('transit')) return 'EXOPLANET';
+  return 'TARGET';
 }
 
 class _ObservationHeaderRow extends StatelessWidget {

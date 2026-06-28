@@ -36,8 +36,10 @@ import os
 import re
 import secrets
 import string
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from urllib.parse import quote
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
@@ -650,6 +652,112 @@ def api_consensus_lightcurve(target_name: str):
     days = float(request.args.get("days", 365))
     points = data_pipeline.consensus_light_curve(target_name, days)
     return jsonify({"target": target_name, "n": len(points), "points": points})
+
+
+def _sesame_lookup(name: str) -> dict:
+    import requests
+
+    resp = requests.get(
+        f"https://cds.unistra.fr/cgi-bin/nph-sesame/-oxp/SNV?{quote(name)}",
+        timeout=12,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Sesame HTTP {resp.status_code}")
+
+    root = ET.fromstring(resp.text)
+    resolver = root.find(".//Resolver")
+    if resolver is None:
+        return {}
+
+    def text(path: str) -> str:
+        el = resolver.find(path)
+        return (el.text or "").strip() if el is not None else ""
+
+    mags = {}
+    for mag in resolver.findall(".//mag"):
+        band = (mag.attrib.get("band") or "").strip()
+        value = (mag.text or "").strip()
+        if band and value:
+            mags[band] = value
+
+    aliases = [
+        (el.text or "").strip()
+        for el in resolver.findall(".//alias")
+        if (el.text or "").strip()
+    ]
+    return {
+        "source": "CDS Sesame",
+        "canonical_name": text("oname") or name,
+        "ra_deg": float(text("jradeg")) if text("jradeg") else None,
+        "dec_deg": float(text("jdedeg")) if text("jdedeg") else None,
+        "object_type": text("otype"),
+        "spectral_type": text("spType"),
+        "magnitudes": mags,
+        "aliases": aliases[:12],
+    }
+
+
+def _nasa_exoplanet_lookup(name: str) -> dict:
+    import requests
+
+    if not re.search(r"\s+[bcdefghij]$", name.strip(), re.I):
+        return {}
+
+    safe_name = name.replace("'", "''")
+    query = (
+        "select pl_name,hostname,sy_dist,sy_vmag,pl_orbper,pl_trandur,"
+        "pl_trandep,pl_rade,pl_bmasse,disc_year,discoverymethod "
+        f"from pscomppars where pl_name='{safe_name}'"
+    )
+    resp = requests.get(
+        "https://exoplanetarchive.ipac.caltech.edu/TAP/sync",
+        params={"query": query, "format": "json"},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"NASA Exoplanet Archive HTTP {resp.status_code}")
+    rows = resp.json()
+    if not rows:
+        return {}
+    row = rows[0]
+    return {
+        "source": "NASA Exoplanet Archive",
+        "planet_name": row.get("pl_name"),
+        "host_name": row.get("hostname"),
+        "distance_pc": row.get("sy_dist"),
+        "v_mag": row.get("sy_vmag"),
+        "period_days": row.get("pl_orbper"),
+        "transit_duration_hours": row.get("pl_trandur"),
+        "transit_depth_ppm": row.get("pl_trandep"),
+        "radius_earth": row.get("pl_rade"),
+        "mass_earth": row.get("pl_bmasse"),
+        "discovery_year": row.get("disc_year"),
+        "discovery_method": row.get("discoverymethod"),
+    }
+
+
+@app.route("/api/v1/objects/<path:object_name>", methods=["GET"])
+def api_object_details(object_name: str):
+    """Public catalogue details for the selected target."""
+    details = {
+        "name": object_name,
+        "public_sources": [],
+        "errors": [],
+    }
+    for fetcher in (_sesame_lookup, _nasa_exoplanet_lookup):
+        try:
+            data = fetcher(object_name)
+        except Exception as exc:
+            logger.info("Object lookup failed for %s: %s", object_name, exc)
+            details["errors"].append(str(exc))
+            continue
+        if not data:
+            continue
+        source = data.pop("source", "")
+        if source:
+            details["public_sources"].append(source)
+        details.update({k: v for k, v in data.items() if v not in (None, "", {})})
+    return jsonify(details)
 
 
 @app.route("/api/v1/network/status", methods=["GET"])
