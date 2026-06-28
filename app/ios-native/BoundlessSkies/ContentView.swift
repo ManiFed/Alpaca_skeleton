@@ -50,16 +50,16 @@ enum AppConfig {
 }
 
 enum AppTheme {
-    static let night = Color(red: 0.027, green: 0.035, blue: 0.047)
-    static let surface = Color(red: 0.051, green: 0.063, blue: 0.078)
-    static let surface2 = Color(red: 0.071, green: 0.086, blue: 0.11)
-    static let ink = Color(red: 0.945, green: 0.941, blue: 0.91)
+    static let night = Color(red: 0.010, green: 0.012, blue: 0.014)
+    static let surface = Color(red: 0.045, green: 0.050, blue: 0.052)
+    static let surface2 = Color(red: 0.080, green: 0.086, blue: 0.086)
+    static let ink = Color(red: 0.955, green: 0.935, blue: 0.850)
     static let ink2 = ink.opacity(0.68)
     static let ink3 = ink.opacity(0.42)
-    static let accent = Color(red: 0.357, green: 0.839, blue: 0.651)
-    static let sky = Color(red: 0.561, green: 0.851, blue: 1.0)
-    static let warm = Color(red: 1.0, green: 0.753, blue: 0.478)
-    static let danger = Color(red: 1.0, green: 0.42, blue: 0.42)
+    static let accent = Color(red: 0.145, green: 0.910, blue: 0.625)
+    static let sky = Color(red: 0.270, green: 0.720, blue: 1.0)
+    static let warm = Color(red: 1.0, green: 0.555, blue: 0.220)
+    static let danger = Color(red: 1.0, green: 0.240, blue: 0.260)
 }
 
 // MARK: - JSON Helpers
@@ -1159,39 +1159,17 @@ struct DashboardView: View {
     }
 
     private var hero: some View {
-        OpsPanel(accent: readinessColor) {
-            VStack(alignment: .leading, spacing: 18) {
-                NetworkRadarView(
-                    online: onlineNodes,
-                    targets: targets.count,
-                    alerts: unreadCount,
-                    accent: readinessColor
-                )
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("TONIGHT BRIEF")
-                            .opsLabel()
-                        Text(headline)
-                            .font(.system(size: 34, weight: .black, design: .rounded))
-                            .foregroundStyle(AppTheme.ink)
-                            .lineSpacing(0)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(summary)
-                            .font(.subheadline)
-                            .foregroundStyle(AppTheme.ink2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    SignalPill(text: "\(onlineNodes)/\(stats.nodeCount) LIVE", color: readinessColor)
-                }
-
-                HStack(spacing: 10) {
-                    OpsMetric(title: "Observations", value: "\(stats.totalObservations)", color: AppTheme.sky)
-                    OpsMetric(title: "AAVSO", value: "\(stats.aavsoSubmitted)", color: AppTheme.accent)
-                    OpsMetric(title: "Alerts", value: "\(unreadCount)", color: unreadCount == 0 ? AppTheme.accent : AppTheme.danger)
-                }
-            }
-        }
+        MissionControlHero(
+            headline: headline,
+            summary: summary,
+            online: onlineNodes,
+            totalNodes: stats.nodeCount,
+            observations: stats.totalObservations,
+            submitted: stats.aavsoSubmitted,
+            alerts: unreadCount,
+            targets: Array(targets.sorted { $0.priority > $1.priority }.prefix(3)),
+            accent: readinessColor
+        )
     }
 
     private var readinessPanel: some View {
@@ -2491,6 +2469,170 @@ struct MeView: View {
 
 // MARK: - Shared UI
 
+struct MissionControlHero: View {
+    let headline: String
+    let summary: String
+    let online: Int
+    let totalNodes: Int
+    let observations: Int
+    let submitted: Int
+    let alerts: Int
+    let targets: [Target]
+    let accent: Color
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            AppTheme.surface.opacity(0.92)
+            MissionField(accent: accent, alerts: alerts)
+                .opacity(0.95)
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("LIVE SKY CONTROL")
+                            .font(.caption2.weight(.black))
+                            .kerning(2.2)
+                            .foregroundStyle(accent)
+                        Text(headline.uppercased())
+                            .font(.system(size: 32, weight: .black, design: .monospaced))
+                            .foregroundStyle(AppTheme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 8) {
+                        SignalPill(text: alerts > 0 ? "\(alerts) ALERTS" : "CLEAR", color: alerts > 0 ? AppTheme.danger : accent)
+                        Text("\(online)/\(max(totalNodes, online)) NODES")
+                            .font(.caption2.weight(.black))
+                            .monospacedDigit()
+                            .foregroundStyle(AppTheme.ink2)
+                    }
+                }
+
+                Text(summary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 9) {
+                    ControlReadout(label: "OBS", value: "\(observations)", color: AppTheme.sky)
+                    ControlReadout(label: "AAVSO", value: "\(submitted)", color: AppTheme.accent)
+                    ControlReadout(label: "QUEUE", value: "\(targets.count)", color: AppTheme.warm)
+                }
+
+                if !targets.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("PRIORITY TRACKS")
+                            .opsLabel()
+                        ForEach(targets) { target in
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(target.priority > 0.7 ? AppTheme.warm : AppTheme.sky)
+                                    .frame(width: 7, height: 7)
+                                Text(target.name)
+                                    .font(.caption.weight(.black))
+                                    .foregroundStyle(AppTheme.ink)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text("\(Int(target.priority * 100))")
+                                    .font(.caption2.weight(.black))
+                                    .monospacedDigit()
+                                    .foregroundStyle(AppTheme.ink3)
+                            }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                            .background(AppTheme.night.opacity(0.42), in: RoundedRectangle(cornerRadius: 7))
+                        }
+                    }
+                }
+            }
+            .padding(18)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(accent.opacity(0.42), lineWidth: 1))
+        .overlay(alignment: .topTrailing) {
+            Text("// TTN //")
+                .font(.caption2.weight(.black))
+                .kerning(1.4)
+                .foregroundStyle(AppTheme.ink3)
+                .padding(10)
+        }
+    }
+}
+
+struct MissionField: View {
+    let accent: Color
+    let alerts: Int
+
+    private let stars: [(CGFloat, CGFloat, CGFloat, Color)] = [
+        (0.16, 0.25, 2.0, AppTheme.sky),
+        (0.30, 0.64, 3.2, AppTheme.accent),
+        (0.47, 0.35, 2.4, AppTheme.ink),
+        (0.62, 0.77, 2.6, AppTheme.sky),
+        (0.78, 0.48, 3.8, AppTheme.warm),
+        (0.88, 0.22, 1.8, AppTheme.ink),
+    ]
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                LinearGradient(
+                    colors: [accent.opacity(0.20), .clear, AppTheme.night.opacity(0.55)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                ForEach([CGFloat(0.35), CGFloat(0.58), CGFloat(0.82)], id: \.self) { scale in
+                    Ellipse()
+                        .stroke(AppTheme.ink.opacity(0.08), lineWidth: 1)
+                        .frame(width: proxy.size.width * scale, height: proxy.size.height * scale * 0.62)
+                        .position(x: proxy.size.width * 0.67, y: proxy.size.height * 0.44)
+                }
+                Path { path in
+                    path.move(to: CGPoint(x: proxy.size.width * 0.08, y: proxy.size.height * 0.72))
+                    path.addLine(to: CGPoint(x: proxy.size.width * 0.33, y: proxy.size.height * 0.39))
+                    path.addLine(to: CGPoint(x: proxy.size.width * 0.55, y: proxy.size.height * 0.52))
+                    path.addLine(to: CGPoint(x: proxy.size.width * 0.78, y: proxy.size.height * 0.25))
+                }
+                .stroke(accent.opacity(0.32), style: StrokeStyle(lineWidth: 2, dash: [7, 7]))
+                ForEach(Array(stars.enumerated()), id: \.offset) { _, star in
+                    Circle()
+                        .fill(star.3)
+                        .frame(width: star.2 * 2, height: star.2 * 2)
+                        .shadow(color: star.3.opacity(0.8), radius: star.2 * 3)
+                        .position(x: proxy.size.width * star.0, y: proxy.size.height * star.1)
+                }
+                if alerts > 0 {
+                    Circle()
+                        .stroke(AppTheme.danger, lineWidth: 2)
+                        .frame(width: 42, height: 42)
+                        .position(x: proxy.size.width * 0.78, y: proxy.size.height * 0.48)
+                }
+            }
+        }
+    }
+}
+
+struct ControlReadout: View {
+    let label: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption2.weight(.black))
+                .kerning(1.0)
+                .foregroundStyle(AppTheme.ink3)
+            Text(value)
+                .font(.system(size: 26, weight: .black, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(color)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.night.opacity(0.58), in: RoundedRectangle(cornerRadius: 3))
+        .overlay(RoundedRectangle(cornerRadius: 3).stroke(color.opacity(0.30)))
+    }
+}
+
 struct NetworkRadarView: View {
     let online: Int
     let targets: Int
@@ -2582,9 +2724,9 @@ struct OpsPanel<Content: View>: View {
                     .fill(accent)
                     .frame(width: 3)
             },
-            in: RoundedRectangle(cornerRadius: 12)
+            in: RoundedRectangle(cornerRadius: 4)
         )
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(accent.opacity(0.22)))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(accent.opacity(0.28)))
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 4) {
                 Rectangle().fill(accent.opacity(0.55)).frame(width: 18, height: 2)
@@ -2614,7 +2756,7 @@ struct OpsHeader: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(AppTheme.ink2)
                 .frame(width: 32, height: 32)
-                .background(AppTheme.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                .background(AppTheme.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 3))
             VStack(alignment: .leading, spacing: 2) {
                 Text(kicker)
                     .opsLabel()
@@ -2639,7 +2781,7 @@ struct IntentRow: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(color)
                 .frame(width: 32, height: 32)
-                .background(color.opacity(0.11), in: RoundedRectangle(cornerRadius: 8))
+                .background(color.opacity(0.11), in: RoundedRectangle(cornerRadius: 3))
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.subheadline.weight(.bold))
@@ -2653,8 +2795,8 @@ struct IntentRow: View {
             Spacer(minLength: 4)
         }
         .padding(10)
-        .background(color.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.16)))
+        .background(color.opacity(0.045), in: RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(color.opacity(0.16)))
         .accessibilityElement(children: .combine)
     }
 }
