@@ -893,20 +893,21 @@ struct HomeShell: View {
             } else if appState.hasNode == false {
                 SetupWallView(appState: appState)
             } else {
-                TabView(selection: $selectedTab) {
-                    DashboardView(appState: appState, selectedTab: $selectedTab, onAccount: { showingMe = true })
-                        .tabItem { Label("Tonight", systemImage: "sparkles") }
-                        .tag(0)
-                    NodesView(appState: appState, onAccount: { showingMe = true })
-                        .tabItem { Label("Telescopes", systemImage: "dot.radiowaves.left.and.right") }
-                        .tag(1)
-                    ObservationsView(appState: appState, onAccount: { showingMe = true })
-                        .tabItem { Label("Observations", systemImage: "chart.xyaxis.line") }
-                        .tag(2)
-                    NotificationsView(appState: appState, onAccount: { showingMe = true })
-                        .tabItem { Label("Alerts", systemImage: "bell") }
-                        .badge(appState.unreadNotifications)
-                        .tag(3)
+                ZStack {
+                    OperationsBackdrop()
+                    VStack(spacing: 0) {
+                        OpsShellHeader(
+                            title: selectedTitle,
+                            subtitle: selectedSubtitle,
+                            unread: appState.unreadNotifications,
+                            onAccount: { showingMe = true }
+                        )
+                        currentScreen
+                        OpsTabRail(
+                            selectedTab: $selectedTab,
+                            unread: appState.unreadNotifications
+                        )
+                    }
                 }
             }
         }
@@ -918,6 +919,189 @@ struct HomeShell: View {
         }
         .sheet(isPresented: $showingMe) {
             MeView(appState: appState)
+        }
+    }
+
+    private var selectedTitle: String {
+        switch selectedTab {
+        case 1:
+            return "Telescopes"
+        case 2:
+            return "Evidence"
+        case 3:
+            return "Alerts"
+        default:
+            return "Tonight Brief"
+        }
+    }
+
+    private var selectedSubtitle: String {
+        switch selectedTab {
+        case 1:
+            return "Node state, consequence, and next action"
+        case 2:
+            return "Measurements with provenance"
+        case 3:
+            return appState.unreadNotifications == 0 ? "No unread transmissions" : "\(appState.unreadNotifications) unread transmission\(appState.unreadNotifications == 1 ? "" : "s")"
+        default:
+            return "Readiness, plan, and science output"
+        }
+    }
+
+    @ViewBuilder
+    private var currentScreen: some View {
+        switch selectedTab {
+        case 1:
+            NodesView(appState: appState, onAccount: { showingMe = true })
+        case 2:
+            ObservationsView(appState: appState, onAccount: { showingMe = true })
+        case 3:
+            NotificationsView(appState: appState, onAccount: { showingMe = true })
+        default:
+            DashboardView(appState: appState, selectedTab: $selectedTab, onAccount: { showingMe = true })
+        }
+    }
+}
+
+struct OperationsBackdrop: View {
+    var body: some View {
+        ZStack {
+            AppTheme.night.ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    AppTheme.accent.opacity(0.12),
+                    .clear,
+                    AppTheme.sky.opacity(0.08),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            GridOverlay()
+                .stroke(AppTheme.ink.opacity(0.045), lineWidth: 0.6)
+                .ignoresSafeArea()
+        }
+    }
+}
+
+struct GridOverlay: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let step: CGFloat = 24
+        var x = rect.minX
+        while x <= rect.maxX {
+            path.move(to: CGPoint(x: x, y: rect.minY))
+            path.addLine(to: CGPoint(x: x, y: rect.maxY))
+            x += step
+        }
+        var y = rect.minY
+        while y <= rect.maxY {
+            path.move(to: CGPoint(x: rect.minX, y: y))
+            path.addLine(to: CGPoint(x: rect.maxX, y: y))
+            y += step
+        }
+        return path
+    }
+}
+
+struct OpsShellHeader: View {
+    let title: String
+    let subtitle: String
+    let unread: Int
+    let onAccount: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("TTN OPERATIONS")
+                    .opsLabel()
+                Text(title)
+                    .font(.title3.weight(.black))
+                    .foregroundStyle(AppTheme.ink)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.ink2)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if unread > 0 {
+                SignalPill(text: "\(unread) ALERT\(unread == 1 ? "" : "S")", color: AppTheme.danger)
+            } else {
+                SignalPill(text: "READY", color: AppTheme.accent)
+            }
+            Button(action: onAccount) {
+                Image(systemName: "person.crop.circle")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 38, height: 38)
+                    .background(AppTheme.ink.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.ink.opacity(0.12)))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(AppTheme.surface.opacity(0.94))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AppTheme.ink.opacity(0.12))
+                .frame(height: 0.7)
+        }
+    }
+}
+
+struct OpsTabRail: View {
+    @Binding var selectedTab: Int
+    let unread: Int
+
+    private let tabs: [(Int, String, String, Color)] = [
+        (0, "Tonight", "sparkles", AppTheme.accent),
+        (1, "Scopes", "dot.radiowaves.left.and.right", AppTheme.sky),
+        (2, "Data", "waveform.path.ecg", AppTheme.warm),
+        (3, "Alerts", "bell", AppTheme.danger),
+    ]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(tabs, id: \.0) { tab in
+                Button { selectedTab = tab.0 } label: {
+                    VStack(spacing: 5) {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: tab.2)
+                                .font(.headline.weight(.bold))
+                            if tab.0 == 3 && unread > 0 {
+                                Circle()
+                                    .fill(AppTheme.danger)
+                                    .frame(width: 8, height: 8)
+                                    .offset(x: 7, y: -5)
+                            }
+                        }
+                        Text(tab.1)
+                            .font(.caption2.weight(.black))
+                    }
+                    .foregroundStyle(selectedTab == tab.0 ? tab.3 : AppTheme.ink3)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        (selectedTab == tab.0 ? tab.3.opacity(0.13) : AppTheme.ink.opacity(0.03)),
+                        in: RoundedRectangle(cornerRadius: 11)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 11)
+                            .stroke(selectedTab == tab.0 ? tab.3.opacity(0.38) : AppTheme.ink.opacity(0.08))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 10)
+        .background(AppTheme.surface.opacity(0.96))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(AppTheme.ink.opacity(0.12))
+                .frame(height: 0.7)
         }
     }
 }
