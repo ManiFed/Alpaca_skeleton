@@ -67,7 +67,9 @@ class PreviousLocation {
 /// A telescope node the member has claimed (GET /me/nodes).
 class Node {
   final String nodeId;
+  final String displayName;
   final String telescopeModel;
+  final String telescopeName;
   final String city;
   final String country;
   final String status;
@@ -81,7 +83,9 @@ class Node {
 
   const Node({
     required this.nodeId,
+    this.displayName = '',
     required this.telescopeModel,
+    this.telescopeName = '',
     required this.city,
     required this.country,
     required this.status,
@@ -100,7 +104,9 @@ class Node {
         .toList();
     return Node(
       nodeId: _asStr(j['node_id']),
+      displayName: _asStr(j['display_name']),
       telescopeModel: _asStr(j['telescope_model']),
+      telescopeName: _asStr(j['telescope_name']),
       city: _asStr(j['city']),
       country: _asStr(j['country']),
       status: _asStr(j['status']),
@@ -120,6 +126,14 @@ class Node {
   String get location {
     final parts = [city, country].where((p) => p.isNotEmpty).toList();
     return parts.isEmpty ? 'Location unknown' : parts.join(', ');
+  }
+
+  /// Member-chosen label, then device name, then model, then node id.
+  String get label {
+    if (displayName.isNotEmpty) return displayName;
+    if (telescopeName.isNotEmpty) return telescopeName;
+    if (telescopeModel.isNotEmpty) return telescopeModel;
+    return nodeId.isNotEmpty ? nodeId : 'Telescope';
   }
 }
 

@@ -353,14 +353,15 @@ def api_register():
         except ValueError as exc:
             logger.warning("Activation code race for %s: %s", creds["node_id"], exc)
             return jsonify({"error": str(exc)}), 409
+        display_name = str(code_row.get("telescope_display_name") or "").strip() if code_row else ""
         if user_id and not db.query_one(
             "SELECT 1 FROM node_members WHERE node_id = %s AND user_id = %s",
             (creds["node_id"], user_id),
         ):
             db.execute(
-                "INSERT INTO node_members (node_id, user_id, claimed_at)"
-                " VALUES (%s,%s,%s)",
-                (creds["node_id"], user_id, _now()),
+                "INSERT INTO node_members (node_id, user_id, claimed_at, display_name)"
+                " VALUES (%s,%s,%s,%s)",
+                (creds["node_id"], user_id, _now(), display_name),
             )
         logger.info("Activation code %s consumed — node %s linked to user %s",
                     activation_code, creds["node_id"], user_id or "(generic)")
@@ -1205,10 +1206,10 @@ def api_me(user):
 def api_me_nodes(user):
     """All nodes this member has claimed."""
     rows = db.query(
-        """SELECT n.node_id, n.telescope_model, n.city, n.country, n.status,
+        """SELECT n.node_id, n.telescope_model, n.telescope_name, n.city, n.country, n.status,
                   n.last_heartbeat, n.portable, n.vacation_until,
                   n.session_city, n.session_site_name, n.previous_locations,
-                  nm.claimed_at
+                  nm.claimed_at, nm.display_name
            FROM nodes n
            JOIN node_members nm ON nm.node_id = n.node_id
            WHERE nm.user_id = %s""",
@@ -1346,6 +1347,22 @@ def api_me_cancel_vacation(user, node_id):
         return jsonify({"error": "node not found"}), 404
     registry.clear_vacation(node_id)
     return jsonify({"ok": True})
+
+
+@app.route("/api/v1/me/nodes/<node_id>", methods=["PUT"])
+@auth.require_member
+def api_me_update_node(user, node_id):
+    """Update member-specific settings for a claimed node (e.g. display name)."""
+    if not _assert_owns_node(user["user_id"], node_id):
+        return jsonify({"error": "node not found"}), 404
+    body = request.get_json(force=True, silent=True) or {}
+    if "display_name" in body:
+        display_name = str(body.get("display_name") or "").strip()[:80]
+        db.execute(
+            "UPDATE node_members SET display_name = %s WHERE node_id = %s AND user_id = %s",
+            (display_name, node_id, user["user_id"]),
+        )
+    return jsonify({"ok": True, "node_id": node_id})
 
 
 @app.route("/api/v1/me/nodes/<node_id>", methods=["DELETE"])
@@ -1628,16 +1645,17 @@ def api_me_generate_activation_code(user):
         telescope_specs_json = json.dumps(specs)
 
     portable = 1 if body.get("portable") else 0
+    telescope_display_name = str(body.get("telescope_display_name") or "").strip()[:80]
 
     code = _generate_activation_code()
     expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
     db.execute(
         "INSERT INTO activation_codes"
         " (code, user_id, created_at, expires_at, observatory_name, latitude, longitude,"
-        "  telescope_model, telescope_specs, portable)"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        "  telescope_model, telescope_specs, portable, telescope_display_name)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (code, user["user_id"], _now(), expires, location_name, lat, lon,
-         telescope_model, telescope_specs_json, portable),
+         telescope_model, telescope_specs_json, portable, telescope_display_name),
     )
     logger.info("Activation code generated for member %s: %s (location: %s, portable: %s)",
                 user["user_id"], code, location_name or "not set", bool(portable))

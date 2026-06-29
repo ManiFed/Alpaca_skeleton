@@ -205,9 +205,7 @@ class _NodeCard extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            node.telescopeModel.isEmpty
-                                ? 'Telescope'
-                                : node.telescopeModel,
+                            node.label,
                             style: const TextStyle(
                               fontFamily: 'Geist',
                               fontSize: 16,
@@ -530,6 +528,50 @@ class _NodeManageSheetState extends State<_NodeManageSheet> {
     }
   }
 
+  Future<void> _renameTelescope() async {
+    final ctrl = TextEditingController(text: widget.node.displayName);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Name your telescope'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 80,
+          decoration: const InputDecoration(
+            labelText: 'Display name',
+            hintText: 'e.g. Backyard scope, Starfield Ranch',
+            border: OutlineInputBorder(),
+          ),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => Navigator.of(ctx).pop(ctrl.text.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (newName == null) return;
+    setState(() { _busy = true; _error = null; });
+    try {
+      await context
+          .read<AppState>()
+          .api
+          .updateNodeDisplayName(widget.node.nodeId, newName);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) setState(() { _busy = false; _error = '$e'; });
+    }
+  }
+
   Future<void> _disconnect() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -568,7 +610,7 @@ class _NodeManageSheetState extends State<_NodeManageSheet> {
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
     final node = widget.node;
-    final name = node.telescopeModel.isEmpty ? 'Telescope' : node.telescopeModel;
+    final name = node.label;
 
     return DraggableScrollableSheet(
       expand: false,
@@ -680,6 +722,18 @@ class _NodeManageSheetState extends State<_NodeManageSheet> {
                       style: tt.labelSmall
                           ?.copyWith(letterSpacing: 1.4, color: BSTheme.ink3)),
                   const SizedBox(height: 12),
+
+                  _ManageTile(
+                    icon: Icons.drive_file_rename_outline,
+                    color: BSTheme.accent,
+                    title: 'Rename telescope',
+                    subtitle: node.displayName.isEmpty
+                        ? 'Give it a name you\'ll recognize'
+                        : 'Currently "${node.displayName}"',
+                    onTap: _busy ? null : _renameTelescope,
+                  ),
+
+                  const SizedBox(height: 8),
 
                   // Vacation
                   if (node.isOnVacation) ...[
@@ -1818,6 +1872,7 @@ enum _ScopeStep { idle, confirming, confirmed }
 class _ClaimSheetState extends State<_ClaimSheet> {
   final _locationCtrl = TextEditingController();
   final _scopeCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
   String? _code;
   bool _busy = false;
   bool _locating = false;
@@ -1845,6 +1900,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
     super.initState();
     _locationCtrl.addListener(() => setState(() {}));
     _scopeCtrl.addListener(() => setState(() {}));
+    _nameCtrl.addListener(() => setState(() {}));
     _loadCatalog();
   }
 
@@ -1872,6 +1928,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
   void dispose() {
     _locationCtrl.dispose();
     _scopeCtrl.dispose();
+    _nameCtrl.dispose();
     super.dispose();
   }
 
@@ -2038,6 +2095,9 @@ class _ClaimSheetState extends State<_ClaimSheet> {
             lat: _lat,
             lon: _lon,
             telescopeModel: scopeModel,
+            telescopeDisplayName: _nameCtrl.text.trim().isEmpty
+                ? null
+                : _nameCtrl.text.trim(),
             telescopeSpecs: _selectedScope?.toSpecPayload(),
             portable: _portable ?? false,
           );
@@ -2074,6 +2134,17 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           if (_code == null) ...[
             ..._buildScopeSection(tt),
             if (_scopeStep == _ScopeStep.confirmed) ...[
+              const SizedBox(height: 20),
+              TextField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Name your telescope (optional)',
+                  hintText: 'e.g. Backyard scope, Starfield Ranch',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.drive_file_rename_outline),
+                ),
+                textInputAction: TextInputAction.next,
+              ),
               const SizedBox(height: 20),
               const Divider(height: 1),
               const SizedBox(height: 20),
@@ -2687,6 +2758,7 @@ class _ClaimSheetState extends State<_ClaimSheet> {
           _locationCtrl.clear();
           _resetScope();
           _scopeCtrl.clear();
+          _nameCtrl.clear();
         }),
         icon: const Icon(Icons.arrow_back, size: 16),
         label: const Text('Start over'),

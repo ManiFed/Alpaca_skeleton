@@ -147,6 +147,7 @@ class ApiClient {
     double? lat,
     double? lon,
     String? telescopeModel,
+    String? telescopeDisplayName,
     Map<String, dynamic>? telescopeSpecs,
     bool portable = false,
   }) async {
@@ -160,6 +161,9 @@ class ApiClient {
     }
     if (telescopeModel != null && telescopeModel.isNotEmpty) {
       body['telescope_model'] = telescopeModel;
+    }
+    if (telescopeDisplayName != null && telescopeDisplayName.isNotEmpty) {
+      body['telescope_display_name'] = telescopeDisplayName;
     }
     if (telescopeSpecs != null && telescopeSpecs.isNotEmpty) {
       body['telescope_specs'] = telescopeSpecs;
@@ -197,6 +201,10 @@ class ApiClient {
 
   /// Disconnect a node from this account.
   Future<void> disconnectNode(String nodeId) => _delete('/me/nodes/$nodeId');
+
+  /// Set the member's custom display name for a claimed node.
+  Future<void> updateNodeDisplayName(String nodeId, String displayName) =>
+      _put('/me/nodes/$nodeId', {'display_name': displayName});
 
   /// Fetch sky quality (mpsas + bortle) for a lat/lon without starting a session.
   Future<Map<String, dynamic>> skyQuality(double lat, double lon) =>

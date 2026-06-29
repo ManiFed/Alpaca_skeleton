@@ -173,12 +173,15 @@ class _DashboardViewState extends State<_DashboardView> {
     final unread = widget.data.alerts.where((a) => !a.read).length;
     final priorityTargets = [...widget.data.targets]
       ..sort((a, b) => b.priority.compareTo(a.priority));
-    final selectedPlan =
-        _selectedPlan(widget.data.timeline, _selectedTargetName);
+    final hasPlan = widget.data.timeline.isNotEmpty;
+    final selectedPlan = hasPlan
+        ? _selectedPlan(widget.data.timeline, _selectedTargetName)
+        : null;
     final selectedTarget = _selectedTargetForPlan(
       selectedPlan,
       priorityTargets,
       selectedName: _selectedTargetName,
+      hasPlan: hasPlan,
     );
 
     return LayoutBuilder(
@@ -307,22 +310,24 @@ class _DashboardViewState extends State<_DashboardView> {
 
 TimelineItem? _selectedPlan(List<TimelineItem> timeline, String? selectedName) {
   if (timeline.isEmpty) return null;
-  if (selectedName == null || selectedName.isEmpty) return timeline.first;
-  for (final item in timeline) {
-    if (item.target.toLowerCase() == selectedName.toLowerCase() ||
-        item.targetId.toLowerCase() == selectedName.toLowerCase()) {
-      return item;
+  if (selectedName != null && selectedName.isNotEmpty) {
+    for (final item in timeline) {
+      if (item.target.toLowerCase() == selectedName.toLowerCase() ||
+          item.targetId.toLowerCase() == selectedName.toLowerCase()) {
+        return item;
+      }
     }
+    return null;
   }
-  return null;
+  return timeline.first;
 }
 
 Target? _selectedTargetForPlan(
   TimelineItem? plan,
   List<Target> targets, {
   String? selectedName,
+  bool hasPlan = false,
 }) {
-  if (targets.isEmpty) return null;
   if (selectedName != null && selectedName.isNotEmpty) {
     for (final target in targets) {
       if (target.name.toLowerCase() == selectedName.toLowerCase() ||
@@ -331,14 +336,16 @@ Target? _selectedTargetForPlan(
       }
     }
   }
-  if (plan == null) return targets.first;
-  for (final target in targets) {
-    if (target.targetId == plan.targetId ||
-        target.name.toLowerCase() == plan.target.toLowerCase()) {
-      return target;
+  if (plan != null) {
+    for (final target in targets) {
+      if (target.targetId == plan.targetId ||
+          target.name.toLowerCase() == plan.target.toLowerCase()) {
+        return target;
+      }
     }
+    return null;
   }
-  return targets.first;
+  return null;
 }
 
 class _TelescopeOpsPanel extends StatelessWidget {
@@ -356,8 +363,8 @@ class _TelescopeOpsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final node = nodes.isEmpty ? null : nodes.first;
     final online = nodes.where((n) => n.online).length;
-    final selectedLabel = node?.nodeId.isNotEmpty == true
-        ? node!.nodeId
+    final selectedLabel = node != null
+        ? node.label
         : nodes.length > 1
             ? 'All telescopes'
             : 'No telescope';
@@ -423,31 +430,11 @@ class _TelescopeOpsPanel extends StatelessWidget {
                   value: _nodeStatus(node),
                   color: node?.online == true ? BSTheme.ink : BSTheme.ink3,
                 ),
-                _KeyValueLine(
-                  label: 'Mount',
-                  value: node?.online == true ? 'Tracking' : 'Waiting',
-                  color: node?.online == true ? BSTheme.ink2 : BSTheme.ink3,
-                ),
-                _KeyValueLine(
-                  label: 'Dome',
-                  value: node?.online == true ? 'Open' : 'Unknown',
-                  color: node?.online == true ? BSTheme.ink2 : BSTheme.ink3,
-                ),
-                _KeyValueLine(
-                  label: 'Camera',
-                  value: node?.online == true ? '-20.3 °C' : 'Unknown',
-                ),
-                const SizedBox(height: 16),
-                _SectionLabel('Conditions'),
-                const SizedBox(height: 8),
-                const _KeyValueLine(
-                  label: 'Sky',
-                  value: 'Clear',
-                  color: BSTheme.ink2,
-                ),
-                const _KeyValueLine(label: 'Seeing', value: '2.1"'),
-                const _KeyValueLine(label: 'Humidity', value: '34%'),
-                const _KeyValueLine(label: 'Moon', value: '12% · 108° away'),
+                if (node?.telescopeModel.isNotEmpty == true)
+                  _KeyValueLine(
+                    label: 'Model',
+                    value: node!.telescopeModel,
+                  ),
                 const SizedBox(height: 16),
                 GestureDetector(
                   onTap: onOpenAlerts,
@@ -480,7 +467,6 @@ class _ObservingPlanPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rows = timeline.isNotEmpty ? timeline.take(4).toList() : <TimelineItem>[];
-    final targetFallback = targets.take(4).toList();
 
     return _OpsPanel(
       padding: EdgeInsets.zero,
@@ -490,31 +476,23 @@ class _ObservingPlanPanel extends StatelessWidget {
           _WorkbenchHeader(
             title: "Tonight's observing plan",
             subtitle: _tonightRange(),
-            trailing: timeline.isNotEmpty
-                ? '${timeline.length} targets'
-                : '${targetFallback.length} targets',
+            trailing: timeline.isNotEmpty ? '${timeline.length} targets' : null,
           ),
-          const _PlanHeaderRow(),
-          if (rows.isNotEmpty)
+          if (rows.isNotEmpty) ...[
+            const _PlanHeaderRow(),
             ...rows.map((item) {
               return _PlanTimelineRow(
                 item: item,
                 selected: selectedPlan == item,
                 onTap: () => onSelectTarget(item.target),
               );
-            })
-          else if (targetFallback.isNotEmpty)
-            ...targetFallback.map((target) {
-              return _PlanTargetRow(
-                target: target,
-                selected: selectedTarget?.targetId == target.targetId,
-                onTap: () => onSelectTarget(target.name),
-              );
-            })
-          else
+            }),
+          ] else
             const Padding(
               padding: EdgeInsets.all(16),
-              child: _EmptyLine('No scheduled assignments yet.'),
+              child: _EmptyLine(
+                'No observing plan yet. Your telescope will receive assignments when tonight\'s plan is ready.',
+              ),
             ),
         ],
       ),
@@ -536,7 +514,7 @@ class _FieldPreviewPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasPointing = plan != null && (plan!.ra != 0 || plan!.dec != 0);
-    final label = plan?.target ?? target?.name ?? 'Next target';
+    final label = plan?.target ?? target?.name ?? 'No target';
     final body = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -662,28 +640,43 @@ class _SelectedTargetPanelState extends State<_SelectedTargetPanel> {
   @override
   void initState() {
     super.initState();
-    _detailsFuture = _loadDetails();
+    _detailsFuture = _loadDetails(_lookupName);
   }
 
   @override
   void didUpdateWidget(_SelectedTargetPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final name = _title;
+    final name = _lookupName;
     if (name != _loadedName) {
-      _detailsFuture = _loadDetails();
+      setState(() => _detailsFuture = _loadDetails(name));
     }
   }
 
-  String get _title =>
-      widget.plan?.target ?? widget.target?.name ?? widget.selectedName ?? '';
+  String get _lookupName {
+    if (widget.selectedName != null && widget.selectedName!.isNotEmpty) {
+      return widget.selectedName!;
+    }
+    if (widget.plan != null && widget.plan!.target.isNotEmpty) {
+      return widget.plan!.target;
+    }
+    return widget.target?.name ?? '';
+  }
 
-  Future<ObjectDetails?> _loadDetails() async {
-    final name = _title;
+  String get _title => _lookupName;
+
+  Future<ObjectDetails?> _loadDetails(String name) async {
     _loadedName = name;
     if (name.isEmpty) return null;
+    final api = context.read<AppState>().api;
     try {
-      return await context.read<AppState>().api.objectDetails(name);
+      return await api.objectDetails(name);
     } catch (_) {
+      final id = widget.target?.targetId ?? '';
+      if (id.isNotEmpty && id.toLowerCase() != name.toLowerCase()) {
+        try {
+          return await api.objectDetails(id);
+        } catch (_) {}
+      }
       return null;
     }
   }
@@ -691,6 +684,7 @@ class _SelectedTargetPanelState extends State<_SelectedTargetPanel> {
   @override
   Widget build(BuildContext context) {
     final title = _title.isEmpty ? 'No target selected' : _title;
+    final hasSelection = _title.isNotEmpty;
     final targetType = widget.target?.targetType.isNotEmpty == true
         ? widget.target!.targetType
         : 'Target';
@@ -731,58 +725,81 @@ class _SelectedTargetPanelState extends State<_SelectedTargetPanel> {
                     color: BSTheme.ink3,
                   ),
                 ),
-                const SizedBox(height: 14),
-                _SectionLabel('Coordinates'),
-                const SizedBox(height: 8),
-                _KeyValueLine(
-                  label: 'RA',
-                  value: widget.plan == null ? '—' : _formatRa(widget.plan!.ra),
-                ),
-                _KeyValueLine(
-                  label: 'Dec',
-                  value:
-                      widget.plan == null ? '—' : _formatDec(widget.plan!.dec),
-                ),
-                _KeyValueLine(
-                  label: 'Magnitude',
-                  value: widget.target?.mag == null
-                      ? '—'
-                      : '${widget.target!.mag!.toStringAsFixed(2)} ${widget.target!.magBand}',
-                ),
-                const SizedBox(height: 12),
-                _SectionLabel('Scheduled observation'),
-                const SizedBox(height: 8),
-                _KeyValueLine(label: 'Start', value: widget.plan?.startTime ?? '—'),
-                _KeyValueLine(
-                  label: 'Exposure',
-                  value: widget.plan == null
-                      ? '—'
-                      : '${widget.plan!.expDur.toStringAsFixed(0)} s',
-                ),
-                _KeyValueLine(
-                  label: 'Images',
-                  value: widget.plan == null ? '—' : '${widget.plan!.expCount}',
-                ),
-                _KeyValueLine(
-                  label: 'Filter',
-                  value: widget.plan?.filter.isNotEmpty == true
-                      ? widget.plan!.filter.toUpperCase()
-                      : '—',
-                ),
-                const SizedBox(height: 12),
-                FutureBuilder<ObjectDetails?>(
-                  future: _detailsFuture,
-                  builder: (context, snap) {
-                    if (snap.connectionState == ConnectionState.waiting) {
-                      return const _CatalogueLoading();
-                    }
-                    final details = snap.data;
-                    if (details == null) {
-                      return const _EmptyLine('Public catalogue lookup unavailable.');
-                    }
-                    return _CatalogueDetails(details: details);
-                  },
-                ),
+                if (!hasSelection) ...[
+                  const SizedBox(height: 14),
+                  const _EmptyLine(
+                    'Select a target from tonight\'s plan to see coordinates and catalogue data.',
+                  ),
+                ] else ...[
+                  const SizedBox(height: 14),
+                  _SectionLabel('Coordinates'),
+                  const SizedBox(height: 8),
+                  _KeyValueLine(
+                    label: 'RA',
+                    value: widget.plan == null
+                        ? '—'
+                        : (widget.plan!.ra != 0 || widget.plan!.dec != 0)
+                            ? _formatRa(widget.plan!.ra)
+                            : '—',
+                  ),
+                  _KeyValueLine(
+                    label: 'Dec',
+                    value: widget.plan == null
+                        ? '—'
+                        : (widget.plan!.ra != 0 || widget.plan!.dec != 0)
+                            ? _formatDec(widget.plan!.dec)
+                            : '—',
+                  ),
+                  _KeyValueLine(
+                    label: 'Magnitude',
+                    value: widget.target?.mag == null
+                        ? '—'
+                        : '${widget.target!.mag!.toStringAsFixed(2)} ${widget.target!.magBand}',
+                  ),
+                  if (widget.plan != null) ...[
+                    const SizedBox(height: 12),
+                    _SectionLabel('Scheduled observation'),
+                    const SizedBox(height: 8),
+                    _KeyValueLine(
+                        label: 'Start', value: widget.plan?.startTime ?? '—'),
+                    _KeyValueLine(
+                      label: 'Exposure',
+                      value: '${widget.plan!.expDur.toStringAsFixed(0)} s',
+                    ),
+                    _KeyValueLine(
+                      label: 'Images',
+                      value: '${widget.plan!.expCount}',
+                    ),
+                    _KeyValueLine(
+                      label: 'Filter',
+                      value: widget.plan?.filter.isNotEmpty == true
+                          ? widget.plan!.filter.toUpperCase()
+                          : '—',
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  FutureBuilder<ObjectDetails?>(
+                    key: ValueKey(_lookupName),
+                    future: _detailsFuture,
+                    builder: (context, snap) {
+                      if (snap.connectionState == ConnectionState.waiting) {
+                        return const _CatalogueLoading();
+                      }
+                      if (snap.hasError) {
+                        return const _EmptyLine(
+                          'Could not load catalogue data for this target.',
+                        );
+                      }
+                      final details = snap.data;
+                      if (details == null) {
+                        return const _EmptyLine(
+                          'No catalogue entry found for this target.',
+                        );
+                      }
+                      return _CatalogueDetails(details: details);
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -1123,20 +1140,9 @@ class _PlanTimelineRow extends StatelessWidget {
                   ),
                 ),
                 if (selected) ...[
-                  const SizedBox(height: 10),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      minHeight: 3,
-                      value: 0.28,
-                      backgroundColor: BSTheme.glassBorder,
-                      valueColor:
-                          const AlwaysStoppedAnimation<Color>(BSTheme.sky),
-                    ),
-                  ),
                   const SizedBox(height: 6),
                   Text(
-                    '${duration.toStringAsFixed(0)} min planned · target overlay active',
+                    '${duration.toStringAsFixed(0)} min planned',
                     style: const TextStyle(
                       fontFamily: 'Geist',
                       fontSize: 10,
