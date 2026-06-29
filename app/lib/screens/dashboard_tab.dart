@@ -475,79 +475,74 @@ class _TelescopeOpsPanel extends StatelessWidget {
 
     return _OpsPanel(
       padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _WorkbenchHeader(
-            title: 'Telescope',
-            trailing: '$online/${nodes.length} online',
-            color: BSTheme.ink3,
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: _PanelScrollBody(
+        header: _WorkbenchHeader(
+          title: 'Telescope',
+          trailing: '$online/${nodes.length} online',
+          color: BSTheme.ink3,
+        ),
+        bodyPadding: const EdgeInsets.all(12),
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    LiveDot(
-                      color: node?.online == true
-                          ? BSTheme.accent
-                          : BSTheme.ink3,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        selectedLabel,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontFamily: 'Geist',
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: BSTheme.ink,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      node?.online == true ? 'Online' : 'Offline',
-                      style: TextStyle(
-                        fontFamily: 'Geist',
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: BSTheme.ink2,
-                      ),
-                    ),
-                  ],
+                LiveDot(
+                  color: node?.online == true
+                      ? BSTheme.accent
+                      : BSTheme.ink3,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    selectedLabel,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: BSTheme.ink,
+                    ),
+                  ),
+                ),
                 Text(
-                  node?.location ?? 'Connect a node to begin observing.',
-                  style: const TextStyle(
+                  node?.online == true ? 'Online' : 'Offline',
+                  style: TextStyle(
                     fontFamily: 'Geist',
                     fontSize: 12,
-                    color: BSTheme.ink3,
+                    fontWeight: FontWeight.w800,
+                    color: BSTheme.ink2,
                   ),
-                ),
-                const SizedBox(height: 18),
-                _KeyValueLine(
-                  label: 'Status',
-                  value: _nodeStatus(node),
-                  color: node?.online == true ? BSTheme.ink : BSTheme.ink3,
-                ),
-                if (node?.telescopeModel.isNotEmpty == true)
-                  _KeyValueLine(
-                    label: 'Model',
-                    value: node!.telescopeModel,
-                  ),
-                const SizedBox(height: 16),
-                GestureDetector(
-                  onTap: onOpenAlerts,
-                  child: _AlertSummary(unread: unread),
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 4),
+            Text(
+              node?.location ?? 'Connect a node to begin observing.',
+              style: const TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 12,
+                color: BSTheme.ink3,
+              ),
+            ),
+            const SizedBox(height: 18),
+            _KeyValueLine(
+              label: 'Status',
+              value: _nodeStatus(node),
+              color: node?.online == true ? BSTheme.ink : BSTheme.ink3,
+            ),
+            if (node?.telescopeModel.isNotEmpty == true)
+              _KeyValueLine(
+                label: 'Model',
+                value: node!.telescopeModel,
+              ),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: onOpenAlerts,
+              child: _AlertSummary(unread: unread),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -574,31 +569,33 @@ class _ObservingPlanPanel extends StatelessWidget {
 
     return _OpsPanel(
       padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _WorkbenchHeader(
-            title: "Tonight's observing plan",
-            subtitle: _tonightRange(),
-            trailing: timeline.isNotEmpty ? '${timeline.length} targets' : null,
-          ),
-          if (rows.isNotEmpty) ...[
-            const _PlanHeaderRow(),
-            ...rows.map((item) {
-              return _PlanTimelineRow(
-                item: item,
-                selected: selectedPlan == item,
-                onTap: () => onSelectTarget(item.target),
-              );
-            }),
-          ] else
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: _EmptyLine(
-                'No observing plan yet. Your telescope will receive assignments when tonight\'s plan is ready.',
+      child: _PanelScrollBody(
+        header: _WorkbenchHeader(
+          title: "Tonight's observing plan",
+          subtitle: _tonightRange(),
+          trailing: timeline.isNotEmpty ? '${timeline.length} targets' : null,
+        ),
+        bodyPadding: EdgeInsets.zero,
+        body: rows.isNotEmpty
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _PlanHeaderRow(),
+                  ...rows.map((item) {
+                    return _PlanTimelineRow(
+                      item: item,
+                      selected: selectedPlan == item,
+                      onTap: () => onSelectTarget(item.target),
+                    );
+                  }),
+                ],
+              )
+            : const Padding(
+                padding: EdgeInsets.all(16),
+                child: _EmptyLine(
+                  'No observing plan yet. Your telescope will receive assignments when tonight\'s plan is ready.',
+                ),
               ),
-            ),
-        ],
       ),
     );
   }
@@ -795,119 +792,113 @@ class _SelectedTargetPanelState extends State<_SelectedTargetPanel> {
 
     return _OpsPanel(
       padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _WorkbenchHeader(
-            title: 'Selected target',
-            trailingWidget: _TargetPickerButton(
-              targets: widget.targets,
-              selectedName: title,
-              onSelectTarget: widget.onSelectTarget,
-            ),
+      child: _PanelScrollBody(
+        header: _WorkbenchHeader(
+          title: 'Selected target',
+          trailingWidget: _TargetPickerButton(
+            targets: widget.targets,
+            selectedName: title,
+            onSelectTarget: widget.onSelectTarget,
           ),
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 21,
-                    fontWeight: FontWeight.w900,
-                    color: BSTheme.ink,
-                  ),
+        ),
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 21,
+                fontWeight: FontWeight.w900,
+                color: BSTheme.ink,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _programSummary(widget.target, targetType),
+              style: const TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 13,
+                color: BSTheme.ink3,
+              ),
+            ),
+            if (!hasSelection) ...[
+              const SizedBox(height: 14),
+              const _EmptyLine(
+                'Select a target from tonight\'s plan to see coordinates and catalogue data.',
+              ),
+            ] else ...[
+              const SizedBox(height: 14),
+              _SectionLabel('Coordinates'),
+              const SizedBox(height: 8),
+              _KeyValueLine(
+                label: 'RA',
+                value: widget.plan == null
+                    ? '—'
+                    : (widget.plan!.ra != 0 || widget.plan!.dec != 0)
+                        ? _formatRa(widget.plan!.ra)
+                        : '—',
+              ),
+              _KeyValueLine(
+                label: 'Dec',
+                value: widget.plan == null
+                    ? '—'
+                    : (widget.plan!.ra != 0 || widget.plan!.dec != 0)
+                        ? _formatDec(widget.plan!.dec)
+                        : '—',
+              ),
+              _KeyValueLine(
+                label: 'Magnitude',
+                value: widget.target?.mag == null
+                    ? '—'
+                    : '${widget.target!.mag!.toStringAsFixed(2)} ${widget.target!.magBand}',
+              ),
+              if (widget.plan != null) ...[
+                const SizedBox(height: 12),
+                _SectionLabel('Scheduled observation'),
+                const SizedBox(height: 8),
+                _KeyValueLine(
+                    label: 'Start', value: widget.plan?.startTime ?? '—'),
+                _KeyValueLine(
+                  label: 'Exposure',
+                  value: '${widget.plan!.expDur.toStringAsFixed(0)} s',
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _programSummary(widget.target, targetType),
-                  style: const TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 13,
-                    color: BSTheme.ink3,
-                  ),
+                _KeyValueLine(
+                  label: 'Images',
+                  value: '${widget.plan!.expCount}',
                 ),
-                if (!hasSelection) ...[
-                  const SizedBox(height: 14),
-                  const _EmptyLine(
-                    'Select a target from tonight\'s plan to see coordinates and catalogue data.',
-                  ),
-                ] else ...[
-                  const SizedBox(height: 14),
-                  _SectionLabel('Coordinates'),
-                  const SizedBox(height: 8),
-                  _KeyValueLine(
-                    label: 'RA',
-                    value: widget.plan == null
-                        ? '—'
-                        : (widget.plan!.ra != 0 || widget.plan!.dec != 0)
-                            ? _formatRa(widget.plan!.ra)
-                            : '—',
-                  ),
-                  _KeyValueLine(
-                    label: 'Dec',
-                    value: widget.plan == null
-                        ? '—'
-                        : (widget.plan!.ra != 0 || widget.plan!.dec != 0)
-                            ? _formatDec(widget.plan!.dec)
-                            : '—',
-                  ),
-                  _KeyValueLine(
-                    label: 'Magnitude',
-                    value: widget.target?.mag == null
-                        ? '—'
-                        : '${widget.target!.mag!.toStringAsFixed(2)} ${widget.target!.magBand}',
-                  ),
-                  if (widget.plan != null) ...[
-                    const SizedBox(height: 12),
-                    _SectionLabel('Scheduled observation'),
-                    const SizedBox(height: 8),
-                    _KeyValueLine(
-                        label: 'Start', value: widget.plan?.startTime ?? '—'),
-                    _KeyValueLine(
-                      label: 'Exposure',
-                      value: '${widget.plan!.expDur.toStringAsFixed(0)} s',
-                    ),
-                    _KeyValueLine(
-                      label: 'Images',
-                      value: '${widget.plan!.expCount}',
-                    ),
-                    _KeyValueLine(
-                      label: 'Filter',
-                      value: widget.plan?.filter.isNotEmpty == true
-                          ? widget.plan!.filter.toUpperCase()
-                          : '—',
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  FutureBuilder<ObjectDetails?>(
-                    key: ValueKey(_lookupName),
-                    future: _detailsFuture,
-                    builder: (context, snap) {
-                      if (snap.connectionState == ConnectionState.waiting) {
-                        return const _CatalogueLoading();
-                      }
-                      if (snap.hasError) {
-                        return const _EmptyLine(
-                          'Could not load catalogue data for this target.',
-                        );
-                      }
-                      final details = snap.data;
-                      if (details == null) {
-                        return const _EmptyLine(
-                          'No catalogue entry found for this target.',
-                        );
-                      }
-                      return _CatalogueDetails(details: details);
-                    },
-                  ),
-                ],
+                _KeyValueLine(
+                  label: 'Filter',
+                  value: widget.plan?.filter.isNotEmpty == true
+                      ? widget.plan!.filter.toUpperCase()
+                      : '—',
+                ),
               ],
-            ),
-          ),
-        ],
+              const SizedBox(height: 12),
+              FutureBuilder<ObjectDetails?>(
+                key: ValueKey(_lookupName),
+                future: _detailsFuture,
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const _CatalogueLoading();
+                  }
+                  if (snap.hasError) {
+                    return const _EmptyLine(
+                      'Could not load catalogue data for this target.',
+                    );
+                  }
+                  final details = snap.data;
+                  if (details == null) {
+                    return const _EmptyLine(
+                      'No catalogue entry found for this target.',
+                    );
+                  }
+                  return _CatalogueDetails(details: details);
+                },
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -1053,43 +1044,46 @@ class _RecentObservationsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return _OpsPanel(
       padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _WorkbenchHeader(
-            title: 'Recent observations',
-            subtitle: myObservationsOnly ? 'My observations' : 'All observations',
-            trailingWidget: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Checkbox(
-                  value: myObservationsOnly,
-                  onChanged: (value) =>
-                      onMyObservationsOnlyChanged(value ?? true),
-                  visualDensity: VisualDensity.compact,
-                  side: const BorderSide(color: BSTheme.glassBorder),
-                  activeColor: BSTheme.accent,
+      child: _PanelScrollBody(
+        header: _WorkbenchHeader(
+          title: 'Recent observations',
+          subtitle: myObservationsOnly ? 'My observations' : 'All observations',
+          trailingWidget: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Checkbox(
+                value: myObservationsOnly,
+                onChanged: (value) =>
+                    onMyObservationsOnlyChanged(value ?? true),
+                visualDensity: VisualDensity.compact,
+                side: const BorderSide(color: BSTheme.glassBorder),
+                activeColor: BSTheme.accent,
+              ),
+              const Text(
+                'My observations only',
+                style: TextStyle(
+                  fontFamily: 'Geist',
+                  fontSize: 12,
+                  color: BSTheme.ink2,
                 ),
-                const Text(
-                  'My observations only',
-                  style: TextStyle(
-                    fontFamily: 'Geist',
-                    fontSize: 12,
-                    color: BSTheme.ink2,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          const _ObservationHeaderRow(),
-          if (obs.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: _EmptyLine('No measurements yet today.'),
-            )
-          else
-            ...obs.take(maxRows).map((o) => _ObservationTableRow(obs: o)),
-        ],
+        ),
+        bodyPadding: EdgeInsets.zero,
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const _ObservationHeaderRow(),
+            if (obs.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: _EmptyLine('No measurements yet today.'),
+              )
+            else
+              ...obs.take(maxRows).map((o) => _ObservationTableRow(obs: o)),
+          ],
+        ),
       ),
     );
   }
@@ -1524,8 +1518,10 @@ class _KeyValueLine extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
+            flex: 2,
             child: Text(
               label,
               style: const TextStyle(
@@ -1535,13 +1531,19 @@ class _KeyValueLine extends StatelessWidget {
               ),
             ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              fontFamily: 'Geist',
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: color ?? BSTheme.ink2,
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 3,
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontFamily: 'Geist',
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: color ?? BSTheme.ink2,
+                height: 1.35,
+              ),
             ),
           ),
         ],
@@ -1804,6 +1806,51 @@ class _EvidencePanel extends StatelessWidget {
   }
 }
 
+/// Panel header + body. Scrolls the body when the panel has a bounded height
+/// (wide dashboard); grows naturally on the mobile scroll view.
+class _PanelScrollBody extends StatelessWidget {
+  const _PanelScrollBody({
+    required this.header,
+    required this.body,
+    this.bodyPadding = const EdgeInsets.all(14),
+  });
+
+  final Widget header;
+  final Widget body;
+  final EdgeInsets bodyPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounded = constraints.hasBoundedHeight &&
+            constraints.maxHeight.isFinite;
+        if (!bounded) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              header,
+              Padding(padding: bodyPadding, child: body),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            header,
+            Expanded(
+              child: SingleChildScrollView(
+                padding: bodyPadding,
+                child: body,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _OpsPanel extends StatelessWidget {
   const _OpsPanel({
     required this.child,
@@ -1817,38 +1864,41 @@ class _OpsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: BSTheme.surface.withValues(alpha: 0.88),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: accent.withValues(alpha: 0.24)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x73000000),
-                blurRadius: 22,
-                offset: Offset(0, 13),
-              ),
-            ],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Stack(
+        children: [
+          Container(
+            padding: padding,
+            decoration: BoxDecoration(
+              color: BSTheme.surface.withValues(alpha: 0.88),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: accent.withValues(alpha: 0.24)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x73000000),
+                  blurRadius: 22,
+                  offset: Offset(0, 13),
+                ),
+              ],
+            ),
+            child: child,
           ),
-          child: child,
-        ),
-        Positioned(
-          left: 0,
-          top: 0,
-          child: _CornerMark(color: accent),
-        ),
-        Positioned(
-          right: 0,
-          bottom: 0,
-          child: Transform.rotate(
-            angle: 3.14159,
+          Positioned(
+            left: 0,
+            top: 0,
             child: _CornerMark(color: accent),
           ),
-        ),
-      ],
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Transform.rotate(
+              angle: 3.14159,
+              child: _CornerMark(color: accent),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
