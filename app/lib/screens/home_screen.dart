@@ -308,7 +308,7 @@ class _ReadinessRail extends StatelessWidget {
           children: [
             const SizedBox(height: 14),
             _RailStateBadge(
-              label: nodesReady ? 'OPS READY' : 'SETUP',
+              label: nodesReady ? 'ONLINE' : 'SETUP',
               color: nodesReady ? BSTheme.success : BSTheme.warm,
             ),
             const SizedBox(height: 14),
