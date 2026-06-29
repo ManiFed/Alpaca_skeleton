@@ -43,7 +43,7 @@ from urllib.parse import quote
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
-from cloud import alerts, auth, data_pipeline, db, nights, registry, scheduler, scoring, tuning
+from cloud import alerts, auth, data_pipeline, db, help_chat, nights, registry, scheduler, scoring, tuning
 from src.shared_models import science_program_for_type
 from cloud.conditions import fetch_astronomy_weather, fetch_light_pollution_detail
 
@@ -1207,7 +1207,7 @@ def api_me_nodes(user):
     """All nodes this member has claimed."""
     rows = db.query(
         """SELECT n.node_id, n.telescope_model, n.telescope_name, n.city, n.country, n.status,
-                  n.last_heartbeat, n.portable, n.vacation_until,
+                  n.last_heartbeat, n.last_conditions, n.portable, n.vacation_until,
                   n.session_city, n.session_site_name, n.previous_locations,
                   nm.claimed_at, nm.display_name
            FROM nodes n
@@ -1219,6 +1219,8 @@ def api_me_nodes(user):
         r["online"] = registry.is_online(r)
         r["portable"] = bool(r.get("portable"))
         r["previous_locations"] = db.loads(r.get("previous_locations"), [])
+        r["conditions"] = db.loads(r.get("last_conditions"), {})
+        r.pop("last_conditions", None)
     return jsonify({"nodes": rows})
 
 
@@ -1683,6 +1685,52 @@ def api_admin_generate_code():
     return jsonify({"codes": codes, "expires_at": expires})
 
 
+@app.route("/api/v1/me/help", methods=["GET"])
+@auth.require_member
+def api_me_help_session(user):
+    """Help tab: contact info, weekly quota, and recent chat history."""
+    return jsonify(help_chat.get_session(user["user_id"]))
+
+
+@app.route("/api/v1/me/help/chat", methods=["POST"])
+@auth.require_member
+def api_me_help_chat(user):
+    """Send one help message to the OpenRouter assistant (5 user messages/week)."""
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        result = help_chat.chat(
+            user["user_id"],
+            str(body.get("message") or ""),
+            str(body.get("node_id") or "").strip() or None,
+            _config,
+        )
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 429
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 503
+    return jsonify(result)
+
+
+@app.route("/api/v1/nodes/config-patches", methods=["GET"])
+@require_node
+def api_node_config_patches(node):
+    """Pending config.yaml patches queued by the help assistant."""
+    patches = help_chat.pending_patches(node["node_id"])
+    return jsonify({"patches": patches})
+
+
+@app.route("/api/v1/nodes/config-patches/<int:patch_id>/ack", methods=["POST"])
+@require_node
+def api_node_config_patch_ack(node, patch_id: int):
+    body = request.get_json(force=True, silent=True) or {}
+    ok = bool(body.get("ok", True))
+    error = str(body.get("error") or "")[:500]
+    help_chat.ack_patch(patch_id, node["node_id"], ok, error)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/v1/me/notifications/prefs", methods=["PUT"])
 @auth.require_member
 def api_me_notification_prefs(user):
@@ -1716,6 +1764,8 @@ def api_me_delete(user):
     uid = user["user_id"]
     # Remove all member-owned data in dependency order.
     db.execute("DELETE FROM notifications WHERE user_id = %s", (uid,))
+    db.execute("DELETE FROM help_chat_messages WHERE user_id = %s", (uid,))
+    db.execute("DELETE FROM node_config_patches WHERE user_id = %s", (uid,))
     db.execute("DELETE FROM node_members WHERE user_id = %s", (uid,))
     db.execute("DELETE FROM activation_codes WHERE user_id = %s", (uid,))
     db.execute("DELETE FROM members WHERE user_id = %s", (uid,))

@@ -9,6 +9,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/aladin_sky.dart';
 import '../widgets/glass.dart' show GrainOverlay, LiveDot;
+import 'help_tab.dart';
 import 'dashboard_tab.dart';
 import 'me_screen.dart';
 import 'nodes_tab.dart';
@@ -66,6 +67,11 @@ class _HomeScreenState extends State<HomeScreen> {
       icon: Icons.satellite_alt_outlined,
       sel: Icons.satellite_alt
     ),
+    (
+      title: 'Help',
+      icon: Icons.support_agent_outlined,
+      sel: Icons.support_agent
+    ),
     (title: 'Me', icon: Icons.person_outline, sel: Icons.person),
   ];
 
@@ -92,6 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final pages = [
       DashboardTab(onNavigateToTab: (_) => _showAlertsSheet()),
       const NodesTab(),
+      const HelpTab(),
       const MeScreen(showAppBar: false),
     ];
 

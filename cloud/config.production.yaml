@@ -72,6 +72,10 @@ tuning:
   min_measurements: 30
   min_change: 0.005
 
+help:
+  openrouter_api_key: '${OPENROUTER_API_KEY}'
+  model: anthropic/claude-haiku-4.5
+
 scheduler:
   replan_interval_minutes: 120
   min_score: 0.25

@@ -71,6 +71,12 @@ scoring:
     sky_brightness: 0.05
     thermal: 0.05          # uncooled-camera penalty on faint targets
 
+help:
+  # Member help chat (OpenRouter → Claude Haiku 4.5). Set OPENROUTER_API_KEY
+  # in the environment or here. Rate-limited to 5 user messages per week.
+  openrouter_api_key: ''
+  model: anthropic/claude-haiku-4.5
+
 tuning:
   # Nightly Claude monitor that reviews observing outcomes and adjusts the
   # scheduler's tunable parameter groups: composite weights, observability

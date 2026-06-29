@@ -456,6 +456,31 @@ _LATE_TABLES: list[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_plan_runs_time ON plan_runs(ran_at)",
+    """
+    CREATE TABLE IF NOT EXISTS help_chat_messages (
+        id           SERIAL PRIMARY KEY,
+        user_id      TEXT NOT NULL REFERENCES users(user_id),
+        role         TEXT NOT NULL,
+        content      TEXT NOT NULL,
+        config_patch TEXT DEFAULT '{}',
+        node_id      TEXT DEFAULT '',
+        created_at   TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_help_chat_user_time ON help_chat_messages(user_id, created_at)",
+    """
+    CREATE TABLE IF NOT EXISTS node_config_patches (
+        id         SERIAL PRIMARY KEY,
+        node_id    TEXT NOT NULL,
+        user_id    TEXT NOT NULL REFERENCES users(user_id),
+        patch_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        applied_at TEXT,
+        status     TEXT DEFAULT 'pending',
+        error      TEXT DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_config_patches_node ON node_config_patches(node_id, status)",
 ]
 
 

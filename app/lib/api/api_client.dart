@@ -264,5 +264,16 @@ class ApiClient {
     return ObjectDetails.fromJson(await _get(path));
   }
 
+  /// Help tab session: contact info, quota, chat history (GET /me/help).
+  Future<HelpSession> helpSession() async =>
+      HelpSession.fromJson(await _get('/me/help'));
+
+  /// Send one help message (POST /me/help/chat). Limited to 5 user messages/week.
+  Future<HelpChatResponse> helpChat(String message, {String? nodeId}) async {
+    final body = <String, dynamic>{'message': message};
+    if (nodeId != null && nodeId.isNotEmpty) body['node_id'] = nodeId;
+    return HelpChatResponse.fromJson(await _post('/me/help/chat', body));
+  }
+
   void close() => _http.close();
 }

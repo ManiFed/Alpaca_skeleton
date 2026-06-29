@@ -64,6 +64,97 @@ class PreviousLocation {
   }
 }
 
+/// Live telemetry from the node's most recent cloud heartbeat.
+class NodeConditions {
+  final bool? safe;
+  final String reason;
+  final double? sunElevation;
+  final double? dawnThreshold;
+  final bool? heartbeatOk;
+  final bool scheduleRunning;
+  final String scheduleTarget;
+  final String schedulePhase;
+  final int scheduleFrame;
+  final int scheduleFrames;
+  final int scheduleCompleted;
+  final int scheduleTotal;
+  final String? scheduleError;
+  final bool? photometryEnabled;
+  final bool? telescopeConnected;
+  final bool? cameraConnected;
+  final bool? autoRunPlans;
+  final bool? cloudRegistered;
+  final String? lastPlanId;
+  final int planItems;
+  final bool? lastHeartbeatOk;
+
+  const NodeConditions({
+    this.safe,
+    this.reason = '',
+    this.sunElevation,
+    this.dawnThreshold,
+    this.heartbeatOk,
+    this.scheduleRunning = false,
+    this.scheduleTarget = '',
+    this.schedulePhase = '',
+    this.scheduleFrame = 0,
+    this.scheduleFrames = 0,
+    this.scheduleCompleted = 0,
+    this.scheduleTotal = 0,
+    this.scheduleError,
+    this.photometryEnabled,
+    this.telescopeConnected,
+    this.cameraConnected,
+    this.autoRunPlans,
+    this.cloudRegistered,
+    this.lastPlanId,
+    this.planItems = 0,
+    this.lastHeartbeatOk,
+  });
+
+  factory NodeConditions.fromJson(Map<String, dynamic>? j) {
+    if (j == null || j.isEmpty) return const NodeConditions();
+    return NodeConditions(
+      safe: j['safe'] is bool ? j['safe'] as bool : null,
+      reason: _asStr(j['reason']),
+      sunElevation:
+          j['sun_elevation'] == null ? null : _asDouble(j['sun_elevation']),
+      dawnThreshold:
+          j['dawn_threshold'] == null ? null : _asDouble(j['dawn_threshold']),
+      heartbeatOk:
+          j['heartbeat_ok'] is bool ? j['heartbeat_ok'] as bool : null,
+      scheduleRunning: j['schedule_running'] == true,
+      scheduleTarget: _asStr(j['schedule_target']),
+      schedulePhase: _asStr(j['schedule_phase']),
+      scheduleFrame: _asInt(j['schedule_frame']),
+      scheduleFrames: _asInt(j['schedule_frames']),
+      scheduleCompleted: _asInt(j['schedule_completed']),
+      scheduleTotal: _asInt(j['schedule_total']),
+      scheduleError: j['schedule_error'] == null
+          ? null
+          : _asStr(j['schedule_error']),
+      photometryEnabled: j['photometry_enabled'] is bool
+          ? j['photometry_enabled'] as bool
+          : null,
+      telescopeConnected: j['telescope_connected'] is bool
+          ? j['telescope_connected'] as bool
+          : null,
+      cameraConnected:
+          j['camera_connected'] is bool ? j['camera_connected'] as bool : null,
+      autoRunPlans:
+          j['auto_run_plans'] is bool ? j['auto_run_plans'] as bool : null,
+      cloudRegistered: j['cloud_registered'] is bool
+          ? j['cloud_registered'] as bool
+          : null,
+      lastPlanId: j['last_plan_id'] == null ? null : _asStr(j['last_plan_id']),
+      planItems: _asInt(j['plan_items']),
+      lastHeartbeatOk: j['last_heartbeat_ok'] is bool
+          ? j['last_heartbeat_ok'] as bool
+          : null,
+    );
+  }
+}
+
 /// A telescope node the member has claimed (GET /me/nodes).
 class Node {
   final String nodeId;
@@ -80,6 +171,7 @@ class Node {
   final String sessionCity;
   final String sessionSiteName;
   final List<PreviousLocation> previousLocations;
+  final NodeConditions conditions;
 
   const Node({
     required this.nodeId,
@@ -96,6 +188,7 @@ class Node {
     required this.sessionCity,
     required this.sessionSiteName,
     required this.previousLocations,
+    this.conditions = const NodeConditions(),
   });
 
   factory Node.fromJson(Map<String, dynamic> j) {
@@ -117,6 +210,11 @@ class Node {
       sessionCity: _asStr(j['session_city']),
       sessionSiteName: _asStr(j['session_site_name']),
       previousLocations: locList,
+      conditions: NodeConditions.fromJson(
+        j['conditions'] is Map
+            ? Map<String, dynamic>.from(j['conditions'] as Map)
+            : null,
+      ),
     );
   }
 
@@ -538,4 +636,109 @@ class AppNotification {
     if (t != null) return '$t';
     return type.replaceAll('_', ' ');
   }
+}
+
+/// Help tab contact + quota + history (GET /me/help).
+class HelpSession {
+  final HelpContact contact;
+  final int weeklyLimit;
+  final int messagesUsed;
+  final int messagesRemaining;
+  final List<HelpChatMessage> messages;
+
+  const HelpSession({
+    required this.contact,
+    required this.weeklyLimit,
+    required this.messagesUsed,
+    required this.messagesRemaining,
+    required this.messages,
+  });
+
+  factory HelpSession.fromJson(Map<String, dynamic> j) => HelpSession(
+        contact: HelpContact.fromJson(
+          (j['contact'] as Map?)?.cast<String, dynamic>() ?? {},
+        ),
+        weeklyLimit: _asInt(j['weekly_limit']),
+        messagesUsed: _asInt(j['messages_used']),
+        messagesRemaining: _asInt(j['messages_remaining']),
+        messages: ((j['messages'] as List?) ?? [])
+            .map((e) => HelpChatMessage.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class HelpContact {
+  final String email;
+  final String appUrl;
+  final String docsUrl;
+  final String github;
+
+  const HelpContact({
+    required this.email,
+    required this.appUrl,
+    required this.docsUrl,
+    required this.github,
+  });
+
+  factory HelpContact.fromJson(Map<String, dynamic> j) => HelpContact(
+        email: _asStr(j['email']),
+        appUrl: _asStr(j['app_url']),
+        docsUrl: _asStr(j['docs_url']),
+        github: _asStr(j['github']),
+      );
+}
+
+class HelpChatMessage {
+  final int id;
+  final String role;
+  final String content;
+  final String createdAt;
+  final Map<String, dynamic>? configPatch;
+
+  const HelpChatMessage({
+    required this.id,
+    required this.role,
+    required this.content,
+    required this.createdAt,
+    this.configPatch,
+  });
+
+  bool get isUser => role == 'user';
+
+  factory HelpChatMessage.fromJson(Map<String, dynamic> j) => HelpChatMessage(
+        id: _asInt(j['id']),
+        role: _asStr(j['role']),
+        content: _asStr(j['content']),
+        createdAt: _asStr(j['created_at']),
+        configPatch: j['config_patch'] is Map
+            ? Map<String, dynamic>.from(j['config_patch'] as Map)
+            : null,
+      );
+}
+
+/// One help assistant turn (POST /me/help/chat).
+class HelpChatResponse {
+  final String reply;
+  final int messagesRemaining;
+  final int weeklyLimit;
+  final Map<String, dynamic>? configPatch;
+  final bool patchQueued;
+
+  const HelpChatResponse({
+    required this.reply,
+    required this.messagesRemaining,
+    required this.weeklyLimit,
+    this.configPatch,
+    this.patchQueued = false,
+  });
+
+  factory HelpChatResponse.fromJson(Map<String, dynamic> j) => HelpChatResponse(
+        reply: _asStr(j['reply']),
+        messagesRemaining: _asInt(j['messages_remaining']),
+        weeklyLimit: _asInt(j['weekly_limit']),
+        configPatch: j['config_patch'] is Map
+            ? Map<String, dynamic>.from(j['config_patch'] as Map)
+            : null,
+        patchQueued: j['patch_queued'] == true,
+      );
 }

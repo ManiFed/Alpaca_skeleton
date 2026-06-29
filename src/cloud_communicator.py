@@ -380,6 +380,10 @@ class CloudCommunicator:
                     self._poll_interrupts()
                 except Exception as exc:
                     logger.debug("Interrupt poll failed: %s", exc)
+                try:
+                    self._poll_config_patches()
+                except Exception as exc:
+                    logger.debug("Config patch poll failed: %s", exc)
             self._stop.wait(self._plan_poll_s)
 
     def _poll_plan(self) -> None:
@@ -401,6 +405,41 @@ class CloudCommunicator:
                 self._on_plan(items)
             except Exception as exc:
                 logger.error("on_plan callback raised: %s", exc)
+
+    def _poll_config_patches(self) -> None:
+        data = self._get("/api/v1/nodes/config-patches")
+        patches = data.get("patches") or []
+        if not patches:
+            return
+        from src.config_patch import apply_config_patch
+        import yaml
+
+        for entry in patches:
+            patch_id = entry.get("id")
+            patch = entry.get("patch") or {}
+            if not patch_id or not patch:
+                continue
+            try:
+                apply_config_patch(patch)
+                self._post(
+                    f"/api/v1/nodes/config-patches/{patch_id}/ack",
+                    {"ok": True},
+                )
+                try:
+                    with open("config.yaml") as fh:
+                        self._config = yaml.safe_load(fh) or {}
+                except Exception:
+                    pass
+                logger.info("Applied cloud config patch %s", patch_id)
+            except Exception as exc:
+                logger.warning("Config patch %s failed: %s", patch_id, exc)
+                try:
+                    self._post(
+                        f"/api/v1/nodes/config-patches/{patch_id}/ack",
+                        {"ok": False, "error": str(exc)},
+                    )
+                except Exception:
+                    pass
 
     def _poll_interrupts(self) -> None:
         data = self._get("/api/v1/interrupts")

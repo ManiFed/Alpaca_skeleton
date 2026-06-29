@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
+import '../models/node_status.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/aladin_sky.dart';
@@ -187,12 +188,20 @@ class _DashboardViewState extends State<_DashboardView> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 1040;
+        final statusBanner = _fadeUp(
+          0,
+          _LiveStatusBanner(
+            nodes: widget.data.nodes,
+            planCount: widget.data.timeline.length,
+            activePlanTarget: selectedPlan?.target,
+          ),
+        );
         final telescopePanel = _fadeUp(
           0,
           _TelescopeOpsPanel(
             nodes: widget.data.nodes,
             unread: unread,
-            onOpenAlerts: () => widget.onNavigateToTab?.call(3),
+            onOpenAlerts: () => widget.onNavigateToTab?.call(99),
           ),
         );
         final planPanel = _fadeUp(
@@ -250,6 +259,8 @@ class _DashboardViewState extends State<_DashboardView> {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          statusBanner,
+                          const SizedBox(height: 10),
                           telescopePanel,
                           const SizedBox(height: 10),
                           planPanel,
@@ -277,6 +288,8 @@ class _DashboardViewState extends State<_DashboardView> {
           padding: EdgeInsets.fromLTRB(12, topPad + 10, 12, 12),
           child: Column(
             children: [
+              statusBanner,
+              const SizedBox(height: 10),
               Expanded(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -346,6 +359,97 @@ Target? _selectedTargetForPlan(
     return null;
   }
   return null;
+}
+
+class _LiveStatusBanner extends StatelessWidget {
+  const _LiveStatusBanner({
+    required this.nodes,
+    required this.planCount,
+    this.activePlanTarget,
+  });
+
+  final List<Node> nodes;
+  final int planCount;
+  final String? activePlanTarget;
+
+  @override
+  Widget build(BuildContext context) {
+    final node = nodes.isEmpty ? null : nodes.first;
+    final status = primaryNodeStatus(
+      node: node,
+      planCount: planCount,
+      activePlanTarget: activePlanTarget,
+    );
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: status.color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: status.color.withValues(alpha: 0.28)),
+        boxShadow: [
+          BoxShadow(
+            color: status.color.withValues(alpha: 0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: status.color.withValues(alpha: 0.14),
+            ),
+            child: Icon(status.icon, color: status.color, size: 24),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  status.headline,
+                  style: TextStyle(
+                    fontFamily: 'Geist',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: status.color,
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  status.detail,
+                  style: const TextStyle(
+                    fontFamily: 'Geist',
+                    fontSize: 13,
+                    height: 1.45,
+                    color: BSTheme.ink2,
+                  ),
+                ),
+                if (node != null && node.lastHeartbeat.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Last heartbeat ${heartbeatAgeLabel(node.lastHeartbeat)}',
+                    style: const TextStyle(
+                      fontFamily: 'Geist',
+                      fontSize: 11,
+                      color: BSTheme.ink3,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _TelescopeOpsPanel extends StatelessWidget {

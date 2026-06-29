@@ -719,19 +719,48 @@ _interrupt_queue: queue.Queue = queue.Queue()
 
 
 def _cloud_conditions() -> dict:
-    """Local conditions snapshot included with cloud heartbeats."""
+    """Local conditions snapshot included with cloud heartbeats.
+
+    Surfaced to members via the cloud API so the mobile app can show live
+    node status without opening the Node Agent dashboard.
+    """
     out: dict = {}
     if _safety_mgr is not None:
         try:
             s = _safety_mgr.status()
-            out["safe"]   = s.get("safe")
+            out["safe"] = s.get("safe")
             out["reason"] = s.get("reason", "")
+            out["sun_elevation"] = s.get("sun_elevation")
+            out["dawn_threshold"] = s.get("dawn_threshold")
+            out["heartbeat_ok"] = s.get("heartbeat_ok")
         except Exception:
             pass
     with _sched_lock:
         out["schedule_running"] = _sched_state["running"]
+        out["schedule_target"] = _sched_state.get("current_target", "")
+        out["schedule_phase"] = _sched_state.get("current_phase", "")
+        out["schedule_frame"] = _sched_state.get("current_frame", 0)
+        out["schedule_frames"] = _sched_state.get("total_frames", 0)
+        out["schedule_completed"] = _sched_state.get("completed", 0)
+        out["schedule_total"] = _sched_state.get("total", 0)
+        out["schedule_error"] = _sched_state.get("error")
     with _state_lock:
         out["photometry_enabled"] = _state["photometry"]["enabled"]
+        out["telescope_connected"] = _state["telescope"].get("connected", False)
+        out["camera_connected"] = _state["camera"].get("connected", False)
+    try:
+        cfg = _load_config()
+        out["auto_run_plans"] = bool(cfg.get("cloud", {}).get("auto_run_plans", False))
+    except Exception:
+        out["auto_run_plans"] = False
+    if _cloud is not None:
+        try:
+            out["cloud_registered"] = bool(_cloud.status.get("registered"))
+            out["last_plan_id"] = _cloud.status.get("last_plan_id")
+            out["plan_items"] = _cloud.status.get("plan_items", 0)
+            out["last_heartbeat_ok"] = _cloud.status.get("last_heartbeat_ok")
+        except Exception:
+            pass
     return out
 
 
