@@ -5,17 +5,25 @@ on:
     branches: [main]
     paths:
       - 'cloud/**'
+      - 'src/**'
+      - 'website/**'
+      - 'app/build/web/**'
       - 'Dockerfile.cloud'
       - 'railway.toml'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli
-      - name: Redeploy API service
-        run: railway deployment redeploy --service api --yes
+
+      # Build and upload fresh code — redeploy alone only restarts the old image.
+      - name: Deploy API service
+        run: railway up --service api --detach --ci -y
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
